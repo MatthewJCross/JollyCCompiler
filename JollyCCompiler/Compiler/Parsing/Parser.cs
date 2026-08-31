@@ -1,8 +1,7 @@
 ﻿using JollyCCompiler.Compiler.Diagnostics;
 using JollyCCompiler.Compiler.Lexing;
-using JollyCCompiler.Compiler.Syntax;
 
-namespace JollyCCompiler.Compiler.Parsing
+namespace JollyCCompiler.Compiler.Syntax
 {
     public sealed class Parser
     {
@@ -10,15 +9,11 @@ namespace JollyCCompiler.Compiler.Parsing
         private readonly List<Diagnostic> _diagnostics = new();
         private int _position;
 
-        public Parser(IReadOnlyList<Token> tokens)
-        {
-            _tokens = tokens;
-        }
+        public Parser(IReadOnlyList<Token> tokens) { _tokens = tokens; }
 
         public IReadOnlyList<Diagnostic> Diagnostics => _diagnostics;
 
         private Token Current => _tokens[Math.Min(_position, _tokens.Count - 1)];
-
         private Token Previous => _tokens[Math.Max(0, _position - 1)];
 
         public ProgramNode ParseProgram()
@@ -173,7 +168,29 @@ namespace JollyCCompiler.Compiler.Parsing
             return new ReturnStatement(expression);
         }
 
-        private ExpressionNode ParseExpression() => ParseEquality();
+        private ExpressionNode ParseExpression()
+        {
+            return ParseAssignment();
+        }
+
+        private ExpressionNode ParseAssignment()
+        {
+            var left = ParseEquality();
+
+            if (Current.Kind != TokenKind.Equals)
+                return left;
+
+            var equalsToken = Advance();
+            var right = ParseAssignment();
+
+            if (left is not IdentifierExpression identifier)
+            {
+                ErrorAt(equalsToken, "The left side of an assignment must be a variable.");
+                return right;
+            }
+
+            return new AssignmentExpression(identifier.Name, right);
+        }
 
         private ExpressionNode ParseEquality()
         {
@@ -183,6 +200,7 @@ namespace JollyCCompiler.Compiler.Parsing
             {
                 var op = Current.Kind;
                 Advance();
+
                 var right = ParseComparison();
                 left = new BinaryExpression(left, op, right);
             }
@@ -198,6 +216,7 @@ namespace JollyCCompiler.Compiler.Parsing
             {
                 var op = Current.Kind;
                 Advance();
+
                 var right = ParseTerm();
                 left = new BinaryExpression(left, op, right);
             }
@@ -213,6 +232,7 @@ namespace JollyCCompiler.Compiler.Parsing
             {
                 var op = Current.Kind;
                 Advance();
+
                 var right = ParseFactor();
                 left = new BinaryExpression(left, op, right);
             }
@@ -228,6 +248,7 @@ namespace JollyCCompiler.Compiler.Parsing
             {
                 var op = Current.Kind;
                 Advance();
+
                 var right = ParseUnary();
                 left = new BinaryExpression(left, op, right);
             }
@@ -241,6 +262,7 @@ namespace JollyCCompiler.Compiler.Parsing
             {
                 var op = Current.Kind;
                 Advance();
+
                 return new UnaryExpression(op, ParseUnary());
             }
 
@@ -296,14 +318,19 @@ namespace JollyCCompiler.Compiler.Parsing
             if (Current.Kind == TokenKind.LeftParen)
             {
                 Advance();
+
                 var expression = ParseExpression();
+
                 Expect(TokenKind.RightParen, "Expected ')' after expression.");
+
                 return expression;
             }
 
             Error($"Unexpected token '{Current.Text}'.");
+
             var bad = Current;
             Advance();
+
             return new IntegerExpression(0);
         }
 
@@ -313,6 +340,7 @@ namespace JollyCCompiler.Compiler.Parsing
                 return Advance();
 
             Error(message);
+
             return new Token(kind, string.Empty, Current.Line, Current.Column);
         }
 
@@ -329,6 +357,11 @@ namespace JollyCCompiler.Compiler.Parsing
         private void Error(string message)
         {
             _diagnostics.Add(new Diagnostic(DiagnosticSeverity.Error, message, Current.Line, Current.Column));
+        }
+
+        private void ErrorAt(Token token, string message)
+        {
+            _diagnostics.Add(new Diagnostic(DiagnosticSeverity.Error, message, token.Line, token.Column));
         }
 
         private void Synchronize()

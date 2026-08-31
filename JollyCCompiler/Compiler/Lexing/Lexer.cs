@@ -196,9 +196,10 @@ namespace JollyCCompiler.Compiler.Lexing
         {
             var line = _line;
             var column = _column;
-            var value = new StringBuilder();
 
             Advance();
+
+            var builder = new StringBuilder();
 
             while (!AtEnd && Current != '"')
             {
@@ -221,51 +222,40 @@ namespace JollyCCompiler.Compiler.Lexing
                     switch (Current)
                     {
                         case 'n':
-                            value.Append('\n');
-                            Advance();
+                            builder.Append('\n');
                             break;
 
                         case 'r':
-                            value.Append('\r');
-                            Advance();
+                            builder.Append('\r');
                             break;
 
                         case 't':
-                            value.Append('\t');
-                            Advance();
-                            break;
-
-                        case '0':
-                            value.Append('\0');
-                            Advance();
+                            builder.Append('\t');
                             break;
 
                         case '\\':
-                            value.Append('\\');
-                            Advance();
+                            builder.Append('\\');
                             break;
 
                         case '"':
-                            value.Append('"');
-                            Advance();
+                            builder.Append('"');
                             break;
 
-                        case '\'':
-                            value.Append('\'');
-                            Advance();
+                        case '0':
+                            builder.Append('\0');
                             break;
 
                         default:
                             _diagnostics.Add(new Diagnostic(DiagnosticSeverity.Error, $"Unknown escape sequence '\\{Current}'.", _line, _column));
-                            value.Append(Current);
-                            Advance();
+                            builder.Append(Current);
                             break;
                     }
 
+                    Advance();
                     continue;
                 }
 
-                value.Append(Current);
+                builder.Append(Current);
                 Advance();
             }
 
@@ -278,7 +268,7 @@ namespace JollyCCompiler.Compiler.Lexing
                 Advance();
             }
 
-            return new Token(TokenKind.StringLiteral, value.ToString(), line, column);
+            return new Token(TokenKind.StringLiteral, builder.ToString(), line, column);
         }
 
         private void SkipLineComment()

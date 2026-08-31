@@ -1,4 +1,5 @@
-﻿using JollyCCompiler.Compiler.CodeGen.X64;
+﻿using JollyCCompiler.Compiler.CodeGen;
+using JollyCCompiler.Compiler.CodeGen.X64;
 using JollyCCompiler.Compiler.Compilation;
 using JollyCCompiler.Compiler.Syntax;
 using JollyCCompiler.Object;
@@ -29,8 +30,16 @@ namespace JollyCCompiler
         """
         int main()
         {
-            printf("Hello from JollyC!\n");
-            return 42;
+            printf("Hello from JollyC!\n\n");
+
+            int x = 10;
+            int y = 20;
+
+            printf("x = %d\n", x);
+            printf("y = %d\n", y);
+            printf("total = %d\n", x + y);
+
+            return x + y;
         }
         """;
 

@@ -1,6 +1,6 @@
 ﻿using JollyCCompiler.Compiler.Diagnostics;
 using JollyCCompiler.Compiler.Lexing;
-using JollyCCompiler.Compiler.Parsing;
+using JollyCCompiler.Compiler.Syntax;
 
 namespace JollyCCompiler.Compiler.Compilation
 {

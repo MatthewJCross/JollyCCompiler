@@ -18,4 +18,5 @@ namespace JollyCCompiler.Compiler.Syntax
     public sealed record BinaryExpression(ExpressionNode Left, TokenKind Operator, ExpressionNode Right) : ExpressionNode;
     public sealed record UnaryExpression(TokenKind Operator, ExpressionNode Operand) : ExpressionNode;
     public sealed record CallExpression(string Name, IReadOnlyList<ExpressionNode> Arguments) : ExpressionNode;
+    public sealed record AssignmentExpression(string Name, ExpressionNode Value) : ExpressionNode;
 }
