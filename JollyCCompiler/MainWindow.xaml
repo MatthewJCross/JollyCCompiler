@@ -1,0 +1,81 @@
+﻿<Window x:Class="JollyCCompiler.MainWindow"
+        xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+        xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+        xmlns:d="http://schemas.microsoft.com/expression/blend/2008"
+        xmlns:mc="http://schemas.openxmlformats.org/markup-compatibility/2006"
+        xmlns:local="clr-namespace:JollyCCompiler"
+        mc:Ignorable="d"
+        Title="JollyC Compiler" Width="1200" Height="800" MinWidth="900" MinHeight="600" WindowStartupLocation="CenterScreen">
+    <DockPanel>
+        <Menu DockPanel.Dock="Top">
+            <MenuItem Header="_File">
+                <MenuItem Header="_New" Click="New_Click"/>
+                <MenuItem Header="_Open..." Click="Open_Click"/>
+                <MenuItem Header="_Save" Click="Save_Click"/>
+                <Separator/>
+                <MenuItem Header="E_xit" Click="Exit_Click"/>
+            </MenuItem>
+            <MenuItem Header="_Build">
+                <MenuItem Header="_Compile" Click="Compile_Click"/>
+            </MenuItem>
+        </Menu>
+
+        <ToolBar DockPanel.Dock="Top">
+            <Button Content="New" Padding="12,4" Margin="2" Click="New_Click"/>
+            <Button Content="Open" Padding="12,4" Margin="2" Click="Open_Click"/>
+            <Button Content="Save" Padding="12,4" Margin="2" Click="Save_Click"/>
+            <Separator/>
+            <Button Content="Compile" Padding="16,4" Margin="2" Click="Compile_Click"/>
+        </ToolBar>
+
+        <StatusBar DockPanel.Dock="Bottom">
+            <StatusBarItem>
+                <TextBlock x:Name="StatusText" Text="Ready"/>
+            </StatusBarItem>
+        </StatusBar>
+
+        <Grid Margin="8">
+            <Grid.RowDefinitions>
+                <RowDefinition Height="*"/>
+                <RowDefinition Height="220"/>
+            </Grid.RowDefinitions>
+
+            <Grid.ColumnDefinitions>
+                <ColumnDefinition Width="*"/>
+                <ColumnDefinition Width="340"/>
+            </Grid.ColumnDefinitions>
+
+            <GroupBox Header="C Source" Grid.Row="0" Grid.Column="0" Margin="0,0,6,6">
+                <TextBox x:Name="Editor" FontFamily="Consolas" FontSize="15" AcceptsReturn="True" AcceptsTab="True" HorizontalScrollBarVisibility="Auto" VerticalScrollBarVisibility="Auto" TextWrapping="NoWrap" Padding="10"/>
+            </GroupBox>
+
+            <GroupBox Header="Tokens" Grid.Row="0" Grid.Column="1" Margin="6,0,0,6">
+                <ListBox x:Name="TokenList" FontFamily="Consolas" FontSize="13"/>
+            </GroupBox>
+
+            <TabControl Grid.Row="1" Grid.Column="0" Grid.ColumnSpan="2" Margin="0,6,0,0">
+
+                <!-- Build Output -->
+                <TabItem Header="Build Output">
+                    <TextBox x:Name="Output" FontFamily="Consolas" FontSize="13" IsReadOnly="True" AcceptsReturn="True" HorizontalScrollBarVisibility="Auto" VerticalScrollBarVisibility="Auto" TextWrapping="NoWrap" Padding="8"/>
+                </TabItem>
+
+                <!-- AST -->
+                <TabItem Header="AST">
+                    <TextBox x:Name="AstOutput" FontFamily="Consolas" FontSize="13" IsReadOnly="True" AcceptsReturn="True" HorizontalScrollBarVisibility="Auto" VerticalScrollBarVisibility="Auto" TextWrapping="NoWrap" Padding="8"/>
+                </TabItem>
+
+                <!-- Native x64 -->
+                <TabItem Header="Native x64">
+                    <DataGrid x:Name="NativeCodeGrid" AutoGenerateColumns="False" IsReadOnly="True" CanUserAddRows="False" HeadersVisibility="Column" FontFamily="Consolas" FontSize="13">
+                        <DataGrid.Columns>
+                            <DataGridTextColumn Header="Offset" Binding="{Binding Offset}" Width="100"/>
+                            <DataGridTextColumn Header="Bytes" Binding="{Binding BytesText}" Width="250"/>
+                            <DataGridTextColumn Header="Assembly" Binding="{Binding Assembly}" Width="*"/>
+                        </DataGrid.Columns>
+                    </DataGrid>
+                </TabItem>
+            </TabControl>
+        </Grid>
+    </DockPanel>
+</Window>
