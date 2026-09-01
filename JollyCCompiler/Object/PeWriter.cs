@@ -58,20 +58,49 @@ namespace JollyCCompiler.Object
 
             foreach (var fixup in result.Fixups)
             {
-                if (fixup.Kind != X64FixupKind.RipRelative32) throw new NotSupportedException($"Unsupported x64 fixup kind '{fixup.Kind}'.");
-
-                uint targetRva;
-
-                if (dataRvas.TryGetValue(fixup.Symbol, out uint dataRva)) targetRva = dataRva;
-                else if (string.Equals(fixup.Symbol, "printf", StringComparison.Ordinal)) targetRva = printfIatRva;
-                else if (string.Equals(fixup.Symbol, "ExitProcess", StringComparison.Ordinal)) targetRva = exitProcessIatRva;
-                else throw new InvalidOperationException($"Unknown x64 fixup symbol '{fixup.Symbol}'.");
-
                 uint instructionRva = TextRva + (uint)entryStubSize + (uint)fixup.Offset;
                 uint nextInstructionRva = instructionRva + 4;
-                int displacement = checked((int)(targetRva - nextInstructionRva));
 
-                WriteInt32(text, entryStubSize + fixup.Offset, displacement);
+                if (fixup.Kind == X64FixupKind.RipRelative32)
+                {
+                    uint targetRva;
+
+                    if (dataRvas.TryGetValue(fixup.Symbol, out uint dataRva))
+                    {
+                        targetRva = dataRva;
+                    }
+                    else if (string.Equals(fixup.Symbol, "printf", StringComparison.Ordinal))
+                    {
+                        targetRva = printfIatRva;
+                    }
+                    else if (string.Equals(fixup.Symbol, "ExitProcess", StringComparison.Ordinal))
+                    {
+                        targetRva = exitProcessIatRva;
+                    }
+                    else
+                    {
+                        throw new InvalidOperationException($"Unknown x64 RIP-relative fixup symbol '{fixup.Symbol}'.");
+                    }
+
+                    int displacement = checked((int)((long)targetRva - nextInstructionRva));
+
+                    WriteInt32(text, entryStubSize + fixup.Offset, displacement);
+                }
+                else if (fixup.Kind == X64FixupKind.Relative32)
+                {
+                    if (!result.Labels.TryGetValue(fixup.Symbol, out int targetOffset))
+                    {
+                        throw new InvalidOperationException($"Unknown x64 relative label '{fixup.Symbol}'.");
+                    }
+
+                    uint targetLabelRva = TextRva + (uint)entryStubSize + (uint)targetOffset;
+                    int displacement = checked((int)((long)targetLabelRva - nextInstructionRva));
+                    WriteInt32(text, entryStubSize + fixup.Offset, displacement);
+                }
+                else
+                {
+                    throw new NotSupportedException($"Unsupported x64 fixup kind '{fixup.Kind}'.");
+                }
             }
 
             const int peHeaderOffset = 0x80;

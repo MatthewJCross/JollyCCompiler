@@ -30,16 +30,102 @@ namespace JollyCCompiler
         """
         int main()
         {
-            printf("Hello from JollyC!\n\n");
+            int a = 10;
+            int b = 20;
+            int c = 0;
 
-            int x = 10;
-            int y = 20;
+            printf("Basic arithmetic:\n");
 
-            printf("x = %d\n", x);
-            printf("y = %d\n", y);
-            printf("total = %d\n", x + y);
+            c = a + b;
+            printf("a + b = %d\n", c);
 
-            return x + y;
+            c = b - a;
+            printf("b - a = %d\n", c);
+
+            c = a * b;
+            printf("a * b = %d\n", c);
+
+            c = b / a;
+            printf("b / a = %d\n", c);
+
+            c = b % a;
+            printf("b %% a = %d\n", c);
+
+            printf("Comparisons:\n");
+
+            printf("a == b: %d\n", a == b);
+            printf("a != b: %d\n", a != b);
+            printf("a < b: %d\n", a < b);
+            printf("a <= b: %d\n", a <= b);
+            printf("a > b: %d\n", a > b);
+            printf("a >= b: %d\n", a >= b);
+
+            printf("Logical operators:\n");
+
+            printf("a < b && b < 50: %d\n", a < b && b < 50);
+            printf("a > b && b < 50: %d\n", a > b && b < 50);
+
+            printf("a > b || b < 50: %d\n", a > b || b < 50);
+            printf("a > b || b > 50: %d\n", a > b || b > 50);
+
+            printf("!0: %d\n", !0);
+            printf("!1: %d\n", !1);
+
+            printf("Do-While loop:\n");
+
+            int i = 0;
+
+            do
+            {
+                printf("i = %d\n", i);
+                i = i + 1;
+            }while (i < 5);
+        
+            i = 0;
+
+            printf("While loop:\n");
+            while (i < 5)
+            {
+                printf("i = %d\n", i);
+                i = i + 1;
+            }
+
+            printf("While with &&:\n");
+
+            i = 0;
+
+            while (i < 10 && i < 3)
+            {
+                printf("i = %d\n", i);
+                i = i + 1;
+            }
+
+            printf("For loop:\n");
+
+            for (int j = 0; j < 5; j = j + 1)
+            {
+                printf("j = %d\n", j);
+            }
+
+            printf("For with &&:\n");
+
+            for (int k = 0; k < 10 && k < 3; k = k + 1)
+            {
+                printf("k = %d\n", k);
+            }
+
+            printf("Complex expression:\n");
+
+            c = (a + b) * 2;
+            printf("(a + b) * 2 = %d\n", c);
+
+            c = b > a && a < 20;
+            printf("b > a && a < 20 = %d\n", c);
+
+            c = b < a || a == 10;
+            printf("b < a || a == 10 = %d\n", c);
+
+            return 0;
         }
         """;
 

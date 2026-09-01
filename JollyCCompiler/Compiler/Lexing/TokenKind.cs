@@ -1,8 +1,4 @@
-﻿using System;
-using System.Collections.Generic;
-using System.Text;
-
-namespace JollyCCompiler.Compiler.Lexing
+﻿namespace JollyCCompiler.Compiler.Lexing
 {
     public enum TokenKind
     {
@@ -19,6 +15,7 @@ namespace JollyCCompiler.Compiler.Lexing
         If,
         Else,
         While,
+        Do,
         For,
 
         Plus,
@@ -45,6 +42,9 @@ namespace JollyCCompiler.Compiler.Lexing
         LeftBracket,
         RightBracket,
 
+        AndAnd,
+        OrOr,
+        
         Comma,
         Semicolon
     }

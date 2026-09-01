@@ -81,15 +81,24 @@ namespace JollyCCompiler.Compiler.Lexing
                     ']' => TokenKind.RightBracket,
                     ',' => TokenKind.Comma,
                     ';' => TokenKind.Semicolon,
+
+                    '&' when Peek() == '&' => TokenKind.AndAnd,
+                    '|' when Peek() == '|' => TokenKind.OrOr,
+
                     '&' => TokenKind.Ampersand,
-                    '!' when Peek() != '=' => TokenKind.Exclamation,
-                    '=' when Peek() != '=' => TokenKind.Equals,
-                    '=' when Peek() == '=' => TokenKind.EqualEqual,
+
                     '!' when Peek() == '=' => TokenKind.NotEqual,
-                    '<' when Peek() != '=' => TokenKind.Less,
+                    '!' => TokenKind.Exclamation,
+
+                    '=' when Peek() == '=' => TokenKind.EqualEqual,
+                    '=' => TokenKind.Equals,
+
                     '<' when Peek() == '=' => TokenKind.LessEqual,
-                    '>' when Peek() != '=' => TokenKind.Greater,
+                    '<' => TokenKind.Less,
+
                     '>' when Peek() == '=' => TokenKind.GreaterEqual,
+                    '>' => TokenKind.Greater,
+
                     _ => null
                 };
 
@@ -100,7 +109,17 @@ namespace JollyCCompiler.Compiler.Lexing
                     continue;
                 }
 
-                if (Current is '=' or '!' or '<' or '>')
+                if (Current == '&' && Peek() == '&')
+                {
+                    text = "&&";
+                    Advance();
+                }
+                else if (Current == '|' && Peek() == '|')
+                {
+                    text = "||";
+                    Advance();
+                }
+                else if (Current is '=' or '!' or '<' or '>')
                 {
                     if (Peek() == '=')
                     {
@@ -174,6 +193,7 @@ namespace JollyCCompiler.Compiler.Lexing
                 "else" => TokenKind.Else,
                 "while" => TokenKind.While,
                 "for" => TokenKind.For,
+                "do" => TokenKind.Do,
                 _ => TokenKind.Identifier
             };
 

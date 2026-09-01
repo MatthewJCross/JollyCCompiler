@@ -11,6 +11,7 @@ namespace JollyCCompiler.Compiler.Syntax
     public sealed record VariableDeclarationStatement(string Type, string Name, ExpressionNode? Initializer) : StatementNode;
     public sealed record ReturnStatement(ExpressionNode? Expression) : StatementNode;
     public sealed record ExpressionStatement(ExpressionNode Expression) : StatementNode;
+    public sealed record ForStatement(StatementNode? Initializer, ExpressionNode? Condition, ExpressionNode? Increment, StatementNode Body) : StatementNode;
     public abstract record ExpressionNode : AstNode;
     public sealed record IntegerExpression(int Value) : ExpressionNode;
     public sealed record StringExpression(string Value) : ExpressionNode;
@@ -19,4 +20,6 @@ namespace JollyCCompiler.Compiler.Syntax
     public sealed record UnaryExpression(TokenKind Operator, ExpressionNode Operand) : ExpressionNode;
     public sealed record CallExpression(string Name, IReadOnlyList<ExpressionNode> Arguments) : ExpressionNode;
     public sealed record AssignmentExpression(string Name, ExpressionNode Value) : ExpressionNode;
+    public sealed record WhileStatement(ExpressionNode Condition, StatementNode Body) : StatementNode;
+    public sealed record DoWhileStatement(StatementNode Body, ExpressionNode Condition) : StatementNode;
 }
