@@ -121,6 +121,9 @@ namespace JollyCCompiler.Compiler.Parsing
             if (Current.Kind == TokenKind.Do) return ParseDoWhile();
             if (Current.Kind == TokenKind.Return) return ParseReturn();
             if (Current.Kind == TokenKind.LeftBrace) return ParseBlock();
+            if (Current.Kind == TokenKind.If) return ParseIf();
+            if (Current.Kind == TokenKind.Break) return ParseBreak();
+            if (Current.Kind == TokenKind.Continue) return ParseContinue();
 
             if (Current.Kind == TokenKind.Semicolon)
             {
@@ -227,6 +230,28 @@ namespace JollyCCompiler.Compiler.Parsing
             return new DoWhileStatement(body, condition);
         }
 
+        private IfStatement ParseIf()
+        {
+            Expect(TokenKind.If, "Expected 'if'.");
+            Expect(TokenKind.LeftParen, "Expected '(' after 'if'.");
+
+            var condition = ParseExpression();
+
+            Expect(TokenKind.RightParen, "Expected ')' after if condition.");
+
+            var thenStatement = ParseStatement();
+
+            StatementNode? elseStatement = null;
+
+            if (Current.Kind == TokenKind.Else)
+            {
+                Advance();
+                elseStatement = ParseStatement();
+            }
+
+            return new IfStatement(condition, thenStatement, elseStatement);
+        }
+
         private ReturnStatement ParseReturn()
         {
             Expect(TokenKind.Return, "Expected 'return'.");
@@ -239,6 +264,20 @@ namespace JollyCCompiler.Compiler.Parsing
             Expect(TokenKind.Semicolon, "Expected ';' after return statement.");
 
             return new ReturnStatement(expression);
+        }
+
+        private BreakStatement ParseBreak()
+        {
+            Expect(TokenKind.Break, "Expected 'break'.");
+            Expect(TokenKind.Semicolon, "Expected ';' after break.");
+            return new BreakStatement();
+        }
+
+        private ContinueStatement ParseContinue()
+        {
+            Expect(TokenKind.Continue, "Expected 'continue'.");
+            Expect(TokenKind.Semicolon, "Expected ';' after continue.");
+            return new ContinueStatement();
         }
 
         private ExpressionNode ParseExpression()

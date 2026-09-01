@@ -22,4 +22,7 @@ namespace JollyCCompiler.Compiler.Syntax
     public sealed record AssignmentExpression(string Name, ExpressionNode Value) : ExpressionNode;
     public sealed record WhileStatement(ExpressionNode Condition, StatementNode Body) : StatementNode;
     public sealed record DoWhileStatement(StatementNode Body, ExpressionNode Condition) : StatementNode;
+    public sealed record IfStatement(ExpressionNode Condition, StatementNode Then, StatementNode? Else) : StatementNode;
+    public sealed record BreakStatement : StatementNode;
+    public sealed record ContinueStatement : StatementNode;
 }

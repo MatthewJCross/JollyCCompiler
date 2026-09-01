@@ -194,6 +194,8 @@ namespace JollyCCompiler.Compiler.Lexing
                 "while" => TokenKind.While,
                 "for" => TokenKind.For,
                 "do" => TokenKind.Do,
+                "break" => TokenKind.Break,
+                "continue" => TokenKind.Continue,
                 _ => TokenKind.Identifier
             };
 

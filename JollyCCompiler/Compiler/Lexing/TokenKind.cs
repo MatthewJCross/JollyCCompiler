@@ -18,6 +18,9 @@
         Do,
         For,
 
+        Break,
+        Continue,
+
         Plus,
         Minus,
         Star,
