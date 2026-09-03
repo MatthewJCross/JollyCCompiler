@@ -455,6 +455,14 @@ namespace JollyCCompiler.Compiler.CodeGen.X64
             _instructions.Add(new X64Instruction(offset, bytes, "neg eax"));
         }
 
+        public void CmpEaxImm32(int value) 
+        { 
+            var offset = Offset; 
+            var bytes = new byte[] { 0x3D, (byte)value, (byte)(value >> 8), (byte)(value >> 16), (byte)(value >> 24) }; 
+            _code.AddRange(bytes); 
+            _instructions.Add(new X64Instruction(offset, bytes, $"cmp eax, {value}")); 
+        }
+
         public void EmitByte(byte value)
         {
             _code.Add(value);
@@ -579,6 +587,46 @@ namespace JollyCCompiler.Compiler.CodeGen.X64
             var bytes = new byte[] { 0x49, 0x89, 0xC1 };
             _code.AddRange(bytes);
             _instructions.Add(new X64Instruction(offset, bytes, "mov r9, rax"));
+        }
+
+        public void MovEaxRaxMemory()
+        {
+            var offset = Offset;
+            var bytes = new byte[] { 0x8B, 0x00 };
+            _code.AddRange(bytes);
+            _instructions.Add(new X64Instruction(offset, bytes, "mov eax, [rax]"));
+        }
+
+        public void MovRbpDisp32Eax(int displacement)
+        {
+            var offset = Offset;
+            var bytes = new byte[] { 0x89, 0x85, (byte)displacement, (byte)(displacement >> 8), (byte)(displacement >> 16), (byte)(displacement >> 24) };
+            _code.AddRange(bytes);
+            _instructions.Add(new X64Instruction(offset, bytes, $"mov [rbp{(displacement >= 0 ? "+" : "")}{displacement}], eax"));
+        }
+
+        public void MovEaxRbpDisp32(int displacement)
+        {
+            var offset = Offset;
+            var bytes = new byte[] { 0x8B, 0x85, (byte)displacement, (byte)(displacement >> 8), (byte)(displacement >> 16), (byte)(displacement >> 24) };
+            _code.AddRange(bytes);
+            _instructions.Add(new X64Instruction(offset, bytes, $"mov eax, [rbp{(displacement >= 0 ? "+" : "")}{displacement}]"));
+        }
+
+        public void LeaRaxRbpDisp32(int displacement)
+        {
+            var offset = Offset;
+            var bytes = new byte[] { 0x48, 0x8D, 0x85, (byte)displacement, (byte)(displacement >> 8), (byte)(displacement >> 16), (byte)(displacement >> 24) };
+            _code.AddRange(bytes);
+            _instructions.Add(new X64Instruction(offset, bytes, $"lea rax, [rbp{(displacement >= 0 ? "+" : "")}{displacement}]"));
+        }
+
+        public void SubRaxRcx() 
+        { 
+            var offset = Offset; 
+            var bytes = new byte[] { 0x48, 0x29, 0xC8 }; 
+            _code.AddRange(bytes); 
+            _instructions.Add(new X64Instruction(offset, bytes, "sub rax,rcx")); 
         }
 
         public int GetCallStackSize(int argumentCount)

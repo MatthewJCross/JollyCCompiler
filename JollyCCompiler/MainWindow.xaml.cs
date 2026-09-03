@@ -31,114 +31,39 @@ namespace JollyCCompiler
 
         private static string SampleSource =>
         """
-        int main(int argc, char **argv)
+        int main()
         {
+            int a[5];
             int i;
-            int count;
 
-            printf("=== JollyC Compiler Test ===\n");
-
-            printf("argc = %d\n", argc);
-
-            printf("argv[0] = %s\n", argv[0]);
-
-            if (argc > 1)
-                printf("argv[1] = %s\n", argv[1]);
-
-            if (argc > 2)
-                printf("argv[2] = %s\n", argv[2]);
-
-            if (argc > 3)
-                printf("argv[3] = %s\n", argv[3]);
-
-            if (argc > 4)
-                printf("argv[4] = %s\n", argv[4]);
-
-            printf("--- repeated argv access ---\n");
-
-            if (argc > 1)
-                printf("%s %s %s\n", argv[1], argv[1], argv[1]);
-
-            printf("--- locals and arithmetic ---\n");
-
-            count = argc + 10;
-            printf("count = %d\n", count);
-
-            count = count * 2;
-            printf("count * 2 = %d\n", count);
-
-            count = count - 5;
-            printf("count - 5 = %d\n", count);
-
-            printf("--- comparisons ---\n");
-
-            if (argc == 1)
-                printf("argc == 1\n");
-
-            if (argc != 1)
-                printf("argc != 1\n");
-
-            if (argc > 2)
-                printf("argc > 2\n");
-
-            if (argc >= 2)
-                printf("argc >= 2\n");
-
-            if (argc < 10)
-                printf("argc < 10\n");
-
-            if (argc <= 10)
-                printf("argc <= 10\n");
-
-            printf("--- for loop ---\n");
-
-            for (i = 0; i < argc; i++)
-                printf("for[%d] = %s\n", i, argv[i]);
-
-            printf("--- while loop ---\n");
+            a[0] = 1;
+            a[1] = 2;
+            a[2] = 3;
+            a[3] = 4;
+            a[4] = 5;
 
             i = 0;
 
-            while (i < argc)
-            {
-                printf("while[%d] = %s\n", i, argv[i]);
-                i = i + 1;
-            }
+            printf("%d ", ++a[i]);
+            printf("%d ", a[i]++);
+            printf("%d ", a[i]);
 
-            printf("--- do while loop ---\n");
+            i++;
 
-            i = 0;
+            printf("%d ", --a[i]);
+            printf("%d ", a[i]--);
+            printf("%d ", a[i]);
 
-            do
-            {
-                printf("do[%d] = %s\n", i, argv[i]);
-                i = i + 1;
-            }
-            while (i < argc);
+            a[2] += a[0];
+            a[3] -= a[1];
+            a[4] *= a[2];
+            a[4] /= a[0];
+            a[4] %= 7;
 
-            printf("--- logical operators ---\n");
+            printf("%d %d %d\n", a[2], a[3], a[4]);
 
-            if (argc > 1 && argc < 10)
-                printf("argc > 1 && argc < 10\n");
-
-            if (argc == 1 || argc > 2)
-                printf("argc == 1 || argc > 2\n");
-
-            printf("--- unary operators ---\n");
-
-            count = 5;
-            printf("count = %d\n", count);
-            printf("-count = %d\n", -count);
-            printf("!count = %d\n", !count);
-
-            count = 0;
-            printf("!0 = %d\n", !count);
-
-            printf("=== Test Complete ===\n");
-
-            return 0;
-        }
-        
+            return 0;        }
+               
         """;
 
         private void New_Click(object sender, RoutedEventArgs e)

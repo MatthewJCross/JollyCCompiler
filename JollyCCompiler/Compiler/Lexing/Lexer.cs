@@ -88,6 +88,7 @@ public sealed class Lexer
                 ']' => TokenKind.RightBracket,
                 ',' => TokenKind.Comma,
                 ';' => TokenKind.Semicolon,
+                ':' => TokenKind.Colon,
 
                 '&' when Peek() == '&' => TokenKind.AndAnd,
                 '|' when Peek() == '|' => TokenKind.OrOr,
@@ -216,6 +217,9 @@ public sealed class Lexer
             "while" => TokenKind.While,
             "for" => TokenKind.For,
             "do" => TokenKind.Do,
+            "switch" => TokenKind.Switch,
+            "case" => TokenKind.Case,
+            "default" => TokenKind.Default,
             "break" => TokenKind.Break,
             "continue" => TokenKind.Continue,
             _ => TokenKind.Identifier

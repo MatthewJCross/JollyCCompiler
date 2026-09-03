@@ -8,7 +8,7 @@ namespace JollyCCompiler.Compiler.Syntax
     public sealed record ParameterNode(string Type, string Name) : AstNode;
     public abstract record StatementNode : AstNode;
     public sealed record BlockStatement(IReadOnlyList<StatementNode> Statements) : StatementNode;
-    public sealed record VariableDeclarationStatement(string Type, string Name, ExpressionNode? Initializer) : StatementNode;
+    public sealed record VariableDeclarationStatement(string Type, string Name, ExpressionNode? Initializer, int? ArrayLength = null) : StatementNode;
     public sealed record ReturnStatement(ExpressionNode? Expression) : StatementNode;
     public sealed record ExpressionStatement(ExpressionNode Expression) : StatementNode;
     public sealed record ForStatement(StatementNode? Initializer, ExpressionNode? Condition, ExpressionNode? Increment, StatementNode Body) : StatementNode;
@@ -19,11 +19,12 @@ namespace JollyCCompiler.Compiler.Syntax
     public sealed record BinaryExpression(ExpressionNode Left, TokenKind Operator, ExpressionNode Right) : ExpressionNode;
     public sealed record UnaryExpression(TokenKind Operator, ExpressionNode Operand, bool IsPostfix = false) : ExpressionNode;
     public sealed record CallExpression(string Name, IReadOnlyList<ExpressionNode> Arguments) : ExpressionNode;
-    public sealed record AssignmentExpression(string Name, TokenKind Operator, ExpressionNode Value) : ExpressionNode;
+    public sealed record AssignmentExpression(ExpressionNode Target, TokenKind Operator, ExpressionNode Value) : ExpressionNode;
     public sealed record WhileStatement(ExpressionNode Condition, StatementNode Body) : StatementNode;
     public sealed record DoWhileStatement(StatementNode Body, ExpressionNode Condition) : StatementNode;
     public sealed record IfStatement(ExpressionNode Condition, StatementNode Then, StatementNode? Else) : StatementNode;
-    public sealed record BreakStatement : StatementNode;
+    public sealed record SwitchStatement(ExpressionNode Expression, IReadOnlyList<SwitchCase> Cases, StatementNode? Default = null) : StatementNode;
+    public sealed record SwitchCase(ExpressionNode Value, IReadOnlyList<StatementNode> Statements) : AstNode; public sealed record BreakStatement : StatementNode;
     public sealed record ContinueStatement : StatementNode;
     public sealed record ArraySubscriptExpression(ExpressionNode Array, ExpressionNode Index) : ExpressionNode;
 }

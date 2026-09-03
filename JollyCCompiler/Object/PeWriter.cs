@@ -37,18 +37,88 @@ namespace JollyCCompiler.Object
             string? directory = Path.GetDirectoryName(Path.GetFullPath(filePath)); 
             if (!string.IsNullOrEmpty(directory)) 
                 Directory.CreateDirectory(directory); 
-            byte[] rdata = BuildRDataSection(result, out Dictionary<string, uint> dataSymbolRvas); 
-            byte[] idata = BuildImportSection(out uint getCommandLineIatRva, out uint commandLineToArgvIatRva, out uint localAllocIatRva, out uint localFreeIatRva, out uint wideCharToMultiByteIatRva, out uint printfIatRva, out uint exitProcessIatRva); byte[] startup = BuildStartup(getCommandLineIatRva, commandLineToArgvIatRva, localAllocIatRva, localFreeIatRva, exitProcessIatRva, out int mainCallDispOffset); 
+            
+            byte[] startup = BuildStartup(0, 0, 0, 0, 0, out int mainCallDispOffset); 
             int entryStubSize = startup.Length; 
-            uint mainRva = TextRva + (uint)entryStubSize;
+            uint mainRva = TextRva + (uint)entryStubSize; 
             PatchRelative32(startup, mainCallDispOffset, TextRva + (uint)(mainCallDispOffset + 4), mainRva); 
-            byte[] text = new byte[AlignUp(entryStubSize + result.MachineCode.Length, (int)FileAlignment)]; Buffer.BlockCopy(startup, 0, text, 0, startup.Length); Buffer.BlockCopy(result.MachineCode, 0, text, entryStubSize, result.MachineCode.Length); foreach (var fixup in result.Fixups) { if (fixup.Kind == X64FixupKind.RipRelative32) { uint targetRva; if (!dataSymbolRvas.TryGetValue(fixup.Symbol, out targetRva)) { if (string.Equals(fixup.Symbol, "printf", StringComparison.Ordinal)) targetRva = printfIatRva; else if (string.Equals(fixup.Symbol, "ExitProcess", StringComparison.Ordinal)) targetRva = exitProcessIatRva; else throw new InvalidOperationException($"Unknown x64 RIP-relative fixup symbol '{fixup.Symbol}'."); } uint instructionRva = TextRva + (uint)entryStubSize + (uint)fixup.Offset; uint nextInstructionRva = instructionRva + 4; int displacement = checked((int)((long)targetRva - nextInstructionRva)); WriteInt32(text, entryStubSize + fixup.Offset, displacement); } else if (fixup.Kind == X64FixupKind.Relative32) { if (!result.Labels.TryGetValue(fixup.Symbol, out int targetOffset)) throw new InvalidOperationException($"Unknown x64 relative label '{fixup.Symbol}'."); uint targetLabelRva = TextRva + (uint)entryStubSize + (uint)targetOffset; uint instructionRva = TextRva + (uint)entryStubSize + (uint)fixup.Offset; uint nextInstructionRva = instructionRva + 4; int displacement = checked((int)((long)targetLabelRva - nextInstructionRva)); WriteInt32(text, entryStubSize + fixup.Offset, displacement); } else throw new NotSupportedException($"Unsupported x64 fixup kind '{fixup.Kind}'."); } const ushort numberOfSections = 3; const ushort sizeOfOptionalHeader = 0xF0; int dosHeaderSize = 0x80; int peSignatureSize = 4; int fileHeaderSize = 20; int optionalHeaderSize = sizeOfOptionalHeader; int sectionHeaderSize = 40 * numberOfSections; uint headersSize = AlignUp((uint)(dosHeaderSize + peSignatureSize + fileHeaderSize + optionalHeaderSize + sectionHeaderSize), FileAlignment); uint textRawSize = AlignUp((uint)text.Length, FileAlignment); uint rdataRawSize = AlignUp((uint)Math.Max(1, rdata.Length), FileAlignment); uint idataRawSize = AlignUp((uint)Math.Max(1, idata.Length), FileAlignment); uint textVirtualSize = (uint)text.Length; uint rdataVirtualSize = Math.Max(1u, (uint)rdata.Length); uint idataVirtualSize = Math.Max(1u, (uint)idata.Length); uint textRawPointer = headersSize; uint rdataRawPointer = textRawPointer + textRawSize; uint idataRawPointer = rdataRawPointer + rdataRawSize; uint sizeOfImage = AlignUp(IDataRva + idataVirtualSize, SectionAlignment); byte[] headers = new byte[headersSize]; WriteDosHeader(headers); WritePeHeaders(headers, textVirtualSize, textRawSize, rdataVirtualSize, rdataRawSize, idataVirtualSize, idataRawSize, headersSize, sizeOfImage, numberOfSections, sizeOfOptionalHeader); WriteSectionHeaders(headers, textVirtualSize, textRawSize, textRawPointer, rdataVirtualSize, rdataRawSize, rdataRawPointer, idataVirtualSize, idataRawSize, idataRawPointer); using FileStream stream = new FileStream(filePath, FileMode.Create, FileAccess.Write, FileShare.None); stream.Write(headers, 0, headers.Length); WriteSection(stream, text, textRawSize); WriteSection(stream, rdata, rdataRawSize); WriteSection(stream, idata, idataRawSize); }
+            byte[] text = new byte[AlignUp(entryStubSize + result.MachineCode.Length, (int)FileAlignment)]; 
+            Buffer.BlockCopy(startup, 0, text, 0, startup.Length); 
+            Buffer.BlockCopy(result.MachineCode, 0, text, entryStubSize, result.MachineCode.Length); 
+            uint textVirtualSize = (uint)text.Length; 
+            uint rdataRva = AlignUp(TextRva + textVirtualSize, SectionAlignment); 
+            byte[] rdata = BuildRDataSection(result, rdataRva, out Dictionary<string, uint> dataSymbolRvas); 
+            uint idataRva = AlignUp(rdataRva + (uint)Math.Max(1, rdata.Length), SectionAlignment); 
+            byte[] idata = BuildImportSection(idataRva, out uint getCommandLineIatRva, out uint commandLineToArgvIatRva, out uint localAllocIatRva, out uint localFreeIatRva, out uint wideCharToMultiByteIatRva, out uint printfIatRva, out uint exitProcessIatRva); 
+            startup = BuildStartup(getCommandLineIatRva, commandLineToArgvIatRva, localAllocIatRva, localFreeIatRva, exitProcessIatRva, out mainCallDispOffset); entryStubSize = startup.Length; 
+            mainRva = TextRva + (uint)entryStubSize; 
+            PatchRelative32(startup, mainCallDispOffset, TextRva + (uint)(mainCallDispOffset + 4), mainRva); 
+            text = new byte[AlignUp(entryStubSize + result.MachineCode.Length, (int)FileAlignment)]; 
+            Buffer.BlockCopy(startup, 0, text, 0, startup.Length); 
+            Buffer.BlockCopy(result.MachineCode, 0, text, entryStubSize, result.MachineCode.Length); 
+            foreach (var fixup in result.Fixups) 
+            { 
+                if (fixup.Kind == X64FixupKind.RipRelative32) 
+                { 
+                    uint targetRva; 
+                    if (!dataSymbolRvas.TryGetValue(fixup.Symbol, out targetRva)) 
+                    { 
+                        if (string.Equals(fixup.Symbol, "printf", StringComparison.Ordinal)) 
+                            targetRva = printfIatRva; 
+                        else if (string.Equals(fixup.Symbol, "ExitProcess", StringComparison.Ordinal)) 
+                            targetRva = exitProcessIatRva; 
+                        else 
+                            throw new InvalidOperationException($"Unknown x64 RIP-relative fixup symbol '{fixup.Symbol}'."); 
+                    } 
+                    uint instructionRva = TextRva + (uint)entryStubSize + (uint)fixup.Offset; 
+                    uint nextInstructionRva = instructionRva + 4; 
+                    int displacement = checked((int)((long)targetRva - nextInstructionRva)); 
+                    WriteInt32(text, entryStubSize + fixup.Offset, displacement); 
+                } 
+                else if (fixup.Kind == X64FixupKind.Relative32) 
+                { 
+                    if (!result.Labels.TryGetValue(fixup.Symbol, out int targetOffset)) 
+                        throw new InvalidOperationException($"Unknown x64 relative label '{fixup.Symbol}'."); 
+
+                    uint targetLabelRva = TextRva + (uint)entryStubSize + (uint)targetOffset; 
+                    uint instructionRva = TextRva + (uint)entryStubSize + (uint)fixup.Offset; 
+                    uint nextInstructionRva = instructionRva + 4; 
+                    int displacement = checked((int)((long)targetLabelRva - nextInstructionRva)); 
+                    WriteInt32(text, entryStubSize + fixup.Offset, displacement); 
+                } 
+                else 
+                    throw new NotSupportedException($"Unsupported x64 fixup kind '{fixup.Kind}'."); 
+            } 
+            uint textRawSize = AlignUp((uint)text.Length, FileAlignment); 
+            uint rdataRawSize = AlignUp((uint)Math.Max(1, rdata.Length), FileAlignment); 
+            uint idataRawSize = AlignUp((uint)Math.Max(1, idata.Length), FileAlignment); 
+            uint textSectionEndRva = AlignUp(TextRva + (uint)Math.Max(1, text.Length), SectionAlignment); 
+            uint rdataSectionEndRva = AlignUp(rdataRva + (uint)Math.Max(1, rdata.Length), SectionAlignment); 
+            uint idataSectionEndRva = AlignUp(idataRva + (uint)Math.Max(1, idata.Length), SectionAlignment); 
+            uint sizeOfImage = idataSectionEndRva; const ushort numberOfSections = 3; 
+            const ushort sizeOfOptionalHeader = 0xF0; 
+            int dosHeaderSize = 0x80; 
+            int peSignatureSize = 4; 
+            int fileHeaderSize = 20; 
+            int optionalHeaderSize = sizeOfOptionalHeader; 
+            int sectionHeaderSize = 40 * numberOfSections; 
+            uint headersSize = AlignUp((uint)(dosHeaderSize + peSignatureSize + fileHeaderSize + optionalHeaderSize + sectionHeaderSize), FileAlignment); 
+            uint textRawPointer = headersSize; uint rdataRawPointer = textRawPointer + textRawSize; uint idataRawPointer = rdataRawPointer + rdataRawSize; 
+            byte[] headers = new byte[headersSize]; WriteDosHeader(headers); 
+            WritePeHeaders(headers, (uint)text.Length, textRawSize, (uint)Math.Max(1, rdata.Length), rdataRawSize, (uint)Math.Max(1, idata.Length), idataRawSize, headersSize, sizeOfImage, numberOfSections, sizeOfOptionalHeader, rdataRva, idataRva); 
+            WriteSectionHeaders(headers, (uint)text.Length, textRawSize, textRawPointer, rdataRva, (uint)Math.Max(1, rdata.Length), rdataRawSize, rdataRawPointer, idataRva, (uint)Math.Max(1, idata.Length), idataRawSize, idataRawPointer); 
+            using FileStream stream = new FileStream(filePath, FileMode.Create, FileAccess.Write, FileShare.None); 
+            stream.Write(headers, 0, headers.Length); 
+            WriteSection(stream, text, textRawSize); 
+            WriteSection(stream, rdata, rdataRawSize); 
+            WriteSection(stream, idata, idataRawSize); 
+        }
 
         private byte[] BuildStartup(uint getCommandLineIatRva, uint commandLineToArgvIatRva, uint localAllocIatRva, uint localFreeIatRva, uint exitProcessIatRva, out int mainCallDispOffset) { StartupEmitter b = new StartupEmitter(); b.Emit(0x48, 0x83, 0xEC, 0x78); int getCommandLineCallDispOffset = b.EmitRipCall(); b.Emit(0x48, 0x89, 0xC1); b.Emit(0x48, 0x8D, 0x54, 0x24, 0x70); int commandLineToArgvCallDispOffset = b.EmitRipCall(); b.Emit(0x49, 0x89, 0xC4); b.Emit(0x44, 0x8B, 0x74, 0x24, 0x70); b.Emit(0x44, 0x89, 0xF0); b.Emit(0xFF, 0xC0); b.Emit(0x48, 0xC1, 0xE0, 0x03); b.Emit(0x89, 0xC2); b.Emit(0x33, 0xC9); int localAllocArgvCallDispOffset = b.EmitRipCall(); b.Emit(0x49, 0x89, 0xC5); b.Emit(0x33, 0xC0); b.Emit(0x4B, 0x89, 0x44, 0xF5, 0x00); b.Emit(0x45, 0x33, 0xFF); b.Mark("convert_loop"); b.Emit(0x45, 0x3B, 0xFE); b.EmitConditionalJump("convert_done"); b.Emit(0x4F, 0x8B, 0x04, 0xFC); b.Emit(0x4C, 0x89, 0x44, 0x24, 0x68); b.Emit(0x33, 0xC0); b.Mark("length_loop"); b.Emit(0x66, 0x41, 0x83, 0x3C, 0x40, 0x00); b.EmitConditionalJump("length_done"); b.Emit(0x48, 0xFF, 0xC0); b.EmitJump("length_loop"); b.Mark("length_done"); b.Emit(0x48, 0xFF, 0xC0); b.Emit(0x48, 0x89, 0xC2); b.Emit(0x33, 0xC9); int localAllocStringCallDispOffset = b.EmitRipCall(); b.Emit(0x49, 0x89, 0xC1); b.Emit(0x4C, 0x8B, 0x44, 0x24, 0x68); b.Emit(0x33, 0xC0); b.Mark("copy_loop"); b.Emit(0x66, 0x41, 0x83, 0x3C, 0x40, 0x00); b.EmitConditionalJump("copy_done"); b.Emit(0x41, 0x0F, 0xB7, 0x0C, 0x40); b.Emit(0x41, 0x88, 0x0C, 0x01); b.Emit(0x48, 0xFF, 0xC0); b.EmitJump("copy_loop"); b.Mark("copy_done"); b.Emit(0x41, 0xC6, 0x04, 0x01, 0x00); b.Emit(0x4F, 0x89, 0x4C, 0xFD, 0x00); b.Emit(0x41, 0xFF, 0xC7); b.EmitJump("convert_loop"); b.Mark("convert_done"); b.Emit(0x44, 0x89, 0xF1); b.Emit(0x4C, 0x89, 0xEA); mainCallDispOffset = b.EmitRelativeCall(); b.Emit(0x89, 0x44, 0x24, 0x74); b.Emit(0x45, 0x33, 0xFF); b.Mark("free_loop"); b.Emit(0x45, 0x3B, 0xFE); b.EmitConditionalJump("free_done"); b.Emit(0x4B, 0x8B, 0x4C, 0xFD, 0x00); int localFreeCallDispOffset = b.EmitRipCall(); b.Emit(0x41, 0xFF, 0xC7); b.EmitJump("free_loop"); b.Mark("free_done"); b.Emit(0x4C, 0x89, 0xE9); int localFreeArrayCallDispOffset = b.EmitRipCall(); b.Emit(0x4C, 0x89, 0xE1); int localFreeWideCallDispOffset = b.EmitRipCall(); b.Emit(0x8B, 0x4C, 0x24, 0x74); int exitProcessCallDispOffset = b.EmitRipCall(); byte[] startup = b.Finish(); PatchRipRelative32(startup, getCommandLineCallDispOffset, TextRva + (uint)(getCommandLineCallDispOffset + 4), getCommandLineIatRva); PatchRipRelative32(startup, commandLineToArgvCallDispOffset, TextRva + (uint)(commandLineToArgvCallDispOffset + 4), commandLineToArgvIatRva); PatchRipRelative32(startup, localAllocArgvCallDispOffset, TextRva + (uint)(localAllocArgvCallDispOffset + 4), localAllocIatRva); PatchRipRelative32(startup, localAllocStringCallDispOffset, TextRva + (uint)(localAllocStringCallDispOffset + 4), localAllocIatRva); PatchRipRelative32(startup, localFreeCallDispOffset, TextRva + (uint)(localFreeCallDispOffset + 4), localFreeIatRva); PatchRipRelative32(startup, localFreeArrayCallDispOffset, TextRva + (uint)(localFreeArrayCallDispOffset + 4), localFreeIatRva); PatchRipRelative32(startup, localFreeWideCallDispOffset, TextRva + (uint)(localFreeWideCallDispOffset + 4), localFreeIatRva); PatchRipRelative32(startup, exitProcessCallDispOffset, TextRva + (uint)(exitProcessCallDispOffset + 4), exitProcessIatRva); return startup; }
 
-        private byte[] BuildRDataSection(X64CodeGenerationResult result, out Dictionary<string, uint> symbolRvas) { symbolRvas = new Dictionary<string, uint>(StringComparer.Ordinal); List<byte> buffer = new List<byte>(); foreach (var item in result.Data) { AlignList(buffer, 8); uint rva = RDataRva + (uint)buffer.Count; symbolRvas[item.Symbol] = rva; buffer.AddRange(item.Data); } return buffer.ToArray(); }
+        private byte[] BuildRDataSection(X64CodeGenerationResult result, uint rdataRva, out Dictionary<string, uint> symbolRvas) { symbolRvas = new Dictionary<string, uint>(StringComparer.Ordinal); List<byte> buffer = new List<byte>(); foreach (var item in result.Data) { AlignList(buffer, 8); uint rva = rdataRva + (uint)buffer.Count; symbolRvas[item.Symbol] = rva; buffer.AddRange(item.Data); } return buffer.ToArray(); }
 
-        private byte[] BuildImportSection(out uint getCommandLineIatRva, out uint commandLineToArgvIatRva, out uint localAllocIatRva, out uint localFreeIatRva, out uint wideCharToMultiByteIatRva, out uint printfIatRva, out uint exitProcessIatRva) { const int kernel32IltOffset = 0x80; const int shell32IltOffset = 0xB0; const int msvcrtIltOffset = 0xC8; const int kernel32IatOffset = 0xE0; const int shell32IatOffset = 0x110; const int msvcrtIatOffset = 0x128; const int getCommandLineHintNameOffset = 0x140; const int commandLineToArgvHintNameOffset = 0x160; const int localAllocHintNameOffset = 0x180; const int localFreeHintNameOffset = 0x190; const int wideCharToMultiByteHintNameOffset = 0x1A0; const int printfHintNameOffset = 0x1C0; const int exitProcessHintNameOffset = 0x1D0; const int kernel32NameOffset = 0x1E0; const int shell32NameOffset = 0x1F0; const int msvcrtNameOffset = 0x200; const int size = 0x210; byte[] data = new byte[size]; uint kernel32IltRva = IDataRva + kernel32IltOffset; uint shell32IltRva = IDataRva + shell32IltOffset; uint msvcrtIltRva = IDataRva + msvcrtIltOffset; getCommandLineIatRva = IDataRva + kernel32IatOffset; localAllocIatRva = IDataRva + kernel32IatOffset + 8; localFreeIatRva = IDataRva + kernel32IatOffset + 16; wideCharToMultiByteIatRva = IDataRva + kernel32IatOffset + 24; exitProcessIatRva = IDataRva + kernel32IatOffset + 32; commandLineToArgvIatRva = IDataRva + shell32IatOffset; printfIatRva = IDataRva + msvcrtIatOffset; uint getCommandLineHintNameRva = IDataRva + getCommandLineHintNameOffset; uint commandLineToArgvHintNameRva = IDataRva + commandLineToArgvHintNameOffset; uint localAllocHintNameRva = IDataRva + localAllocHintNameOffset; uint localFreeHintNameRva = IDataRva + localFreeHintNameOffset; uint wideCharToMultiByteHintNameRva = IDataRva + wideCharToMultiByteHintNameOffset; uint printfHintNameRva = IDataRva + printfHintNameOffset; uint exitProcessHintNameRva = IDataRva + exitProcessHintNameOffset; uint kernel32NameRva = IDataRva + kernel32NameOffset; uint shell32NameRva = IDataRva + shell32NameOffset; uint msvcrtNameRva = IDataRva + msvcrtNameOffset; WriteImportDescriptor(data, 0x00, kernel32IltRva, kernel32NameRva, IDataRva + kernel32IatOffset); WriteImportDescriptor(data, 0x14, shell32IltRva, shell32NameRva, IDataRva + shell32IatOffset); WriteImportDescriptor(data, 0x28, msvcrtIltRva, msvcrtNameRva, IDataRva + msvcrtIatOffset); WriteUInt64(data, kernel32IltOffset + 0, getCommandLineHintNameRva); WriteUInt64(data, kernel32IltOffset + 8, localAllocHintNameRva); WriteUInt64(data, kernel32IltOffset + 16, localFreeHintNameRva); WriteUInt64(data, kernel32IltOffset + 24, wideCharToMultiByteHintNameRva); WriteUInt64(data, kernel32IltOffset + 32, exitProcessHintNameRva); WriteUInt64(data, kernel32IltOffset + 40, 0); WriteUInt64(data, shell32IltOffset + 0, commandLineToArgvHintNameRva); WriteUInt64(data, shell32IltOffset + 8, 0); WriteUInt64(data, msvcrtIltOffset + 0, printfHintNameRva); WriteUInt64(data, msvcrtIltOffset + 8, 0); WriteUInt64(data, kernel32IatOffset + 0, getCommandLineHintNameRva); WriteUInt64(data, kernel32IatOffset + 8, localAllocHintNameRva); WriteUInt64(data, kernel32IatOffset + 16, localFreeHintNameRva); WriteUInt64(data, kernel32IatOffset + 24, wideCharToMultiByteHintNameRva); WriteUInt64(data, kernel32IatOffset + 32, exitProcessHintNameRva); WriteUInt64(data, kernel32IatOffset + 40, 0); WriteUInt64(data, shell32IatOffset + 0, commandLineToArgvHintNameRva); WriteUInt64(data, shell32IatOffset + 8, 0); WriteUInt64(data, msvcrtIatOffset + 0, printfHintNameRva); WriteUInt64(data, msvcrtIatOffset + 8, 0); WriteHintName(data, getCommandLineHintNameOffset, "GetCommandLineW"); WriteHintName(data, commandLineToArgvHintNameOffset, "CommandLineToArgvW"); WriteHintName(data, localAllocHintNameOffset, "LocalAlloc"); WriteHintName(data, localFreeHintNameOffset, "LocalFree"); WriteHintName(data, wideCharToMultiByteHintNameOffset, "WideCharToMultiByte"); WriteHintName(data, printfHintNameOffset, "printf"); WriteHintName(data, exitProcessHintNameOffset, "ExitProcess"); WriteAsciiString(data, kernel32NameOffset, "kernel32.dll"); WriteAsciiString(data, shell32NameOffset, "shell32.dll"); WriteAsciiString(data, msvcrtNameOffset, "msvcrt.dll"); return data; }
+        private byte[] BuildImportSection(uint idataRva, out uint getCommandLineIatRva, out uint commandLineToArgvIatRva, out uint localAllocIatRva, out uint localFreeIatRva, out uint wideCharToMultiByteIatRva, out uint printfIatRva, out uint exitProcessIatRva) { const int kernel32IltOffset = 0x80; const int shell32IltOffset = 0xB0; const int msvcrtIltOffset = 0xC8; const int kernel32IatOffset = 0xE0; const int shell32IatOffset = 0x110; const int msvcrtIatOffset = 0x128; const int getCommandLineHintNameOffset = 0x140; const int commandLineToArgvHintNameOffset = 0x160; const int localAllocHintNameOffset = 0x180; const int localFreeHintNameOffset = 0x190; const int wideCharToMultiByteHintNameOffset = 0x1A0; const int printfHintNameOffset = 0x1C0; const int exitProcessHintNameOffset = 0x1D0; const int kernel32NameOffset = 0x1E0; const int shell32NameOffset = 0x1F0; const int msvcrtNameOffset = 0x200; const int size = 0x210; byte[] data = new byte[size]; uint kernel32IltRva = idataRva + kernel32IltOffset; uint shell32IltRva = idataRva + shell32IltOffset; uint msvcrtIltRva = idataRva + msvcrtIltOffset; getCommandLineIatRva = idataRva + kernel32IatOffset; localAllocIatRva = idataRva + kernel32IatOffset + 8; localFreeIatRva = idataRva + kernel32IatOffset + 16; wideCharToMultiByteIatRva = idataRva + kernel32IatOffset + 24; exitProcessIatRva = idataRva + kernel32IatOffset + 32; commandLineToArgvIatRva = idataRva + shell32IatOffset; printfIatRva = idataRva + msvcrtIatOffset; uint getCommandLineHintNameRva = idataRva + getCommandLineHintNameOffset; uint commandLineToArgvHintNameRva = idataRva + commandLineToArgvHintNameOffset; uint localAllocHintNameRva = idataRva + localAllocHintNameOffset; uint localFreeHintNameRva = idataRva + localFreeHintNameOffset; uint wideCharToMultiByteHintNameRva = idataRva + wideCharToMultiByteHintNameOffset; uint printfHintNameRva = idataRva + printfHintNameOffset; uint exitProcessHintNameRva = idataRva + exitProcessHintNameOffset; uint kernel32NameRva = idataRva + kernel32NameOffset; uint shell32NameRva = idataRva + shell32NameOffset; uint msvcrtNameRva = idataRva + msvcrtNameOffset; WriteImportDescriptor(data, 0x00, kernel32IltRva, kernel32NameRva, idataRva + kernel32IatOffset); WriteImportDescriptor(data, 0x14, shell32IltRva, shell32NameRva, idataRva + shell32IatOffset); WriteImportDescriptor(data, 0x28, msvcrtIltRva, msvcrtNameRva, idataRva + msvcrtIatOffset); WriteUInt64(data, kernel32IltOffset + 0, getCommandLineHintNameRva); WriteUInt64(data, kernel32IltOffset + 8, localAllocHintNameRva); WriteUInt64(data, kernel32IltOffset + 16, localFreeHintNameRva); WriteUInt64(data, kernel32IltOffset + 24, wideCharToMultiByteHintNameRva); WriteUInt64(data, kernel32IltOffset + 32, exitProcessHintNameRva); WriteUInt64(data, kernel32IltOffset + 40, 0); WriteUInt64(data, shell32IltOffset + 0, commandLineToArgvHintNameRva); WriteUInt64(data, shell32IltOffset + 8, 0); WriteUInt64(data, msvcrtIltOffset + 0, printfHintNameRva); WriteUInt64(data, msvcrtIltOffset + 8, 0); WriteUInt64(data, kernel32IatOffset + 0, getCommandLineHintNameRva); WriteUInt64(data, kernel32IatOffset + 8, localAllocHintNameRva); WriteUInt64(data, kernel32IatOffset + 16, localFreeHintNameRva); WriteUInt64(data, kernel32IatOffset + 24, wideCharToMultiByteHintNameRva); WriteUInt64(data, kernel32IatOffset + 32, exitProcessHintNameRva); WriteUInt64(data, kernel32IatOffset + 40, 0); WriteUInt64(data, shell32IatOffset + 0, commandLineToArgvHintNameRva); WriteUInt64(data, shell32IatOffset + 8, 0); WriteUInt64(data, msvcrtIatOffset + 0, printfHintNameRva); WriteUInt64(data, msvcrtIatOffset + 8, 0); WriteHintName(data, getCommandLineHintNameOffset, "GetCommandLineW"); WriteHintName(data, commandLineToArgvHintNameOffset, "CommandLineToArgvW"); WriteHintName(data, localAllocHintNameOffset, "LocalAlloc"); WriteHintName(data, localFreeHintNameOffset, "LocalFree"); WriteHintName(data, wideCharToMultiByteHintNameOffset, "WideCharToMultiByte"); WriteHintName(data, printfHintNameOffset, "printf"); WriteHintName(data, exitProcessHintNameOffset, "ExitProcess"); WriteAsciiString(data, kernel32NameOffset, "kernel32.dll"); WriteAsciiString(data, shell32NameOffset, "shell32.dll"); WriteAsciiString(data, msvcrtNameOffset, "msvcrt.dll"); return data; }
 
         private static void WriteImportDescriptor(byte[] data, int offset, uint originalFirstThunk, uint nameRva, uint firstThunk) { WriteUInt32(data, offset + 0, originalFirstThunk); WriteUInt32(data, offset + 4, 0); WriteUInt32(data, offset + 8, 0); WriteUInt32(data, offset + 12, nameRva); WriteUInt32(data, offset + 16, firstThunk); }
 
@@ -62,9 +132,61 @@ namespace JollyCCompiler.Object
 
         private static void WriteDosHeader(byte[] headers) { headers[0] = (byte)'M'; headers[1] = (byte)'Z'; WriteUInt32(headers, 0x3C, 0x80); }
 
-        private static void WritePeHeaders(byte[] headers, uint textVirtualSize, uint textRawSize, uint rdataVirtualSize, uint rdataRawSize, uint idataVirtualSize, uint idataRawSize, uint sizeOfHeaders, uint sizeOfImage, ushort numberOfSections, ushort sizeOfOptionalHeader) { int peOffset = 0x80; headers[peOffset + 0] = (byte)'P'; headers[peOffset + 1] = (byte)'E'; headers[peOffset + 2] = 0; headers[peOffset + 3] = 0; int fileHeader = peOffset + 4; WriteUInt16(headers, fileHeader + 0, MachineAmd64); WriteUInt16(headers, fileHeader + 2, numberOfSections); WriteUInt32(headers, fileHeader + 4, 0); WriteUInt32(headers, fileHeader + 8, 0); WriteUInt32(headers, fileHeader + 12, 0); WriteUInt16(headers, fileHeader + 16, sizeOfOptionalHeader); WriteUInt16(headers, fileHeader + 18, (ushort)(CharacteristicsExecutableImage | CharacteristicsLargeAddressAware)); int optional = fileHeader + 20; WriteUInt16(headers, optional + 0, 0x20B); headers[optional + 2] = 14; headers[optional + 3] = 0; WriteUInt32(headers, optional + 4, textRawSize); WriteUInt32(headers, optional + 8, rdataRawSize + idataRawSize); WriteUInt32(headers, optional + 12, 0); WriteUInt32(headers, optional + 16, TextRva); WriteUInt32(headers, optional + 20, RDataRva); WriteUInt64(headers, optional + 24, ImageBase); WriteUInt32(headers, optional + 32, SectionAlignment); WriteUInt32(headers, optional + 36, FileAlignment); WriteUInt16(headers, optional + 40, 6); WriteUInt16(headers, optional + 42, 0); WriteUInt16(headers, optional + 44, 0); WriteUInt16(headers, optional + 46, 0); WriteUInt16(headers, optional + 48, 6); WriteUInt16(headers, optional + 50, 0); WriteUInt32(headers, optional + 52, 0); WriteUInt32(headers, optional + 56, sizeOfImage); WriteUInt32(headers, optional + 60, sizeOfHeaders); WriteUInt32(headers, optional + 64, 0); WriteUInt16(headers, optional + 68, SubsystemWindowsCui); WriteUInt16(headers, optional + 70, (ushort)(DllCharacteristicsDynamicBase | DllCharacteristicsNxCompat | DllCharacteristicsNoSeh)); WriteUInt64(headers, optional + 72, 0x100000); WriteUInt64(headers, optional + 80, 0x1000); WriteUInt64(headers, optional + 88, 0x100000); WriteUInt64(headers, optional + 96, 0x1000); WriteUInt32(headers, optional + 104, 0); WriteUInt32(headers, optional + 108, 16); int dataDirectory = optional + 112; WriteUInt32(headers, dataDirectory + 8, IDataRva); WriteUInt32(headers, dataDirectory + 12, 80); }
+        private static void WritePeHeaders(byte[] headers, uint textVirtualSize, uint textRawSize, uint rdataVirtualSize, uint rdataRawSize, uint idataVirtualSize, uint idataRawSize, uint sizeOfHeaders, uint sizeOfImage, ushort numberOfSections, ushort sizeOfOptionalHeader, uint rdataRva, uint idataRva)
+        { 
+            int peOffset = 0x80; 
+            headers[peOffset + 0] = (byte)'P'; 
+            headers[peOffset + 1] = (byte)'E'; 
+            headers[peOffset + 2] = 0; 
+            headers[peOffset + 3] = 0; 
+            int fileHeader = peOffset + 4; 
+            WriteUInt16(headers, fileHeader + 0, MachineAmd64); 
+            WriteUInt16(headers, fileHeader + 2, numberOfSections); 
+            WriteUInt32(headers, fileHeader + 4, 0); 
+            WriteUInt32(headers, fileHeader + 8, 0); 
+            WriteUInt32(headers, fileHeader + 12, 0); 
+            WriteUInt16(headers, fileHeader + 16, sizeOfOptionalHeader); 
+            WriteUInt16(headers, fileHeader + 18, (ushort)(CharacteristicsExecutableImage | CharacteristicsLargeAddressAware)); 
+            int optional = fileHeader + 20; 
+            WriteUInt16(headers, optional + 0, 0x20B); 
+            headers[optional + 2] = 14; 
+            headers[optional + 3] = 0; 
+            WriteUInt32(headers, optional + 4, textRawSize); 
+            WriteUInt32(headers, optional + 8, rdataRawSize + idataRawSize); 
+            WriteUInt32(headers, optional + 12, 0); 
+            WriteUInt32(headers, optional + 16, TextRva); 
+            WriteUInt32(headers, optional + 20, RDataRva); 
+            WriteUInt64(headers, optional + 24, ImageBase); 
+            WriteUInt32(headers, optional + 32, SectionAlignment); 
+            WriteUInt32(headers, optional + 36, FileAlignment); 
+            WriteUInt16(headers, optional + 40, 6); 
+            WriteUInt16(headers, optional + 42, 0); 
+            WriteUInt16(headers, optional + 44, 0); 
+            WriteUInt16(headers, optional + 46, 0); 
+            WriteUInt16(headers, optional + 48, 6); 
+            WriteUInt16(headers, optional + 50, 0); 
+            WriteUInt32(headers, optional + 52, 0); 
+            WriteUInt32(headers, optional + 56, sizeOfImage); 
+            WriteUInt32(headers, optional + 60, sizeOfHeaders); 
+            WriteUInt32(headers, optional + 64, 0); 
+            WriteUInt16(headers, optional + 68, SubsystemWindowsCui); 
+            WriteUInt16(headers, optional + 70, (ushort)(DllCharacteristicsDynamicBase | DllCharacteristicsNxCompat | DllCharacteristicsNoSeh)); 
+            WriteUInt64(headers, optional + 72, 0x100000); 
+            WriteUInt64(headers, optional + 80, 0x1000); 
+            WriteUInt64(headers, optional + 88, 0x100000); 
+            WriteUInt64(headers, optional + 96, 0x1000); 
+            WriteUInt32(headers, optional + 104, 0); 
+            WriteUInt32(headers, optional + 108, 16); 
+            int dataDirectory = optional + 112; 
+            WriteUInt32(headers, dataDirectory + 8, IDataRva); 
+            WriteUInt32(headers, dataDirectory + 12, 80); 
+        }
 
-        private static void WriteSectionHeaders(byte[] headers, uint textVirtualSize, uint textRawSize, uint textRawPointer, uint rdataVirtualSize, uint rdataRawSize, uint rdataRawPointer, uint idataVirtualSize, uint idataRawSize, uint idataRawPointer) { int sectionOffset = 0x80 + 4 + 20 + 0xF0; WriteSectionHeader(headers, sectionOffset, ".text", textVirtualSize, TextRva, textRawSize, textRawPointer, TextCharacteristics); WriteSectionHeader(headers, sectionOffset + 40, ".rdata", rdataVirtualSize, RDataRva, rdataRawSize, rdataRawPointer, RDataCharacteristics); WriteSectionHeader(headers, sectionOffset + 80, ".idata", idataVirtualSize, IDataRva, idataRawSize, idataRawPointer, IDataCharacteristics); }
+        private static void WriteSectionHeaders(byte[] headers, uint textVirtualSize, uint textRawSize, uint textRawPointer, uint rdataRva, uint rdataVirtualSize, uint rdataRawSize, uint rdataRawPointer, uint idataRva, uint idataVirtualSize, uint idataRawSize, uint idataRawPointer) 
+        { 
+            int sectionOffset = 0x80 + 4 + 20 + 0xF0; 
+            WriteSectionHeader(headers, sectionOffset, ".text", textVirtualSize, TextRva, textRawSize, textRawPointer, TextCharacteristics); WriteSectionHeader(headers, sectionOffset + 40, ".rdata", rdataVirtualSize, rdataRva, rdataRawSize, rdataRawPointer, RDataCharacteristics); WriteSectionHeader(headers, sectionOffset + 80, ".idata", idataVirtualSize, idataRva, idataRawSize, idataRawPointer, IDataCharacteristics); 
+        }
 
         private static void WriteSectionHeader(byte[] headers, int offset, string name, uint virtualSize, uint virtualAddress, uint rawSize, uint rawPointer, uint characteristics) { byte[] nameBytes = Encoding.ASCII.GetBytes(name); Buffer.BlockCopy(nameBytes, 0, headers, offset, Math.Min(nameBytes.Length, 8)); WriteUInt32(headers, offset + 8, virtualSize); WriteUInt32(headers, offset + 12, virtualAddress); WriteUInt32(headers, offset + 16, rawSize); WriteUInt32(headers, offset + 20, rawPointer); WriteUInt32(headers, offset + 24, 0); WriteUInt32(headers, offset + 28, 0); WriteUInt16(headers, offset + 32, 0); WriteUInt16(headers, offset + 34, 0); WriteUInt32(headers, offset + 36, characteristics); }
 

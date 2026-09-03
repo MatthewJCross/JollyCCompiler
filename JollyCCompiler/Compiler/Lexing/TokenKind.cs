@@ -18,6 +18,11 @@
         Do,
         For,
 
+        Switch,
+        Case,
+        Default,
+        Colon,
+        
         Break,
         Continue,
 

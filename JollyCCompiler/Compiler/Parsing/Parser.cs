@@ -130,6 +130,7 @@ namespace JollyCCompiler.Compiler.Parsing
             if (Current.Kind == TokenKind.If) return ParseIf();
             if (Current.Kind == TokenKind.Break) return ParseBreak();
             if (Current.Kind == TokenKind.Continue) return ParseContinue();
+            if (Current.Kind == TokenKind.Switch) return ParseSwitch();
 
             if (Current.Kind == TokenKind.Semicolon)
             {
@@ -148,19 +149,41 @@ namespace JollyCCompiler.Compiler.Parsing
         {
             var type = ParseType()!;
             var name = Expect(TokenKind.Identifier, "Expected variable name.");
-
+            int? arrayLength = null;
+            if (Current.Kind == TokenKind.LeftBracket)
+            {
+                Advance();
+                var lengthToken = Expect(TokenKind.IntegerLiteral, "Expected array size.");
+                arrayLength = int.Parse(lengthToken.Text);
+                Expect(TokenKind.RightBracket, "Expected ']' after array size.");
+            }
             ExpressionNode? initializer = null;
-
             if (Current.Kind == TokenKind.Equals)
             {
                 Advance();
                 initializer = ParseExpression();
             }
-
             Expect(TokenKind.Semicolon, "Expected ';' after variable declaration.");
-
-            return new VariableDeclarationStatement(type, name.Text, initializer);
+            return new VariableDeclarationStatement(type, name.Text, initializer, arrayLength);
         }
+
+        //private VariableDeclarationStatement ParseVariableDeclaration()
+        //{
+        //    var type = ParseType()!;
+        //    var name = Expect(TokenKind.Identifier, "Expected variable name.");
+
+        //    ExpressionNode? initializer = null;
+
+        //    if (Current.Kind == TokenKind.Equals)
+        //    {
+        //        Advance();
+        //        initializer = ParseExpression();
+        //    }
+
+        //    Expect(TokenKind.Semicolon, "Expected ';' after variable declaration.");
+
+        //    return new VariableDeclarationStatement(type, name.Text, initializer);
+        //}
 
         private ForStatement ParseFor()
         {
@@ -302,13 +325,13 @@ namespace JollyCCompiler.Compiler.Parsing
                 Advance();
                 var right = ParseAssignment();
 
-                if (left is not IdentifierExpression identifier)
+                if (left is not IdentifierExpression and not ArraySubscriptExpression)
                 {
-                    ErrorAt(operatorToken, "The left side of an assignment must be a variable.");
+                    ErrorAt(operatorToken, "The left side of an assignment must be a variable or array element.");
                     return right;
                 }
 
-                return new AssignmentExpression(identifier.Name, operatorKind, right);
+                return new AssignmentExpression(left, operatorKind, right);
             }
 
             return left;
@@ -534,6 +557,91 @@ namespace JollyCCompiler.Compiler.Parsing
             Expect(TokenKind.RightParen, "Expected ')' after function arguments.");
 
             return new CallExpression(identifier.Text, arguments);
+        }
+
+        private SwitchStatement ParseSwitch() 
+        { 
+            Expect(TokenKind.Switch, "Expected 'switch'."); 
+            Expect(TokenKind.LeftParen, "Expected '(' after 'switch'."); 
+            var expression = ParseExpression(); 
+            Expect(TokenKind.RightParen, "Expected ')' after switch expression."); 
+            Expect(TokenKind.LeftBrace, "Expected '{' after switch expression."); 
+            var cases = new List<SwitchCase>(); 
+            var seenValues = new HashSet<int>(); 
+            var hasDefault = false; 
+            while (Current.Kind != TokenKind.RightBrace && Current.Kind != TokenKind.EndOfFile) 
+            { 
+                if (Current.Kind == TokenKind.Case) 
+                { Advance(); var value = ParseExpression(); 
+                    if (!TryGetConstantInteger(value, out var constantValue)) 
+                        Error("Case value must be an integer constant expression."); 
+                    else if (!seenValues.Add(constantValue)) 
+                        Error($"Duplicate case value '{constantValue}'."); 
+                    
+                    Expect(TokenKind.Colon, "Expected ':' after case value."); 
+                    var statements = new List<StatementNode>(); 
+                    while (Current.Kind != TokenKind.Case && Current.Kind != TokenKind.Default && Current.Kind != TokenKind.RightBrace && Current.Kind != TokenKind.EndOfFile) 
+                    { 
+                        var startPosition = _position; 
+                        var statement = ParseStatement(); 
+                        if (statement is not null) 
+                            statements.Add(statement);
+                        
+                        if (_position == startPosition) 
+                            Synchronize(); 
+                    } 
+                    
+                    cases.Add(new SwitchCase(value, statements)); continue; 
+                } 
+                
+                if (Current.Kind == TokenKind.Default) 
+                { 
+                    Advance(); 
+                    if (hasDefault) 
+                        Error("A switch statement may contain only one default label."); 
+
+                    hasDefault = true; 
+                    Expect(TokenKind.Colon, "Expected ':' after default."); 
+                    var statements = new List<StatementNode>(); 
+                    while (Current.Kind != TokenKind.Case && Current.Kind != TokenKind.Default && Current.Kind != TokenKind.RightBrace && Current.Kind != TokenKind.EndOfFile) 
+                    { 
+                        var startPosition = _position; 
+                        var statement = ParseStatement(); 
+                        if (statement is not null) 
+                            statements.Add(statement); 
+
+                        if (_position == startPosition) 
+                            Synchronize(); 
+                    } 
+                    
+                    cases.Add(new SwitchCase(null, statements)); 
+                    continue; 
+                } 
+                
+                Error($"Expected 'case' or 'default' inside switch."); 
+                Synchronize(); 
+            } 
+            
+            Expect(TokenKind.RightBrace, "Expected '}' after switch."); 
+            return new SwitchStatement(expression, cases); 
+        }
+
+        private static bool TryGetConstantInteger(ExpressionNode expression, out int value) 
+        { 
+            if (expression is IntegerExpression integer) 
+            { 
+                value = integer.Value; 
+                return true; 
+            } 
+            
+            if (expression is UnaryExpression unary && unary.Operator == TokenKind.Minus && unary.Operand is IntegerExpression operand) 
+            { 
+                value = -operand.Value; 
+                return true; 
+            } 
+            
+            value = 0; 
+            return false; 
         }
 
         private Token Expect(TokenKind kind, string message)
