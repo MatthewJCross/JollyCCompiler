@@ -47,6 +47,12 @@ namespace JollyCCompiler.Compiler.Parsing
                     var type = ParseType();
                     if (type is null) return null;
 
+                    while (Current.Kind == TokenKind.Star)
+                    {
+                        Advance();
+                        type += "*";
+                    }
+
                     var parameterName = Expect(TokenKind.Identifier, "Expected parameter name.");
                     if (parameterName.Kind == TokenKind.Identifier) parameters.Add(new ParameterNode(type, parameterName.Text));
 
@@ -447,7 +453,20 @@ namespace JollyCCompiler.Compiler.Parsing
                 if (Current.Kind == TokenKind.LeftParen)
                     return ParseCall(identifier);
 
-                return new IdentifierExpression(identifier.Text);
+                ExpressionNode expression = new IdentifierExpression(identifier.Text);
+
+                while (Current.Kind == TokenKind.LeftBracket)
+                {
+                    Advance();
+
+                    var index = ParseExpression();
+
+                    Expect(TokenKind.RightBracket, "Expected ']' after array subscript.");
+
+                    expression = new ArraySubscriptExpression(expression, index);
+                }
+
+                return expression;
             }
 
             if (Current.Kind == TokenKind.LeftParen)

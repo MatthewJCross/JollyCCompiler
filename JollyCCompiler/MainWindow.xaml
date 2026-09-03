@@ -17,6 +17,7 @@
             </MenuItem>
             <MenuItem Header="_Build">
                 <MenuItem Header="_Compile" Click="Compile_Click"/>
+                <MenuItem Header="_Run" Click="Run_Click"/>
             </MenuItem>
         </Menu>
 
@@ -26,6 +27,7 @@
             <Button Content="Save" Padding="12,4" Margin="2" Click="Save_Click"/>
             <Separator/>
             <Button Content="Compile" Padding="16,4" Margin="2" Click="Compile_Click"/>
+            <Button Content="Run" Padding="16,4" Margin="2" Click="Run_Click"/>
         </ToolBar>
 
         <StatusBar DockPanel.Dock="Bottom">

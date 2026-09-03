@@ -25,4 +25,5 @@ namespace JollyCCompiler.Compiler.Syntax
     public sealed record IfStatement(ExpressionNode Condition, StatementNode Then, StatementNode? Else) : StatementNode;
     public sealed record BreakStatement : StatementNode;
     public sealed record ContinueStatement : StatementNode;
+    public sealed record ArraySubscriptExpression(ExpressionNode Array, ExpressionNode Index) : ExpressionNode;
 }

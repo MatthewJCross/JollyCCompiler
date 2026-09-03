@@ -1,42 +1,72 @@
-﻿using JollyCCompiler.Compiler.CodeGen.X64;
-using JollyCCompiler.Compiler.Lexing;
+﻿using JollyCCompiler.Compiler.Lexing;
 using JollyCCompiler.Compiler.Syntax;
 using System.Text;
 
-namespace JollyCCompiler.Compiler.CodeGen
+namespace JollyCCompiler.Compiler.CodeGen.X64
 {
     public sealed class X64CodeGenerator
     {
         private static readonly Stack<(string ContinueLabel, string BreakLabel)> _loopLabels = new();
-        
+
         public X64CodeGenerationResult Generate(ProgramNode program)
         {
             var emitter = new X64Emitter();
             var data = new List<X64DataItem>();
-            var variables = new Dictionary<string, int>();
 
             var main = program.Functions.FirstOrDefault(f => f.Name == "main");
 
             if (main is null)
                 throw new InvalidOperationException("Program does not contain a main function.");
 
-            var frameSize = CollectVariables(main, variables);
+            var functions = new List<FunctionNode> { main };
 
-            if (frameSize > 0)
-                frameSize = ((frameSize + 15) / 16) * 16;
+            foreach (var function in program.Functions)
+            {
+                if (function.Name != "main")
+                    functions.Add(function);
+            }
 
-            GenerateFunction(main, emitter, data, variables, frameSize);
+            foreach (var function in functions)
+            {
+                var variables = new Dictionary<string, int>();
+                var parameters = new Dictionary<string, (int Index, string Type)>();
+
+                CollectParameters(function, parameters);
+
+                var frameSize = CollectVariables(function, variables);
+
+                if (frameSize > 0)
+                    frameSize = ((frameSize + 15) / 16) * 16;
+
+                GenerateFunction(function, emitter, data, variables, parameters, frameSize);
+            }
+
             return new X64CodeGenerationResult(emitter.GetCode(), emitter.Instructions, emitter.Fixups, data, emitter.Labels);
         }
 
-        private static int CollectVariables(FunctionNode function, Dictionary<string, int> variables)
+        private static int CollectVariables(FunctionNode function, Dictionary<string, int> variables) 
+        { 
+            var nextOffset = 40; 
+            foreach (var statement in function.Body.Statements) 
+                CollectVariablesFromStatement(statement, variables, ref nextOffset); 
+
+            return nextOffset - 8; 
+        }        
+
+        private static void CollectParameters(FunctionNode function, Dictionary<string, (int Index, string Type)> parameters)
         {
-            var nextOffset = 8;
+            for (var i = 0; i < function.Parameters.Count; i++)
+            {
+                var parameter = function.Parameters[i];
 
-            foreach (var statement in function.Body.Statements)
-                CollectVariablesFromStatement(statement, variables, ref nextOffset);
+                if (parameters.ContainsKey(parameter.Name))
+                    throw new InvalidOperationException($"Duplicate parameter '{parameter.Name}'.");
 
-            return nextOffset - 8;
+                if (i >= 4)
+                    throw new NotSupportedException("More than four function parameters are not yet supported.");
+
+                parameters[parameter.Name] = (i, parameter.Type);
+            }
         }
 
         private static void CollectVariablesFromStatement(StatementNode statement, Dictionary<string, int> variables, ref int nextOffset)
@@ -76,51 +106,129 @@ namespace JollyCCompiler.Compiler.CodeGen
             }
         }
 
-        private static void GenerateFunction(FunctionNode function, X64Emitter emitter, List<X64DataItem> data, Dictionary<string, int> variables, int frameSize)
-        {
-            emitter.PushRbp();
-            emitter.MovRbpRsp();
-            emitter.SubRsp(frameSize);
+        private static void GenerateFunction(FunctionNode function, X64Emitter emitter, List<X64DataItem> data, Dictionary<string, int> variables, Dictionary<string, (int Index, string Type)> parameters, int frameSize) 
+        { 
+            var functionLabel = $"$fn_{function.Name}"; 
+            emitter.MarkLabel(functionLabel); 
+            emitter.PushRbp(); 
+            emitter.MovRbpRsp(); 
+            emitter.SubRsp(frameSize); 
+            foreach (var parameter in parameters) 
+            { 
+                var offset = -(parameter.Value.Index + 1) * 8; 
+                switch (parameter.Value.Index) 
+                { 
+                    case 0: 
+                        if (parameter.Value.Type.EndsWith("*", StringComparison.Ordinal)) 
+                        { 
+                            emitter.MovRaxRcx(); 
+                            emitter.MovRbpDisp8Rax(offset); 
+                        } 
+                        else 
+                        { 
+                            emitter.MovEaxEcx(); 
+                            emitter.MovRbpDisp8Eax(offset); 
+                        } 
+                        break; 
+                    
+                    case 1: 
+                        if (parameter.Value.Type.EndsWith("*", StringComparison.Ordinal)) 
+                        { 
+                            emitter.MovRaxRdx(); 
+                            emitter.MovRbpDisp8Rax(offset); 
+                        } 
+                        else 
+                        { 
+                            emitter.MovEaxEdx(); 
+                            emitter.MovRbpDisp8Eax(offset); 
+                        } 
+                        break; 
+                    
+                    case 2: 
+                        if (parameter.Value.Type.EndsWith("*", StringComparison.Ordinal)) 
+                        { 
+                            emitter.MovRaxR8(); 
+                            emitter.MovRbpDisp8Rax(offset); 
+                        } 
+                        else 
+                        { 
+                            emitter.MovEaxR8d(); 
+                            emitter.MovRbpDisp8Eax(offset); 
+                        } 
+                        break; 
+                    
+                    case 3: 
+                        if (parameter.Value.Type.EndsWith("*", StringComparison.Ordinal)) 
+                        { 
+                            emitter.MovRaxR9(); 
+                            emitter.MovRbpDisp8Rax(offset); 
+                        } 
+                        else 
+                        { 
+                            emitter.MovEaxR9d(); 
+                            emitter.MovRbpDisp8Eax(offset); 
+                        } 
+                        break; 
+                } 
+            } 
 
-            foreach (var statement in function.Body.Statements)
-                GenerateStatement(statement, emitter, data, variables, frameSize);
+            foreach (var statement in function.Body.Statements) 
+                GenerateStatement(statement, emitter, data, variables, parameters, frameSize); 
 
-            emitter.MovEax(0);
-            emitter.AddRsp(frameSize);
-            emitter.PopRbp();
-            emitter.Ret();
+            emitter.MovEax(0); 
+            emitter.AddRsp(frameSize); 
+            emitter.PopRbp(); 
+            emitter.Ret(); 
         }
 
-        private static void GenerateStatement(StatementNode statement, X64Emitter emitter, List<X64DataItem> data, Dictionary<string, int> variables, int frameSize)
+        //private static void GenerateFunction(FunctionNode function, X64Emitter emitter, List<X64DataItem> data, Dictionary<string, int> variables, Dictionary<string, (int Index, string Type)> parameters, int frameSize)
+        //{
+        //    var functionLabel = $"$fn_{function.Name}";
+
+        //    emitter.MarkLabel(functionLabel);
+        //    emitter.PushRbp();
+        //    emitter.MovRbpRsp();
+        //    emitter.SubRsp(frameSize);
+
+        //    foreach (var statement in function.Body.Statements)
+        //        GenerateStatement(statement, emitter, data, variables, parameters, frameSize);
+
+        //    emitter.MovEax(0);
+        //    emitter.AddRsp(frameSize);
+        //    emitter.PopRbp();
+        //    emitter.Ret();
+        //}
+
+        private static void GenerateStatement(StatementNode statement, X64Emitter emitter, List<X64DataItem> data, Dictionary<string, int> variables, Dictionary<string, (int Index, string Type)> parameters, int frameSize)
         {
             switch (statement)
             {
                 case VariableDeclarationStatement variableDeclaration:
-                    GenerateVariableDeclaration(variableDeclaration, emitter, data, variables);
+                    GenerateVariableDeclaration(variableDeclaration, emitter, data, variables, parameters);
                     break;
 
                 case ReturnStatement returnStatement:
-                    GenerateReturn(returnStatement, emitter, data, variables, frameSize);
+                    GenerateReturn(returnStatement, emitter, data, variables, parameters, frameSize);
                     break;
 
                 case ExpressionStatement expressionStatement:
-                    GenerateExpressionStatement(expressionStatement, emitter, data, variables);
+                    GenerateExpressionStatement(expressionStatement, emitter, data, variables, parameters);
                     break;
 
                 case ForStatement forStatement:
-                    GenerateForStatement(forStatement, emitter, data, variables, frameSize);
+                    GenerateForStatement(forStatement, emitter, data, variables, parameters, frameSize);
                     break;
 
                 case WhileStatement whileStatement:
-                    GenerateWhileStatement(whileStatement, emitter, data, variables, frameSize);
+                    GenerateWhileStatement(whileStatement, emitter, data, variables, parameters, frameSize);
                     break;
 
                 case DoWhileStatement doWhileStatement:
-                    GenerateDoWhileStatement(doWhileStatement, emitter, data, variables, frameSize);
+                    GenerateDoWhileStatement(doWhileStatement, emitter, data, variables, parameters, frameSize);
                     break;
 
                 case IfStatement ifStatement:
-                    GenerateIfStatement(ifStatement, emitter, data, variables, frameSize);
+                    GenerateIfStatement(ifStatement, emitter, data, variables, parameters, frameSize);
                     break;
 
                 case BreakStatement:
@@ -133,7 +241,7 @@ namespace JollyCCompiler.Compiler.CodeGen
 
                 case BlockStatement block:
                     foreach (var child in block.Statements)
-                        GenerateStatement(child, emitter, data, variables, frameSize);
+                        GenerateStatement(child, emitter, data, variables, parameters, frameSize);
                     break;
 
                 default:
@@ -141,7 +249,7 @@ namespace JollyCCompiler.Compiler.CodeGen
             }
         }
 
-        private static void GenerateVariableDeclaration(VariableDeclarationStatement statement, X64Emitter emitter, List<X64DataItem> data, Dictionary<string, int> variables)
+        private static void GenerateVariableDeclaration(VariableDeclarationStatement statement, X64Emitter emitter, List<X64DataItem> data, Dictionary<string, int> variables, Dictionary<string, (int Index, string Type)> parameters)
         {
             if (!variables.TryGetValue(statement.Name, out var offset))
                 throw new InvalidOperationException($"Variable '{statement.Name}' has no stack slot.");
@@ -149,86 +257,96 @@ namespace JollyCCompiler.Compiler.CodeGen
             if (statement.Initializer is null)
                 emitter.MovEax(0);
             else
-                GenerateExpression(statement.Initializer, emitter, data, variables);
+                GenerateExpression(statement.Initializer, emitter, data, variables, parameters);
 
             emitter.MovRbpDisp8Eax(offset);
         }
 
-        private static void GenerateReturn(ReturnStatement statement, X64Emitter emitter, List<X64DataItem> data, Dictionary<string, int> variables, int frameSize)
+        private static void GenerateReturn(ReturnStatement statement, X64Emitter emitter, List<X64DataItem> data, Dictionary<string, int> variables, Dictionary<string, (int Index, string Type)> parameters, int frameSize)
         {
             if (statement.Expression is null)
                 emitter.MovEax(0);
             else
-                GenerateExpression(statement.Expression, emitter, data, variables);
+                GenerateExpression(statement.Expression, emitter, data, variables, parameters);
 
             emitter.AddRsp(frameSize);
             emitter.PopRbp();
             emitter.Ret();
         }
 
-        private static void GenerateExpressionStatement(ExpressionStatement statement, X64Emitter emitter, List<X64DataItem> data, Dictionary<string, int> variables)
+        private static void GenerateExpressionStatement(ExpressionStatement statement, X64Emitter emitter, List<X64DataItem> data, Dictionary<string, int> variables, Dictionary<string, (int Index, string Type)> parameters)
         {
-            GenerateExpression(statement.Expression, emitter, data, variables);
+            GenerateExpression(statement.Expression, emitter, data, variables, parameters);
         }
 
-        private static void GenerateForStatement(ForStatement statement, X64Emitter emitter, List<X64DataItem> data, Dictionary<string, int> variables, int frameSize)
+        private static void GenerateForStatement(ForStatement statement, X64Emitter emitter, List<X64DataItem> data, Dictionary<string, int> variables, Dictionary<string, (int Index, string Type)> parameters, int frameSize)
         {
             if (statement.Initializer is not null)
-                GenerateStatement(statement.Initializer, emitter, data, variables, frameSize);
+                GenerateStatement(statement.Initializer, emitter, data, variables, parameters, frameSize);
 
             var conditionLabel = emitter.CreateLabel("for_condition");
             var continueLabel = emitter.CreateLabel("for_continue");
             var endLabel = emitter.CreateLabel("for_end");
 
             _loopLabels.Push((continueLabel, endLabel));
+
             emitter.MarkLabel(conditionLabel);
+
             if (statement.Condition is not null)
             {
-                GenerateExpression(statement.Condition, emitter, data, variables);
+                GenerateExpression(statement.Condition, emitter, data, variables, parameters);
                 emitter.TestEaxEax();
                 emitter.Je(endLabel);
             }
 
-            GenerateStatement(statement.Body, emitter, data, variables, frameSize);
+            GenerateStatement(statement.Body, emitter, data, variables, parameters, frameSize);
+
             emitter.MarkLabel(continueLabel);
+
             if (statement.Increment is not null)
-                GenerateExpression(statement.Increment, emitter, data, variables);
+                GenerateExpression(statement.Increment, emitter, data, variables, parameters);
 
             emitter.Jmp(conditionLabel);
             emitter.MarkLabel(endLabel);
+
             _loopLabels.Pop();
         }
 
-        private static void GenerateWhileStatement(WhileStatement statement, X64Emitter emitter, List<X64DataItem> data, Dictionary<string, int> variables, int frameSize)
+        private static void GenerateWhileStatement(WhileStatement statement, X64Emitter emitter, List<X64DataItem> data, Dictionary<string, int> variables, Dictionary<string, (int Index, string Type)> parameters, int frameSize)
         {
             var conditionLabel = emitter.CreateLabel("while_condition");
             var endLabel = emitter.CreateLabel("while_end");
 
             _loopLabels.Push((conditionLabel, endLabel));
+
             emitter.MarkLabel(conditionLabel);
-            GenerateExpression(statement.Condition, emitter, data, variables);
+            GenerateExpression(statement.Condition, emitter, data, variables, parameters);
             emitter.TestEaxEax();
             emitter.Je(endLabel);
-            GenerateStatement(statement.Body, emitter, data, variables, frameSize);
+
+            GenerateStatement(statement.Body, emitter, data, variables, parameters, frameSize);
+
             emitter.Jmp(conditionLabel);
             emitter.MarkLabel(endLabel);
+
             _loopLabels.Pop();
         }
 
-        private static void GenerateDoWhileStatement(DoWhileStatement statement, X64Emitter emitter, List<X64DataItem> data, Dictionary<string, int> variables, int frameSize)
+        private static void GenerateDoWhileStatement(DoWhileStatement statement, X64Emitter emitter, List<X64DataItem> data, Dictionary<string, int> variables, Dictionary<string, (int Index, string Type)> parameters, int frameSize)
         {
             var bodyLabel = emitter.CreateLabel("do_while_body");
             var conditionLabel = emitter.CreateLabel("do_while_condition");
 
             emitter.MarkLabel(bodyLabel);
-            GenerateStatement(statement.Body, emitter, data, variables, frameSize);
+            GenerateStatement(statement.Body, emitter, data, variables, parameters, frameSize);
+
             emitter.MarkLabel(conditionLabel);
-            GenerateExpression(statement.Condition, emitter, data, variables);
+            GenerateExpression(statement.Condition, emitter, data, variables, parameters);
             emitter.CmpEaxImm8(0);
             emitter.Jne(bodyLabel);
         }
 
-        private static void GenerateExpression(ExpressionNode expression, X64Emitter emitter, List<X64DataItem> data, Dictionary<string, int> variables)
+        private static void GenerateExpression(ExpressionNode expression, X64Emitter emitter, List<X64DataItem> data, Dictionary<string, int> variables, Dictionary<string, (int Index, string Type)> parameters)
         {
             switch (expression)
             {
@@ -237,35 +355,39 @@ namespace JollyCCompiler.Compiler.CodeGen
                     break;
 
                 case IdentifierExpression identifier:
-                    GenerateIdentifier(identifier, emitter, variables);
+                    GenerateIdentifier(identifier, emitter, variables, parameters);
+                    break;
+
+                case ArraySubscriptExpression subscript:
+                    GenerateArraySubscriptExpression(subscript, emitter, data, variables, parameters);
                     break;
 
                 case UnaryExpression unary:
-                    GenerateUnaryExpression(unary, emitter, data, variables);
+                    GenerateUnaryExpression(unary, emitter, data, variables, parameters);
                     break;
 
                 case BinaryExpression binary when binary.Operator == TokenKind.AndAnd:
-                    GenerateLogicalAnd(binary, emitter, data, variables);
+                    GenerateLogicalAnd(binary, emitter, data, variables, parameters);
                     break;
 
                 case BinaryExpression binary when binary.Operator == TokenKind.OrOr:
-                    GenerateLogicalOr(binary, emitter, data, variables);
+                    GenerateLogicalOr(binary, emitter, data, variables, parameters);
                     break;
 
                 case BinaryExpression binary when binary.Operator is TokenKind.EqualEqual or TokenKind.NotEqual or TokenKind.Less or TokenKind.LessEqual or TokenKind.Greater or TokenKind.GreaterEqual:
-                    GenerateComparison(binary, emitter, data, variables);
+                    GenerateComparison(binary, emitter, data, variables, parameters);
                     break;
 
                 case BinaryExpression binary:
-                    GenerateBinaryExpression(binary, emitter, data, variables);
+                    GenerateBinaryExpression(binary, emitter, data, variables, parameters);
                     break;
 
                 case CallExpression call:
-                    GenerateCallExpression(call, emitter, data, variables);
+                    GenerateCallExpression(call, emitter, data, variables, parameters);
                     break;
 
                 case AssignmentExpression assignment:
-                    GenerateAssignmentExpression(assignment, emitter, data, variables);
+                    GenerateAssignmentExpression(assignment, emitter, data, variables, parameters);
                     break;
 
                 default:
@@ -273,38 +395,90 @@ namespace JollyCCompiler.Compiler.CodeGen
             }
         }
 
-        private static void GenerateIdentifier(IdentifierExpression expression, X64Emitter emitter, Dictionary<string, int> variables)
-        {
-            if (!variables.TryGetValue(expression.Name, out var offset))
-                throw new InvalidOperationException($"Variable '{expression.Name}' has not been declared.");
-
-            emitter.MovEaxRbpDisp8(offset);
+        private static void GenerateIdentifier(IdentifierExpression expression, X64Emitter emitter, Dictionary<string, int> variables, Dictionary<string, (int Index, string Type)> parameters) 
+        { 
+            if (parameters.TryGetValue(expression.Name, out var parameter)) 
+            { 
+                var offset = -(parameter.Index + 1) * 8; 
+                if (parameter.Type.EndsWith("*", StringComparison.Ordinal)) 
+                { 
+                    emitter.MovRaxRbpDisp8(offset); 
+                    return; 
+                } 
+                
+                emitter.MovEaxRbpDisp8(offset); 
+                return; 
+            } 
+            
+            if (!variables.TryGetValue(expression.Name, out var variableOffset)) 
+                throw new InvalidOperationException($"Variable '{expression.Name}' has not been declared."); 
+            
+            emitter.MovEaxRbpDisp8(variableOffset); 
         }
+        
+        //private static void GenerateIdentifier(IdentifierExpression expression, X64Emitter emitter, Dictionary<string, int> variables, Dictionary<string, (int Index, string Type)> parameters)
+        //{
+        //    if (parameters.TryGetValue(expression.Name, out var parameter))
+        //    {
+        //        if (parameter.Type.EndsWith("*", StringComparison.Ordinal))
+        //        {
+        //            switch (parameter.Index)
+        //            {
+        //                case 0:
+        //                    emitter.MovRaxRcx();
+        //                    return;
+        //                case 1:
+        //                    emitter.MovRaxRdx();
+        //                    return;
+        //                case 2:
+        //                    emitter.MovRaxR8();
+        //                    return;
+        //                case 3:
+        //                    emitter.MovRaxR9();
+        //                    return;
+        //            }
+        //        }
+        //        else
+        //        {
+        //            switch (parameter.Index)
+        //            {
+        //                case 0:
+        //                    emitter.MovEaxEcx();
+        //                    return;
+        //                case 1:
+        //                    emitter.MovEaxEdx();
+        //                    return;
+        //                case 2:
+        //                    emitter.MovEaxR8d();
+        //                    return;
+        //                case 3:
+        //                    emitter.MovEaxR9d();
+        //                    return;
+        //            }
+        //        }
+        //    }
 
-        private static void GenerateAssignment(AssignmentExpression expression, X64Emitter emitter, List<X64DataItem> data, Dictionary<string, int> variables)
-        {
-            if (!variables.TryGetValue(expression.Name, out var offset))
-                throw new InvalidOperationException($"Variable '{expression.Name}' has not been declared.");
+        //    if (!variables.TryGetValue(expression.Name, out var offset))
+        //        throw new InvalidOperationException($"Variable '{expression.Name}' has not been declared.");
 
-            GenerateExpression(expression.Value, emitter, data, variables);
-            emitter.MovRbpDisp8Eax(offset);
-        }
+        //    emitter.MovEaxRbpDisp8(offset);
+        //}
 
-        private static void GenerateAssignmentExpression(AssignmentExpression expression, X64Emitter emitter, List<X64DataItem> data, Dictionary<string, int> variables)
+        private static void GenerateAssignmentExpression(AssignmentExpression expression, X64Emitter emitter, List<X64DataItem> data, Dictionary<string, int> variables, Dictionary<string, (int Index, string Type)> parameters)
         {
             if (!variables.TryGetValue(expression.Name, out var offset))
                 throw new InvalidOperationException($"Variable '{expression.Name}' has no stack slot.");
 
-            GenerateExpression(expression.Value, emitter, data, variables);
+            GenerateExpression(expression.Value, emitter, data, variables, parameters);
             emitter.MovRbpDisp8Eax(offset);
         }
 
-        private static void GenerateBinaryExpression(BinaryExpression expression, X64Emitter emitter, List<X64DataItem> data, Dictionary<string, int> variables)
+        private static void GenerateBinaryExpression(BinaryExpression expression, X64Emitter emitter, List<X64DataItem> data, Dictionary<string, int> variables, Dictionary<string, (int Index, string Type)> parameters)
         {
-            GenerateExpression(expression.Left, emitter, data, variables);
+            GenerateExpression(expression.Left, emitter, data, variables, parameters);
             emitter.PushRax();
 
-            GenerateExpression(expression.Right, emitter, data, variables);
+            GenerateExpression(expression.Right, emitter, data, variables, parameters);
             emitter.MovEcxEax();
 
             emitter.PopRax();
@@ -339,11 +513,50 @@ namespace JollyCCompiler.Compiler.CodeGen
             }
         }
 
-        private static void GenerateCallExpression(CallExpression call, X64Emitter emitter, List<X64DataItem> data, Dictionary<string, int> variables)
+        private static void GenerateCallExpression(CallExpression call, X64Emitter emitter, List<X64DataItem> data, Dictionary<string, int> variables, Dictionary<string, (int Index, string Type)> parameters)
         {
-            if (call.Name != "printf")
-                throw new NotSupportedException($"Unknown function '{call.Name}'.");
+            if (call.Name == "printf")
+            {
+                GeneratePrintfCall(call, emitter, data, variables, parameters);
+                return;
+            }
 
+            var argumentCount = call.Arguments.Count;
+            var stackArguments = Math.Max(0, argumentCount - 4);
+            var callStackSize = emitter.GetCallStackSize(argumentCount);
+            var temporaryBytes = argumentCount * 8;
+            var totalBytes = callStackSize + temporaryBytes;
+
+            totalBytes = (totalBytes + 15) & ~15;
+
+            emitter.SubRsp(totalBytes);
+
+            var temporaryBase = callStackSize;
+
+            for (var i = 0; i < argumentCount; i++)
+            {
+                GenerateExpression(call.Arguments[i], emitter, data, variables, parameters);
+                var temporaryOffset = temporaryBase + (i * 8);
+                emitter.MovRspDisp32Eax(temporaryOffset);
+            }
+
+            for (var i = 0; i < argumentCount; i++)
+            {
+                var temporaryOffset = temporaryBase + (i * 8);
+                emitter.MovEaxRspDisp32(temporaryOffset);
+
+                if (i < 4)
+                    emitter.MoveEaxToArgumentRegister(i);
+                else
+                    emitter.MoveEaxToStackArgument(i);
+            }
+
+            emitter.CallRelative($"$fn_{call.Name}");
+            emitter.AddRsp(totalBytes);
+        }
+
+        private static void GeneratePrintfCall(CallExpression call, X64Emitter emitter, List<X64DataItem> data, Dictionary<string, int> variables, Dictionary<string, (int Index, string Type)> parameters)
+        {
             if (call.Arguments.Count == 0)
                 throw new NotSupportedException("printf requires a format string.");
 
@@ -355,74 +568,70 @@ namespace JollyCCompiler.Compiler.CodeGen
             data.Add(new X64DataItem(symbol, bytes));
 
             var argumentCount = call.Arguments.Count;
-
-            // printf arguments excluding the format string.
             var valueArgumentCount = argumentCount - 1;
-
-            // Windows x64:
-            // RCX = argument 0
-            // RDX = argument 1
-            // R8  = argument 2
-            // R9  = argument 3
-            // Stack = argument 4+
-            //
-            // The caller must always reserve 32 bytes of shadow space.
             var stackArgumentCount = Math.Max(0, argumentCount - 4);
-
             var shadowSpace = 32;
             var stackArgumentBytes = stackArgumentCount * 8;
-
-            // Temporary storage for evaluated arguments.
             var temporaryBytes = valueArgumentCount * 8;
-
             var totalBytes = shadowSpace + stackArgumentBytes + temporaryBytes;
-
-            // Keep RSP 16-byte aligned at the call site.
             totalBytes = (totalBytes + 15) & ~15;
 
             emitter.SubRsp(totalBytes);
 
-            // Temporary arguments are stored after the call area.
             var temporaryBase = shadowSpace + stackArgumentBytes;
 
-            // Evaluate every printf argument first.
-            //
-            // Argument 0 is the format string and is handled separately.
-            // Argument 1 becomes the first value argument.
             for (var i = 1; i < argumentCount; i++)
             {
-                GenerateExpression(call.Arguments[i], emitter, data, variables);
+                GenerateExpression(call.Arguments[i], emitter, data, variables, parameters);
                 var temporaryOffset = temporaryBase + ((i - 1) * 8);
-                emitter.MovRspDisp32Eax(temporaryOffset);
+                var isPointer = IsPointerExpression(call.Arguments[i], parameters);
+
+                if (isPointer)
+                    emitter.MovRspDisp32Rax(temporaryOffset);
+                else
+                    emitter.MovRspDisp32Eax(temporaryOffset);
             }
 
-            // Now load the format string.
             emitter.LeaRcxRipRelative(symbol);
 
-            // Load the first three value arguments into the Windows x64
-            // integer argument registers.
             for (var i = 1; i < argumentCount; i++)
             {
                 var temporaryOffset = temporaryBase + ((i - 1) * 8);
-                emitter.MovEaxRspDisp32(temporaryOffset);
+                var isPointer = IsPointerExpression(call.Arguments[i], parameters);
+
+                if (isPointer)
+                    emitter.MovRaxRspDisp32(temporaryOffset);
+                else
+                    emitter.MovEaxRspDisp32(temporaryOffset);
 
                 switch (i)
                 {
                     case 1:
-                        emitter.MovEdxEax();
+                        if (isPointer)
+                            emitter.MovRdxRax();
+                        else
+                            emitter.MovEdxEax();
                         break;
 
                     case 2:
-                        emitter.MovR8dEax();
+                        if (isPointer)
+                            emitter.MovR8Rax();
+                        else
+                            emitter.MovR8dEax();
                         break;
 
                     case 3:
-                        emitter.MovR9dEax();
+                        if (isPointer)
+                            emitter.MovR9Rax();
+                        else
+                            emitter.MovR9dEax();
                         break;
 
                     default:
-                        var stackOffset = 32 + ((i - 4) * 8);
-                        emitter.MovRspDisp32Eax(stackOffset);
+                        if (isPointer)
+                            emitter.MovRspDisp32Rax(32 + ((i - 4) * 8));
+                        else
+                            emitter.MovRspDisp32Eax(32 + ((i - 4) * 8));
                         break;
                 }
             }
@@ -431,12 +640,24 @@ namespace JollyCCompiler.Compiler.CodeGen
             emitter.AddRsp(totalBytes);
         }
 
-        private static void GenerateComparison(BinaryExpression expression, X64Emitter emitter, List<X64DataItem> data, Dictionary<string, int> variables)
+        private static bool IsPointerExpression(ExpressionNode expression, Dictionary<string, (int Index, string Type)> parameters)
         {
-            GenerateExpression(expression.Left, emitter, data, variables);
+            if (expression is IdentifierExpression identifier &&
+                parameters.TryGetValue(identifier.Name, out var parameter))
+                return parameter.Type.EndsWith("*", StringComparison.Ordinal);
+
+            if (expression is ArraySubscriptExpression)
+                return true;
+
+            return false;
+        }
+
+        private static void GenerateComparison(BinaryExpression expression, X64Emitter emitter, List<X64DataItem> data, Dictionary<string, int> variables, Dictionary<string, (int Index, string Type)> parameters)
+        {
+            GenerateExpression(expression.Left, emitter, data, variables, parameters);
             emitter.PushRax();
 
-            GenerateExpression(expression.Right, emitter, data, variables);
+            GenerateExpression(expression.Right, emitter, data, variables, parameters);
             emitter.MovEcxEax();
 
             emitter.PopRax();
@@ -484,16 +705,16 @@ namespace JollyCCompiler.Compiler.CodeGen
             emitter.MarkLabel(endLabel);
         }
 
-        private static void GenerateLogicalAnd(BinaryExpression expression, X64Emitter emitter, List<X64DataItem> data, Dictionary<string, int> variables)
+        private static void GenerateLogicalAnd(BinaryExpression expression, X64Emitter emitter, List<X64DataItem> data, Dictionary<string, int> variables, Dictionary<string, (int Index, string Type)> parameters)
         {
             var falseLabel = emitter.CreateLabel("and_false");
             var endLabel = emitter.CreateLabel("and_end");
 
-            GenerateExpression(expression.Left, emitter, data, variables);
+            GenerateExpression(expression.Left, emitter, data, variables, parameters);
             emitter.TestEaxEax();
             emitter.Je(falseLabel);
 
-            GenerateExpression(expression.Right, emitter, data, variables);
+            GenerateExpression(expression.Right, emitter, data, variables, parameters);
             emitter.TestEaxEax();
             emitter.Je(falseLabel);
 
@@ -506,16 +727,16 @@ namespace JollyCCompiler.Compiler.CodeGen
             emitter.MarkLabel(endLabel);
         }
 
-        private static void GenerateLogicalOr(BinaryExpression expression, X64Emitter emitter, List<X64DataItem> data, Dictionary<string, int> variables)
+        private static void GenerateLogicalOr(BinaryExpression expression, X64Emitter emitter, List<X64DataItem> data, Dictionary<string, int> variables, Dictionary<string, (int Index, string Type)> parameters)
         {
             var trueLabel = emitter.CreateLabel("or_true");
             var endLabel = emitter.CreateLabel("or_end");
 
-            GenerateExpression(expression.Left, emitter, data, variables);
+            GenerateExpression(expression.Left, emitter, data, variables, parameters);
             emitter.TestEaxEax();
             emitter.Jne(trueLabel);
 
-            GenerateExpression(expression.Right, emitter, data, variables);
+            GenerateExpression(expression.Right, emitter, data, variables, parameters);
             emitter.TestEaxEax();
             emitter.Jne(trueLabel);
 
@@ -528,9 +749,9 @@ namespace JollyCCompiler.Compiler.CodeGen
             emitter.MarkLabel(endLabel);
         }
 
-        private static void GenerateUnaryExpression(UnaryExpression expression, X64Emitter emitter, List<X64DataItem> data, Dictionary<string, int> variables)
+        private static void GenerateUnaryExpression(UnaryExpression expression, X64Emitter emitter, List<X64DataItem> data, Dictionary<string, int> variables, Dictionary<string, (int Index, string Type)> parameters)
         {
-            GenerateExpression(expression.Operand, emitter, data, variables);
+            GenerateExpression(expression.Operand, emitter, data, variables, parameters);
 
             switch (expression.Operator)
             {
@@ -559,23 +780,23 @@ namespace JollyCCompiler.Compiler.CodeGen
             }
         }
 
-        private static void GenerateIfStatement(IfStatement statement, X64Emitter emitter, List<X64DataItem> data, Dictionary<string, int> variables, int frameSize)
+        private static void GenerateIfStatement(IfStatement statement, X64Emitter emitter, List<X64DataItem> data, Dictionary<string, int> variables, Dictionary<string, (int Index, string Type)> parameters, int frameSize)
         {
             var elseLabel = emitter.CreateLabel("if_else");
             var endLabel = emitter.CreateLabel("if_end");
 
-            GenerateExpression(statement.Condition, emitter, data, variables);
+            GenerateExpression(statement.Condition, emitter, data, variables, parameters);
 
             emitter.TestEaxEax();
             emitter.Je(elseLabel);
 
-            GenerateStatement(statement.Then, emitter, data, variables, frameSize);
+            GenerateStatement(statement.Then, emitter, data, variables, parameters, frameSize);
 
             if (statement.Else is not null)
             {
                 emitter.Jmp(endLabel);
                 emitter.MarkLabel(elseLabel);
-                GenerateStatement(statement.Else, emitter, data, variables, frameSize);
+                GenerateStatement(statement.Else, emitter, data, variables, parameters, frameSize);
                 emitter.MarkLabel(endLabel);
             }
             else
@@ -598,6 +819,20 @@ namespace JollyCCompiler.Compiler.CodeGen
                 throw new InvalidOperationException("'continue' may only be used inside a loop.");
 
             emitter.Jmp(_loopLabels.Peek().ContinueLabel);
+        }
+
+        private static void GenerateArraySubscriptExpression(ArraySubscriptExpression expression, X64Emitter emitter, List<X64DataItem> data, Dictionary<string, int> variables, Dictionary<string, (int Index, string Type)> parameters)
+        {
+            GenerateExpression(expression.Array, emitter, data, variables, parameters);
+            emitter.PushRax();
+
+            GenerateExpression(expression.Index, emitter, data, variables, parameters);
+            emitter.ImulEaxImm8(8);
+            emitter.MovEcxEax();
+
+            emitter.PopRax();
+            emitter.AddRaxRcx();
+            emitter.MovRaxRax();
         }
 
         private static int AlignUp(int value, int alignment)
