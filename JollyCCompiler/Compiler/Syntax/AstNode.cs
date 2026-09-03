@@ -17,9 +17,9 @@ namespace JollyCCompiler.Compiler.Syntax
     public sealed record StringExpression(string Value) : ExpressionNode;
     public sealed record IdentifierExpression(string Name) : ExpressionNode;
     public sealed record BinaryExpression(ExpressionNode Left, TokenKind Operator, ExpressionNode Right) : ExpressionNode;
-    public sealed record UnaryExpression(TokenKind Operator, ExpressionNode Operand) : ExpressionNode;
+    public sealed record UnaryExpression(TokenKind Operator, ExpressionNode Operand, bool IsPostfix = false) : ExpressionNode;
     public sealed record CallExpression(string Name, IReadOnlyList<ExpressionNode> Arguments) : ExpressionNode;
-    public sealed record AssignmentExpression(string Name, ExpressionNode Value) : ExpressionNode;
+    public sealed record AssignmentExpression(string Name, TokenKind Operator, ExpressionNode Value) : ExpressionNode;
     public sealed record WhileStatement(ExpressionNode Condition, StatementNode Body) : StatementNode;
     public sealed record DoWhileStatement(StatementNode Body, ExpressionNode Condition) : StatementNode;
     public sealed record IfStatement(ExpressionNode Condition, StatementNode Then, StatementNode? Else) : StatementNode;

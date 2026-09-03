@@ -295,19 +295,23 @@ namespace JollyCCompiler.Compiler.Parsing
         {
             var left = ParseLogicalOr();
 
-            if (Current.Kind != TokenKind.Equals)
-                return left;
-
-            var equalsToken = Advance();
-            var right = ParseAssignment();
-
-            if (left is not IdentifierExpression identifier)
+            if (Current.Kind is TokenKind.Equals or TokenKind.PlusEquals or TokenKind.MinusEquals or TokenKind.StarEquals or TokenKind.SlashEquals or TokenKind.PercentEquals)
             {
-                ErrorAt(equalsToken, "The left side of an assignment must be a variable.");
-                return right;
+                var operatorToken = Current;
+                var operatorKind = Current.Kind;
+                Advance();
+                var right = ParseAssignment();
+
+                if (left is not IdentifierExpression identifier)
+                {
+                    ErrorAt(operatorToken, "The left side of an assignment must be a variable.");
+                    return right;
+                }
+
+                return new AssignmentExpression(identifier.Name, operatorKind, right);
             }
 
-            return new AssignmentExpression(identifier.Name, right);
+            return left;
         }
 
         private ExpressionNode ParseLogicalOr()
@@ -414,7 +418,7 @@ namespace JollyCCompiler.Compiler.Parsing
 
         private ExpressionNode ParseUnary()
         {
-            if (Current.Kind is TokenKind.Minus or TokenKind.Exclamation)
+            if (Current.Kind is TokenKind.PlusPlus or TokenKind.MinusMinus or TokenKind.Minus or TokenKind.Exclamation)
             {
                 var op = Current.Kind;
                 Advance();
@@ -422,7 +426,21 @@ namespace JollyCCompiler.Compiler.Parsing
                 return new UnaryExpression(op, ParseUnary());
             }
 
-            return ParsePrimary();
+            return ParsePostfix();
+        }
+
+        private ExpressionNode ParsePostfix()
+        {
+            var expression = ParsePrimary();
+
+            if (Current.Kind is TokenKind.PlusPlus or TokenKind.MinusMinus)
+            {
+                var operatorKind = Current.Kind;
+                Advance();
+                return new UnaryExpression(operatorKind, expression, true);
+            }
+
+            return expression;
         }
 
         private ExpressionNode ParsePrimary()

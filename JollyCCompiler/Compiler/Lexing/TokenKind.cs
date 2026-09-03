@@ -27,6 +27,14 @@
         Slash,
         Percent,
 
+        PlusPlus,
+        MinusMinus,
+        PlusEquals,
+        MinusEquals,
+        StarEquals,
+        SlashEquals,
+        PercentEquals,
+        
         Equals,
         EqualEqual,
         NotEqual,
