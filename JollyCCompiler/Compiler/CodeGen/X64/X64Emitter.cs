@@ -460,7 +460,7 @@ namespace JollyCCompiler.Compiler.CodeGen.X64
             var offset = Offset; 
             var bytes = new byte[] { 0x3D, (byte)value, (byte)(value >> 8), (byte)(value >> 16), (byte)(value >> 24) }; 
             _code.AddRange(bytes); 
-            _instructions.Add(new X64Instruction(offset, bytes, $"cmp eax, {value}")); 
+            _instructions.Add(new X64Instruction(offset, bytes, $"cmp eax, {value}"));
         }
 
         public void EmitByte(byte value)
@@ -626,7 +626,49 @@ namespace JollyCCompiler.Compiler.CodeGen.X64
             var offset = Offset; 
             var bytes = new byte[] { 0x48, 0x29, 0xC8 }; 
             _code.AddRange(bytes); 
-            _instructions.Add(new X64Instruction(offset, bytes, "sub rax,rcx")); 
+            _instructions.Add(new X64Instruction(offset, bytes, "sub rax,rcx"));
+        }
+
+        public void MovRcxRax() 
+        { 
+            var offset = Offset; 
+            var bytes = new byte[] { 0x48, 0x89, 0xC1 }; 
+            _code.AddRange(bytes); 
+            _instructions.Add(new X64Instruction(offset, bytes, "mov rcx,rax")); 
+        }
+
+        public void MoveRaxToArgumentRegister(int argumentIndex) 
+        { 
+            switch (argumentIndex) 
+            { 
+                case 0: 
+                    MovRcxRax(); 
+                    break; 
+                
+                case 1: 
+                    MovRdxRax(); 
+                    break; 
+                
+                case 2: 
+                    MovR8Rax(); 
+                    break; 
+                
+                case 3: 
+                    MovR9Rax(); 
+                    break; 
+                
+                default: 
+                    throw new ArgumentOutOfRangeException(nameof(argumentIndex)); 
+            } 
+        }
+
+        public void MoveRaxToStackArgument(int argumentIndex) 
+        { 
+            if (argumentIndex < 4) 
+                throw new ArgumentOutOfRangeException(nameof(argumentIndex)); 
+            
+            var displacement = 40 + ((argumentIndex - 4) * 8); 
+            MovRspDisp32Rax(displacement); 
         }
 
         public int GetCallStackSize(int argumentCount)

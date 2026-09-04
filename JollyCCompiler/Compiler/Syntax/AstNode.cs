@@ -3,7 +3,7 @@
 namespace JollyCCompiler.Compiler.Syntax
 {
     public abstract record AstNode;
-    public sealed record ProgramNode(IReadOnlyList<FunctionNode> Functions) : AstNode;
+    public sealed record ProgramNode(IReadOnlyList<StructDeclarationNode> Structs, IReadOnlyList<FunctionNode> Functions) : AstNode;
     public sealed record FunctionNode(string ReturnType, string Name, IReadOnlyList<ParameterNode> Parameters, BlockStatement Body) : AstNode;
     public sealed record ParameterNode(string Type, string Name) : AstNode;
     public abstract record StatementNode : AstNode;
@@ -27,4 +27,10 @@ namespace JollyCCompiler.Compiler.Syntax
     public sealed record SwitchCase(ExpressionNode Value, IReadOnlyList<StatementNode> Statements) : AstNode; public sealed record BreakStatement : StatementNode;
     public sealed record ContinueStatement : StatementNode;
     public sealed record ArraySubscriptExpression(ExpressionNode Array, ExpressionNode Index) : ExpressionNode;
+    public sealed record PointerTypeNode(string BaseType);
+    public sealed record AddressOfExpression(ExpressionNode Operand) : ExpressionNode;
+    public sealed record DereferenceExpression(ExpressionNode Operand) : ExpressionNode;
+    public sealed record StructDeclarationNode(string Name, IReadOnlyList<StructFieldNode> Fields) : AstNode;
+    public sealed record StructFieldNode(string Type, string Name, int? ArrayLength = null) : AstNode;
+    public sealed record MemberAccessExpression(ExpressionNode Object, string Member, bool ThroughPointer = false) : ExpressionNode;
 }

@@ -71,6 +71,7 @@ public sealed class Lexer
                 '+' when Peek() == '=' => TokenKind.PlusEquals,
                 '-' when Peek() == '-' => TokenKind.MinusMinus,
                 '-' when Peek() == '=' => TokenKind.MinusEquals,
+                '-' when Peek() == '>' => TokenKind.Arrow,
                 '*' when Peek() == '=' => TokenKind.StarEquals,
                 '/' when Peek() == '=' => TokenKind.SlashEquals,
                 '%' when Peek() == '=' => TokenKind.PercentEquals,
@@ -86,6 +87,7 @@ public sealed class Lexer
                 '}' => TokenKind.RightBrace,
                 '[' => TokenKind.LeftBracket,
                 ']' => TokenKind.RightBracket,
+                '.' => TokenKind.Dot,
                 ',' => TokenKind.Comma,
                 ';' => TokenKind.Semicolon,
                 ':' => TokenKind.Colon,
@@ -120,6 +122,11 @@ public sealed class Lexer
             if ((Current == '+' || Current == '-' || Current == '*' || Current == '/' || Current == '%') && Peek() == '=')
             {
                 text = $"{Current}=";
+                Advance();
+            }
+            else if (Current == '-' && Peek() == '>')
+            {
+                text = "->";
                 Advance();
             }
             else if (Current == '+' && Peek() == '+')
@@ -211,6 +218,7 @@ public sealed class Lexer
             "int" => TokenKind.Int,
             "char" => TokenKind.Char,
             "void" => TokenKind.Void,
+            "struct" => TokenKind.Struct,
             "return" => TokenKind.Return,
             "if" => TokenKind.If,
             "else" => TokenKind.Else,

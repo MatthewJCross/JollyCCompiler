@@ -17,24 +17,92 @@ namespace JollyCCompiler.Compiler.Parsing
 
         public ProgramNode ParseProgram()
         {
+            var structs = new List<StructDeclarationNode>();
             var functions = new List<FunctionNode>();
+
             while (Current.Kind != TokenKind.EndOfFile)
             {
                 var startPosition = _position;
-                var function = ParseFunction();
-                if (function is not null) functions.Add(function);
-                if (_position == startPosition) Synchronize();
+
+                if (IsStructDeclaration())
+                {
+                    var structDeclaration = ParseStructDeclaration();
+                    if (structDeclaration is not null)
+                        structs.Add(structDeclaration);
+                }
+                else
+                {
+                    var function = ParseFunction();
+                    if (function is not null)
+                        functions.Add(function);
+                }
+
+                if (_position == startPosition)
+                    Synchronize();
             }
-            return new ProgramNode(functions);
+
+            return new ProgramNode(structs, functions);
+        }
+
+        private bool IsStructDeclaration()
+        {
+            return Current.Kind == TokenKind.Struct && Peek(1).Kind == TokenKind.Identifier && Peek(2).Kind == TokenKind.LeftBrace;
+        }
+
+        private Token Peek(int offset)
+        {
+            var index = Math.Min(_position + offset, _tokens.Count - 1);
+            return _tokens[index];
+        }
+
+        private StructDeclarationNode? ParseStructDeclaration()
+        {
+            Expect(TokenKind.Struct, "Expected 'struct'.");
+            var name = Expect(TokenKind.Identifier, "Expected struct name.");
+            if (name.Kind != TokenKind.Identifier) 
+                return null;
+
+            Expect(TokenKind.LeftBrace, "Expected '{' after struct name.");
+            var fields = new List<StructFieldNode>();
+            while (Current.Kind != TokenKind.RightBrace && Current.Kind != TokenKind.EndOfFile)
+            {
+                var type = ParseType();
+                if (type is null) 
+                    return null;
+
+                var fieldName = Expect(TokenKind.Identifier, "Expected struct field name.");
+                if (fieldName.Kind != TokenKind.Identifier) 
+                    return null;
+
+                int? arrayLength = null;
+                if (Current.Kind == TokenKind.LeftBracket)
+                {
+                    Advance();
+                    var lengthToken = Expect(TokenKind.IntegerLiteral, "Expected array size.");
+                    if (lengthToken.Kind == TokenKind.IntegerLiteral) 
+                        arrayLength = int.Parse(lengthToken.Text);
+
+                    Expect(TokenKind.RightBracket, "Expected ']' after array size.");
+                }
+
+                Expect(TokenKind.Semicolon, "Expected ';' after struct field.");
+                fields.Add(new StructFieldNode(type, fieldName.Text, arrayLength));
+            }
+
+            Expect(TokenKind.RightBrace, "Expected '}' after struct fields.");
+            Expect(TokenKind.Semicolon, "Expected ';' after struct declaration.");
+            return new StructDeclarationNode(name.Text, fields);
         }
 
         private FunctionNode? ParseFunction()
         {
             var returnType = ParseType();
-            if (returnType is null) return null;
+            if (returnType is null) 
+                return null;
 
             var name = Expect(TokenKind.Identifier, "Expected function name.");
-            if (name.Kind != TokenKind.Identifier) return null;
+            if (name.Kind != TokenKind.Identifier) 
+                return null;
 
             Expect(TokenKind.LeftParen, "Expected '(' after function name.");
 
@@ -47,16 +115,12 @@ namespace JollyCCompiler.Compiler.Parsing
                     var type = ParseType();
                     if (type is null) return null;
 
-                    while (Current.Kind == TokenKind.Star)
-                    {
-                        Advance();
-                        type += "*";
-                    }
-
                     var parameterName = Expect(TokenKind.Identifier, "Expected parameter name.");
-                    if (parameterName.Kind == TokenKind.Identifier) parameters.Add(new ParameterNode(type, parameterName.Text));
+                    if (parameterName.Kind == TokenKind.Identifier) 
+                        parameters.Add(new ParameterNode(type, parameterName.Text));
 
-                    if (Current.Kind != TokenKind.Comma) break;
+                    if (Current.Kind != TokenKind.Comma) 
+                        break;
 
                     Advance();
 
@@ -77,13 +141,43 @@ namespace JollyCCompiler.Compiler.Parsing
 
         private string? ParseType()
         {
-            return Current.Kind switch
+            string? type;
+
+            if (Current.Kind == TokenKind.Int)
             {
-                TokenKind.Int => AdvanceAndReturn("int"),
-                TokenKind.Char => AdvanceAndReturn("char"),
-                TokenKind.Void => AdvanceAndReturn("void"),
-                _ => ReportTypeError()
-            };
+                type = AdvanceAndReturn("int");
+            }
+            else if (Current.Kind == TokenKind.Char)
+            {
+                type = AdvanceAndReturn("char");
+            }
+            else if (Current.Kind == TokenKind.Void)
+            {
+                type = AdvanceAndReturn("void");
+            }
+            else if (Current.Kind == TokenKind.Struct)
+            {
+                Advance();
+
+                var name = Expect(TokenKind.Identifier, "Expected struct name.");
+
+                if (name.Kind != TokenKind.Identifier)
+                    return null;
+
+                type = $"struct {name.Text}";
+            }
+            else
+            {
+                return ReportTypeError();
+            }
+
+            while (Current.Kind == TokenKind.Star)
+            {
+                Advance();
+                type += "*";
+            }
+
+            return type;
         }
 
         private string AdvanceAndReturn(string value)
@@ -121,7 +215,7 @@ namespace JollyCCompiler.Compiler.Parsing
 
         private StatementNode? ParseStatement()
         {
-            if (Current.Kind is TokenKind.Int or TokenKind.Char) return ParseVariableDeclaration();
+            if (Current.Kind is TokenKind.Int or TokenKind.Char or TokenKind.Struct) return ParseVariableDeclaration();
             if (Current.Kind == TokenKind.For) return ParseFor();
             if (Current.Kind == TokenKind.While) return ParseWhile();
             if (Current.Kind == TokenKind.Do) return ParseDoWhile();
@@ -167,24 +261,6 @@ namespace JollyCCompiler.Compiler.Parsing
             return new VariableDeclarationStatement(type, name.Text, initializer, arrayLength);
         }
 
-        //private VariableDeclarationStatement ParseVariableDeclaration()
-        //{
-        //    var type = ParseType()!;
-        //    var name = Expect(TokenKind.Identifier, "Expected variable name.");
-
-        //    ExpressionNode? initializer = null;
-
-        //    if (Current.Kind == TokenKind.Equals)
-        //    {
-        //        Advance();
-        //        initializer = ParseExpression();
-        //    }
-
-        //    Expect(TokenKind.Semicolon, "Expected ';' after variable declaration.");
-
-        //    return new VariableDeclarationStatement(type, name.Text, initializer);
-        //}
-
         private ForStatement ParseFor()
         {
             Expect(TokenKind.For, "Expected 'for'.");
@@ -192,7 +268,7 @@ namespace JollyCCompiler.Compiler.Parsing
 
             StatementNode? initializer = null;
 
-            if (Current.Kind is TokenKind.Int or TokenKind.Char)
+            if (Current.Kind is TokenKind.Int or TokenKind.Char or TokenKind.Struct)
             {
                 initializer = ParseVariableDeclaration();
             }
@@ -325,9 +401,9 @@ namespace JollyCCompiler.Compiler.Parsing
                 Advance();
                 var right = ParseAssignment();
 
-                if (left is not IdentifierExpression and not ArraySubscriptExpression)
+                if (left is not IdentifierExpression and not ArraySubscriptExpression and not DereferenceExpression and not MemberAccessExpression)
                 {
-                    ErrorAt(operatorToken, "The left side of an assignment must be a variable or array element.");
+                    ErrorAt(operatorToken, "The left side of an assignment must be a variable, array element, dereferenced pointer, or struct member.");
                     return right;
                 }
 
@@ -335,6 +411,11 @@ namespace JollyCCompiler.Compiler.Parsing
             }
 
             return left;
+        }
+
+        private static bool IsDereferenceExpression(ExpressionNode expression)
+        {
+            return expression is UnaryExpression unary && unary.Operator == TokenKind.Star;
         }
 
         private ExpressionNode ParseLogicalOr()
@@ -441,11 +522,22 @@ namespace JollyCCompiler.Compiler.Parsing
 
         private ExpressionNode ParseUnary()
         {
+            if (Current.Kind == TokenKind.Ampersand)
+            {
+                Advance();
+                return new AddressOfExpression(ParseUnary());
+            }
+
+            if (Current.Kind == TokenKind.Star)
+            {
+                Advance();
+                return new DereferenceExpression(ParseUnary());
+            }
+
             if (Current.Kind is TokenKind.PlusPlus or TokenKind.MinusMinus or TokenKind.Minus or TokenKind.Exclamation)
             {
                 var op = Current.Kind;
                 Advance();
-
                 return new UnaryExpression(op, ParseUnary());
             }
 
@@ -456,11 +548,39 @@ namespace JollyCCompiler.Compiler.Parsing
         {
             var expression = ParsePrimary();
 
-            if (Current.Kind is TokenKind.PlusPlus or TokenKind.MinusMinus)
+            while (true)
             {
-                var operatorKind = Current.Kind;
-                Advance();
-                return new UnaryExpression(operatorKind, expression, true);
+                if (Current.Kind is TokenKind.Dot or TokenKind.Arrow)
+                {
+                    var operatorKind = Current.Kind;
+                    var throughPointer = operatorKind == TokenKind.Arrow;
+                    Advance();
+                    var member = Expect(TokenKind.Identifier, throughPointer ? "Expected member name after '->'." : "Expected member name after '.'.");
+                    if (member.Kind != TokenKind.Identifier)
+                        return expression;
+
+                    expression = new MemberAccessExpression(expression, member.Text, throughPointer);
+                    continue;
+                }
+
+                if (Current.Kind == TokenKind.LeftBracket)
+                {
+                    Advance();
+                    var index = ParseExpression();
+                    Expect(TokenKind.RightBracket, "Expected ']' after array subscript.");
+                    expression = new ArraySubscriptExpression(expression, index);
+                    continue;
+                }
+
+                if (Current.Kind is TokenKind.PlusPlus or TokenKind.MinusMinus)
+                {
+                    var operatorKind = Current.Kind;
+                    Advance();
+                    expression = new UnaryExpression(operatorKind, expression, true);
+                    continue;
+                }
+
+                break;
             }
 
             return expression;
@@ -471,13 +591,11 @@ namespace JollyCCompiler.Compiler.Parsing
             if (Current.Kind == TokenKind.IntegerLiteral)
             {
                 var token = Advance();
-
                 if (!int.TryParse(token.Text, out var value))
                 {
                     ErrorAt(token, $"Invalid integer literal '{token.Text}'.");
                     value = 0;
                 }
-
                 return new IntegerExpression(value);
             }
 
@@ -490,42 +608,22 @@ namespace JollyCCompiler.Compiler.Parsing
             if (Current.Kind == TokenKind.Identifier)
             {
                 var identifier = Advance();
-
                 if (Current.Kind == TokenKind.LeftParen)
                     return ParseCall(identifier);
-
-                ExpressionNode expression = new IdentifierExpression(identifier.Text);
-
-                while (Current.Kind == TokenKind.LeftBracket)
-                {
-                    Advance();
-
-                    var index = ParseExpression();
-
-                    Expect(TokenKind.RightBracket, "Expected ']' after array subscript.");
-
-                    expression = new ArraySubscriptExpression(expression, index);
-                }
-
-                return expression;
+                return new IdentifierExpression(identifier.Text);
             }
 
             if (Current.Kind == TokenKind.LeftParen)
             {
                 Advance();
-
                 var expression = ParseExpression();
-
                 Expect(TokenKind.RightParen, "Expected ')' after expression.");
-
                 return expression;
             }
 
             Error($"Unexpected token '{Current.Text}'.");
-
             var bad = Current;
             Advance();
-
             return new IntegerExpression(0);
         }
 

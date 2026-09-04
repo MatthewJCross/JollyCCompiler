@@ -31,39 +31,26 @@ namespace JollyCCompiler
 
         private static string SampleSource =>
         """
-        int main()
+        struct Point 
         {
-            int a[5];
-            int i;
+            int x;
+            int y;
+        };
 
-            a[0] = 1;
-            a[1] = 2;
-            a[2] = 3;
-            a[3] = 4;
-            a[4] = 5;
+        struct Point* getPoint(struct Point* p) 
+        {
+            return p;
+        }
 
-            i = 0;
+        int main() 
+        {
+            struct Point point;
 
-            printf("%d ", ++a[i]);
-            printf("%d ", a[i]++);
-            printf("%d ", a[i]);
+            point.x = 123;
+            point.y = 456;
 
-            i++;
-
-            printf("%d ", --a[i]);
-            printf("%d ", a[i]--);
-            printf("%d ", a[i]);
-
-            a[2] += a[0];
-            a[3] -= a[1];
-            a[4] *= a[2];
-            a[4] /= a[0];
-            a[4] %= 7;
-
-            printf("%d %d %d\n", a[2], a[3], a[4]);
-
-            return 0;        }
-               
+            return getPoint(&point)->x;
+        }
         """;
 
         private void New_Click(object sender, RoutedEventArgs e)
@@ -226,6 +213,7 @@ namespace JollyCCompiler
                 }
 
                 _consoleProcess!.StandardInput.WriteLine($"\"{_compiledOutputPath}\"");
+                _consoleProcess.StandardInput.WriteLine("echo JOLLYC_EXITCODE:%ERRORLEVEL%");
                 _consoleProcess.StandardInput.Flush();
 
                 StatusText.Text = "Program running";

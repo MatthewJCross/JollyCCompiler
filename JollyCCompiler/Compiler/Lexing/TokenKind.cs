@@ -57,9 +57,13 @@
         RightBrace,
         LeftBracket,
         RightBracket,
+        Dot,
+        Arrow,
 
         AndAnd,
         OrOr,
+
+        Struct,
         
         Comma,
         Semicolon
