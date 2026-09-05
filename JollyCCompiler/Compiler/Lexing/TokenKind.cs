@@ -66,7 +66,10 @@
         Struct,
         
         Comma,
-        Semicolon
+        Semicolon,
+
+        Sizeof,
+        Const
     }
 
 }

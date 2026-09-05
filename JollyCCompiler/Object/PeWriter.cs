@@ -2,6 +2,7 @@
 using System;
 using System.Buffers.Binary;
 using System.Collections.Generic;
+using System.Diagnostics;
 using System.IO;
 using System.Text;
 
@@ -42,7 +43,10 @@ namespace JollyCCompiler.Object
             int entryStubSize = startup.Length; 
             uint mainRva = TextRva + (uint)entryStubSize; 
             PatchRelative32(startup, mainCallDispOffset, TextRva + (uint)(mainCallDispOffset + 4), mainRva); 
-            byte[] text = new byte[AlignUp(entryStubSize + result.MachineCode.Length, (int)FileAlignment)]; 
+            byte[] text = new byte[AlignUp(entryStubSize + result.MachineCode.Length, (int)FileAlignment)];
+
+            Debug.WriteLine($"PE DEBUG: Functions={result.Labels.Count}, MachineCode={result.MachineCode.Length}, Startup={entryStubSize}, Text={text.Length}, Fixups={result.Fixups.Count}, Data={result.Data.Count}");
+
             Buffer.BlockCopy(startup, 0, text, 0, startup.Length); 
             Buffer.BlockCopy(result.MachineCode, 0, text, entryStubSize, result.MachineCode.Length); 
             uint textVirtualSize = (uint)text.Length; 
@@ -55,47 +59,51 @@ namespace JollyCCompiler.Object
             PatchRelative32(startup, mainCallDispOffset, TextRva + (uint)(mainCallDispOffset + 4), mainRva); 
             text = new byte[AlignUp(entryStubSize + result.MachineCode.Length, (int)FileAlignment)]; 
             Buffer.BlockCopy(startup, 0, text, 0, startup.Length); 
-            Buffer.BlockCopy(result.MachineCode, 0, text, entryStubSize, result.MachineCode.Length); 
-            foreach (var fixup in result.Fixups) 
-            { 
-                if (fixup.Kind == X64FixupKind.RipRelative32) 
-                { 
-                    uint targetRva; 
-                    if (!dataSymbolRvas.TryGetValue(fixup.Symbol, out targetRva)) 
-                    { 
-                        if (string.Equals(fixup.Symbol, "printf", StringComparison.Ordinal)) 
-                            targetRva = printfIatRva; 
-                        else if (string.Equals(fixup.Symbol, "ExitProcess", StringComparison.Ordinal)) 
-                            targetRva = exitProcessIatRva; 
-                        else 
-                            throw new InvalidOperationException($"Unknown x64 RIP-relative fixup symbol '{fixup.Symbol}'."); 
-                    } 
-                    uint instructionRva = TextRva + (uint)entryStubSize + (uint)fixup.Offset; 
-                    uint nextInstructionRva = instructionRva + 4; 
-                    int displacement = checked((int)((long)targetRva - nextInstructionRva)); 
-                    WriteInt32(text, entryStubSize + fixup.Offset, displacement); 
-                } 
-                else if (fixup.Kind == X64FixupKind.Relative32) 
-                { 
-                    if (!result.Labels.TryGetValue(fixup.Symbol, out int targetOffset)) 
-                        throw new InvalidOperationException($"Unknown x64 relative label '{fixup.Symbol}'."); 
+            Buffer.BlockCopy(result.MachineCode, 0, text, entryStubSize, result.MachineCode.Length);
 
-                    uint targetLabelRva = TextRva + (uint)entryStubSize + (uint)targetOffset; 
-                    uint instructionRva = TextRva + (uint)entryStubSize + (uint)fixup.Offset; 
-                    uint nextInstructionRva = instructionRva + 4; 
-                    int displacement = checked((int)((long)targetLabelRva - nextInstructionRva)); 
-                    WriteInt32(text, entryStubSize + fixup.Offset, displacement); 
-                } 
-                else 
-                    throw new NotSupportedException($"Unsupported x64 fixup kind '{fixup.Kind}'."); 
-            } 
+            foreach (var fixup in result.Fixups)
+            {
+                if (fixup.Kind == X64FixupKind.RipRelative32)
+                {
+                    uint targetRva;
+                    if (!dataSymbolRvas.TryGetValue(fixup.Symbol, out targetRva))
+                    {
+                        if (string.Equals(fixup.Symbol, "printf", StringComparison.Ordinal))
+                            targetRva = printfIatRva;
+                        else if (string.Equals(fixup.Symbol, "ExitProcess", StringComparison.Ordinal))
+                            targetRva = exitProcessIatRva;
+                        else
+                            throw new InvalidOperationException($"Unknown x64 RIP-relative fixup symbol '{fixup.Symbol}'.");
+                    }
+                    uint instructionRva = TextRva + (uint)entryStubSize + (uint)fixup.Offset;
+                    uint nextInstructionRva = instructionRva + 4;
+                    int displacement = checked((int)((long)targetRva - nextInstructionRva));
+                    WriteInt32(text, entryStubSize + fixup.Offset, displacement);
+                }
+                else if (fixup.Kind == X64FixupKind.Relative32)
+                {
+                    if (!result.Labels.TryGetValue(fixup.Symbol, out int targetOffset))
+                        throw new InvalidOperationException($"Unknown x64 relative label '{fixup.Symbol}'.");
+
+                    uint targetLabelRva = TextRva + (uint)entryStubSize + (uint)targetOffset;
+                    uint instructionRva = TextRva + (uint)entryStubSize + (uint)fixup.Offset;
+                    uint nextInstructionRva = instructionRva + 4;
+                    int displacement = checked((int)((long)targetLabelRva - nextInstructionRva));
+                    WriteInt32(text, entryStubSize + fixup.Offset, displacement);
+                }
+                else
+                    throw new NotSupportedException($"Unsupported x64 fixup kind '{fixup.Kind}'.");
+            }
             uint textRawSize = AlignUp((uint)text.Length, FileAlignment); 
             uint rdataRawSize = AlignUp((uint)Math.Max(1, rdata.Length), FileAlignment); 
             uint idataRawSize = AlignUp((uint)Math.Max(1, idata.Length), FileAlignment); 
             uint textSectionEndRva = AlignUp(TextRva + (uint)Math.Max(1, text.Length), SectionAlignment); 
             uint rdataSectionEndRva = AlignUp(rdataRva + (uint)Math.Max(1, rdata.Length), SectionAlignment); 
             uint idataSectionEndRva = AlignUp(idataRva + (uint)Math.Max(1, idata.Length), SectionAlignment); 
-            uint sizeOfImage = idataSectionEndRva; const ushort numberOfSections = 3; 
+            uint sizeOfImage = idataSectionEndRva; const ushort numberOfSections = 3;
+
+            Debug.WriteLine($"PE DEBUG: TextRVA=0x{TextRva:X}, TextVirtualSize=0x{text.Length:X}, TextRawSize=0x{textRawSize:X}, RDataRVA=0x{rdataRva:X}, RDataSize=0x{rdata.Length:X}, IDataRVA=0x{idataRva:X}, IDataSize=0x{idata.Length:X}, SizeOfImage=0x{sizeOfImage:X}");
+            
             const ushort sizeOfOptionalHeader = 0xF0; 
             int dosHeaderSize = 0x80; 
             int peSignatureSize = 4; 
@@ -132,55 +140,9 @@ namespace JollyCCompiler.Object
 
         private static void WriteDosHeader(byte[] headers) { headers[0] = (byte)'M'; headers[1] = (byte)'Z'; WriteUInt32(headers, 0x3C, 0x80); }
 
-        private static void WritePeHeaders(byte[] headers, uint textVirtualSize, uint textRawSize, uint rdataVirtualSize, uint rdataRawSize, uint idataVirtualSize, uint idataRawSize, uint sizeOfHeaders, uint sizeOfImage, ushort numberOfSections, ushort sizeOfOptionalHeader, uint rdataRva, uint idataRva)
-        { 
-            int peOffset = 0x80; 
-            headers[peOffset + 0] = (byte)'P'; 
-            headers[peOffset + 1] = (byte)'E'; 
-            headers[peOffset + 2] = 0; 
-            headers[peOffset + 3] = 0; 
-            int fileHeader = peOffset + 4; 
-            WriteUInt16(headers, fileHeader + 0, MachineAmd64); 
-            WriteUInt16(headers, fileHeader + 2, numberOfSections); 
-            WriteUInt32(headers, fileHeader + 4, 0); 
-            WriteUInt32(headers, fileHeader + 8, 0); 
-            WriteUInt32(headers, fileHeader + 12, 0); 
-            WriteUInt16(headers, fileHeader + 16, sizeOfOptionalHeader); 
-            WriteUInt16(headers, fileHeader + 18, (ushort)(CharacteristicsExecutableImage | CharacteristicsLargeAddressAware)); 
-            int optional = fileHeader + 20; 
-            WriteUInt16(headers, optional + 0, 0x20B); 
-            headers[optional + 2] = 14; 
-            headers[optional + 3] = 0; 
-            WriteUInt32(headers, optional + 4, textRawSize); 
-            WriteUInt32(headers, optional + 8, rdataRawSize + idataRawSize); 
-            WriteUInt32(headers, optional + 12, 0); 
-            WriteUInt32(headers, optional + 16, TextRva); 
-            WriteUInt32(headers, optional + 20, RDataRva); 
-            WriteUInt64(headers, optional + 24, ImageBase); 
-            WriteUInt32(headers, optional + 32, SectionAlignment); 
-            WriteUInt32(headers, optional + 36, FileAlignment); 
-            WriteUInt16(headers, optional + 40, 6); 
-            WriteUInt16(headers, optional + 42, 0); 
-            WriteUInt16(headers, optional + 44, 0); 
-            WriteUInt16(headers, optional + 46, 0); 
-            WriteUInt16(headers, optional + 48, 6); 
-            WriteUInt16(headers, optional + 50, 0); 
-            WriteUInt32(headers, optional + 52, 0); 
-            WriteUInt32(headers, optional + 56, sizeOfImage); 
-            WriteUInt32(headers, optional + 60, sizeOfHeaders); 
-            WriteUInt32(headers, optional + 64, 0); 
-            WriteUInt16(headers, optional + 68, SubsystemWindowsCui); 
-            WriteUInt16(headers, optional + 70, (ushort)(DllCharacteristicsDynamicBase | DllCharacteristicsNxCompat | DllCharacteristicsNoSeh)); 
-            WriteUInt64(headers, optional + 72, 0x100000); 
-            WriteUInt64(headers, optional + 80, 0x1000); 
-            WriteUInt64(headers, optional + 88, 0x100000); 
-            WriteUInt64(headers, optional + 96, 0x1000); 
-            WriteUInt32(headers, optional + 104, 0); 
-            WriteUInt32(headers, optional + 108, 16); 
-            int dataDirectory = optional + 112; 
-            WriteUInt32(headers, dataDirectory + 8, IDataRva); 
-            WriteUInt32(headers, dataDirectory + 12, 80); 
-        }
+
+private void WritePeHeaders(byte[] headers, uint textVirtualSize, uint textRawSize, uint rdataVirtualSize, uint rdataRawSize, uint idataVirtualSize, uint idataRawSize, uint sizeOfHeaders, uint sizeOfImage, ushort numberOfSections, ushort sizeOfOptionalHeader, uint rdataRva, uint idataRva) { int peOffset = 0x80; headers[peOffset + 0] = (byte)'P'; headers[peOffset + 1] = (byte)'E'; headers[peOffset + 2] = 0; headers[peOffset + 3] = 0; int fileHeader = peOffset + 4; WriteUInt16(headers, fileHeader + 0, MachineAmd64); WriteUInt16(headers, fileHeader + 2, numberOfSections); WriteUInt32(headers, fileHeader + 4, 0); WriteUInt32(headers, fileHeader + 8, 0); WriteUInt32(headers, fileHeader + 12, 0); WriteUInt16(headers, fileHeader + 16, sizeOfOptionalHeader); WriteUInt16(headers, fileHeader + 18, (ushort)(CharacteristicsExecutableImage | CharacteristicsLargeAddressAware)); int optional = fileHeader + 20; WriteUInt16(headers, optional + 0, 0x20B); headers[optional + 2] = 14; headers[optional + 3] = 0; WriteUInt32(headers, optional + 4, textRawSize); WriteUInt32(headers, optional + 8, rdataRawSize + idataRawSize); WriteUInt32(headers, optional + 12, 0); WriteUInt32(headers, optional + 16, TextRva); WriteUInt32(headers, optional + 20, TextRva); WriteUInt64(headers, optional + 24, ImageBase); WriteUInt32(headers, optional + 32, SectionAlignment); WriteUInt32(headers, optional + 36, FileAlignment); WriteUInt16(headers, optional + 40, 6); WriteUInt16(headers, optional + 42, 0); WriteUInt16(headers, optional + 44, 0); WriteUInt16(headers, optional + 46, 0); WriteUInt16(headers, optional + 48, 6); WriteUInt16(headers, optional + 50, 0); WriteUInt32(headers, optional + 52, 0); WriteUInt32(headers, optional + 56, sizeOfImage); WriteUInt32(headers, optional + 60, sizeOfHeaders); WriteUInt32(headers, optional + 64, 0); WriteUInt16(headers, optional + 68, SubsystemWindowsCui); WriteUInt16(headers, optional + 70, (ushort)(DllCharacteristicsDynamicBase | DllCharacteristicsNxCompat | DllCharacteristicsNoSeh)); WriteUInt64(headers, optional + 72, 0x100000); WriteUInt64(headers, optional + 80, 0x1000); WriteUInt64(headers, optional + 88, 0x100000); WriteUInt64(headers, optional + 96, 0x1000); WriteUInt32(headers, optional + 104, 0); WriteUInt32(headers, optional + 108, 16); int dataDirectory = optional + 112; WriteUInt32(headers, dataDirectory + 8, idataRva); WriteUInt32(headers, dataDirectory + 12, 80); }
+
 
         private static void WriteSectionHeaders(byte[] headers, uint textVirtualSize, uint textRawSize, uint textRawPointer, uint rdataRva, uint rdataVirtualSize, uint rdataRawSize, uint rdataRawPointer, uint idataRva, uint idataVirtualSize, uint idataRawSize, uint idataRawPointer) 
         { 

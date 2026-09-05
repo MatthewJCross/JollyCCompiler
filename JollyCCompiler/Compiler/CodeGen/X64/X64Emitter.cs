@@ -147,38 +147,42 @@ namespace JollyCCompiler.Compiler.CodeGen.X64
             _instructions.Add(new X64Instruction(offset, bytes, "mov rbp, rsp"));
         }
 
-        public void SubRsp(int value)
-        {
-            var offset = Offset;
-
-            if (value <= 127)
-            {
-                var bytes = new byte[] { 0x48, 0x83, 0xEC, (byte)value };
-                _code.AddRange(bytes);
-                _instructions.Add(new X64Instruction(offset, bytes, $"sub rsp, {value}"));
-                return;
-            }
-
-            var bytes32 = new byte[] { 0x48, 0x81, 0xEC, (byte)value, (byte)(value >> 8), (byte)(value >> 16), (byte)(value >> 24) };
-            _code.AddRange(bytes32);
-            _instructions.Add(new X64Instruction(offset, bytes32, $"sub rsp, {value}"));
+        public void SubRsp(int value) 
+        { 
+            if (value < 0) 
+                throw new ArgumentOutOfRangeException(nameof(value)); 
+            
+            var offset = Offset; 
+            if (value <= 127) 
+            { 
+                var bytes = new byte[] { 0x48, 0x83, 0xEC, (byte)value }; 
+                _code.AddRange(bytes); 
+                _instructions.Add(new X64Instruction(offset, bytes, $"sub rsp, {value}")); 
+                return; 
+            } 
+            
+            var bytes32 = new byte[] { 0x48, 0x81, 0xEC, (byte)value, (byte)(value >> 8), (byte)(value >> 16), (byte)(value >> 24) }; 
+            _code.AddRange(bytes32); 
+            _instructions.Add(new X64Instruction(offset, bytes32, $"sub rsp, {value}")); 
         }
 
-        public void AddRsp(int value)
-        {
-            var offset = Offset;
-
-            if (value <= 127)
-            {
-                var bytes = new byte[] { 0x48, 0x83, 0xC4, (byte)value };
-                _code.AddRange(bytes);
-                _instructions.Add(new X64Instruction(offset, bytes, $"add rsp, {value}"));
-                return;
-            }
-
-            var bytes32 = new byte[] { 0x48, 0x81, 0xC4, (byte)value, (byte)(value >> 8), (byte)(value >> 16), (byte)(value >> 24) };
-            _code.AddRange(bytes32);
-            _instructions.Add(new X64Instruction(offset, bytes32, $"add rsp, {value}"));
+        public void AddRsp(int value) 
+        { 
+            if (value < 0) 
+                throw new ArgumentOutOfRangeException(nameof(value)); 
+            
+            var offset = Offset; 
+            if (value <= 127) 
+            { 
+                var bytes = new byte[] { 0x48, 0x83, 0xC4, (byte)value }; 
+                _code.AddRange(bytes); 
+                _instructions.Add(new X64Instruction(offset, bytes, $"add rsp, {value}")); 
+                return; 
+            } 
+            
+            var bytes32 = new byte[] { 0x48, 0x81, 0xC4, (byte)value, (byte)(value >> 8), (byte)(value >> 16), (byte)(value >> 24) }; 
+            _code.AddRange(bytes32); 
+            _instructions.Add(new X64Instruction(offset, bytes32, $"add rsp, {value}")); 
         }
 
         public void MovEdxEax()
@@ -189,21 +193,34 @@ namespace JollyCCompiler.Compiler.CodeGen.X64
             _instructions.Add(new X64Instruction(offset, bytes, "mov edx, eax"));
         }
 
-        public void MovRbpDisp8Eax(int displacement)
-        {
-            var offset = Offset;
-            var bytes = new byte[] { 0x89, 0x45, (byte)displacement };
-            _code.AddRange(bytes);
-            _instructions.Add(new X64Instruction(offset, bytes, $"mov [rbp{FormatOffset(displacement)}], eax"));
+        public void MovRbpDisp8Eax(int displacement) 
+        { 
+            if (displacement < -128 || displacement > 127) 
+            { 
+                MovRbpDisp32Eax(displacement); 
+                return; 
+            } 
+            
+            var offset = Offset; 
+            var bytes = new byte[] { 0x89, 0x45, unchecked((byte)displacement) }; 
+            _code.AddRange(bytes); 
+            _instructions.Add(new X64Instruction(offset, bytes, $"mov [rbp{FormatOffset(displacement)}], eax")); 
         }
 
-        public void MovEaxRbpDisp8(int displacement)
-        {
-            var offset = Offset;
-            var bytes = new byte[] { 0x8B, 0x45, (byte)displacement };
-            _code.AddRange(bytes);
-            _instructions.Add(new X64Instruction(offset, bytes, $"mov eax, [rbp{FormatOffset(displacement)}]"));
+        public void MovEaxRbpDisp8(int displacement) 
+        { 
+            if (displacement < -128 || displacement > 127) 
+            { 
+                MovEaxRbpDisp32(displacement); 
+                return; 
+            } 
+            
+            var offset = Offset; 
+            var bytes = new byte[] { 0x8B, 0x45, unchecked((byte)displacement) }; 
+            _code.AddRange(bytes); 
+            _instructions.Add(new X64Instruction(offset, bytes, $"mov eax, [rbp{FormatOffset(displacement)}]")); 
         }
+
 
         public void MovRaxRcx()
         {
@@ -237,13 +254,7 @@ namespace JollyCCompiler.Compiler.CodeGen.X64
             _instructions.Add(new X64Instruction(offset, bytes, "mov rax, r9"));
         }
 
-        public void MovRbpDisp8Rax(int displacement) 
-        { 
-            var offset = Offset; 
-            var bytes = new byte[] { 0x48, 0x89, 0x45, unchecked((byte)displacement) }; 
-            _code.AddRange(bytes); 
-            _instructions.Add(new X64Instruction(offset, bytes, $"mov [rbp{FormatOffset(displacement)}], rax")); 
-        }
+        public void MovRbpDisp8Rax(int displacement) { if (displacement < -128 || displacement > 127) { MovRbpDisp32Rax(displacement); return; } var offset = Offset; var bytes = new byte[] { 0x48, 0x89, 0x45, unchecked((byte)displacement) }; _code.AddRange(bytes); _instructions.Add(new X64Instruction(offset, bytes, $"mov [rbp{FormatOffset(displacement)}], rax")); }
 
         public void LeaRcxRipRelative(string symbol)
         {
@@ -257,8 +268,29 @@ namespace JollyCCompiler.Compiler.CodeGen.X64
             _instructions.Add(new X64Instruction(offset, bytes, $"lea rcx, [{symbol}]"));
         }
 
+        public void MovRbpDisp32Rax(int displacement) 
+        { 
+            var offset = Offset; 
+            var bytes = new byte[] { 0x48, 0x89, 0x85, (byte)displacement, (byte)(displacement >> 8), (byte)(displacement >> 16), (byte)(displacement >> 24) }; 
+            _code.AddRange(bytes); 
+            _instructions.Add(new X64Instruction(offset, bytes, $"mov [rbp{(displacement >= 0 ? "+" : "")}{displacement}], rax")); 
+        }
+
+        public void MovRaxRbpDisp32(int displacement) 
+        { 
+            var offset = Offset; 
+            var bytes = new byte[] { 0x48, 0x8B, 0x85, (byte)displacement, (byte)(displacement >> 8), (byte)(displacement >> 16), (byte)(displacement >> 24) }; 
+            _code.AddRange(bytes); 
+            _instructions.Add(new X64Instruction(offset, bytes, $"mov rax, [rbp{(displacement >= 0 ? "+" : "")}{displacement}]")); 
+        }
+
         public void MovRaxRbpDisp8(int displacement) 
         { 
+            if (displacement < -128 || displacement > 127) 
+            { 
+                MovRaxRbpDisp32(displacement); return; 
+            } 
+            
             var offset = Offset; 
             var bytes = new byte[] { 0x48, 0x8B, 0x45, unchecked((byte)displacement) }; 
             _code.AddRange(bytes); 
@@ -463,6 +495,82 @@ namespace JollyCCompiler.Compiler.CodeGen.X64
             _instructions.Add(new X64Instruction(offset, bytes, $"cmp eax, {value}"));
         }
 
+
+        public void MovAlRbpDisp8(int displacement) 
+        { 
+            if (displacement < -128 || displacement > 127)
+            { 
+                MovAlRbpDisp32(displacement); 
+                return; 
+            } 
+
+            var offset = Offset; 
+            var bytes = new byte[] { 0x8A, 0x45, unchecked((byte)displacement) }; 
+            _code.AddRange(bytes); 
+            _instructions.Add(new X64Instruction(offset, bytes, $"mov al, [rbp{FormatOffset(displacement)}]")); 
+        }
+
+        public void MovRbpDisp8Al(int displacement) 
+        { 
+            if (displacement < -128 || displacement > 127) 
+            { 
+                MovRbpDisp32Al(displacement); 
+                return; 
+            } 
+            
+            var offset = Offset; 
+            var bytes = new byte[] { 0x88, 0x45, unchecked((byte)displacement) }; 
+            _code.AddRange(bytes); 
+            _instructions.Add(new X64Instruction(offset, bytes, $"mov [rbp{FormatOffset(displacement)}], al")); 
+        }
+
+        public void MovAlRaxMemory()
+        {
+            var offset = Offset;
+            var bytes = new byte[] { 0x8A, 0x00 };
+            _code.AddRange(bytes);
+            _instructions.Add(new X64Instruction(offset, bytes, "mov al, [rax]"));
+        }
+
+        public void MovzxEaxAl()
+        {
+            var offset = Offset;
+            var bytes = new byte[] { 0x0F, 0xB6, 0xC0 };
+            _code.AddRange(bytes);
+            _instructions.Add(new X64Instruction(offset, bytes, "movzx eax, al"));
+        }
+
+        public void MovRbpDisp32Al(int displacement)
+        {
+            var offset = Offset;
+            var bytes = new byte[] { 0x88, 0x85, (byte)displacement, (byte)(displacement >> 8), (byte)(displacement >> 16), (byte)(displacement >> 24) };
+            _code.AddRange(bytes);
+            _instructions.Add(new X64Instruction(offset, bytes, $"mov byte ptr [rbp{(displacement < 0 ? displacement.ToString() : "+" + displacement)}], al"));
+        }
+
+        public void MovAlRbpDisp32(int displacement)
+        {
+            var offset = Offset;
+            var bytes = new byte[] { 0x8A, 0x85, (byte)displacement, (byte)(displacement >> 8), (byte)(displacement >> 16), (byte)(displacement >> 24) };
+            _code.AddRange(bytes);
+            _instructions.Add(new X64Instruction(offset, bytes, $"mov al, [rbp{displacement:+#;-#;0}]"));
+        }
+
+        public void MovzxEaxRaxMemoryByte()
+        {
+            var offset = Offset;
+            var bytes = new byte[] { 0x0F, 0xB6, 0x00 };
+            _code.AddRange(bytes);
+            _instructions.Add(new X64Instruction(offset, bytes, "movzx eax, byte ptr [rax]"));
+        }
+
+        public void MovRcxRspDisp32(int displacement)
+        {
+            var offset = Offset;
+            var bytes = new byte[] { 0x48, 0x8B, 0x8C, 0x24, (byte)displacement, (byte)(displacement >> 8), (byte)(displacement >> 16), (byte)(displacement >> 24) };
+            _code.AddRange(bytes);
+            _instructions.Add(new X64Instruction(offset, bytes, $"mov rcx, [rsp{(displacement < 0 ? displacement.ToString() : "+" + displacement)}]"));
+        }
         public void EmitByte(byte value)
         {
             _code.Add(value);
@@ -508,13 +616,13 @@ namespace JollyCCompiler.Compiler.CodeGen.X64
             }
         }
 
-        public void MoveEaxToStackArgument(int argumentIndex)
-        {
-            if (argumentIndex < 4)
-                throw new ArgumentOutOfRangeException(nameof(argumentIndex));
-
-            var displacement = 40 + ((argumentIndex - 4) * 8);
-            MovRspDisp32Eax(displacement);
+        public void MoveEaxToStackArgument(int argumentIndex) 
+        { 
+            if (argumentIndex < 4) 
+                throw new ArgumentOutOfRangeException(nameof(argumentIndex)); 
+            
+            var displacement = 32 + ((argumentIndex - 4) * 8); 
+            MovRspDisp32Eax(displacement); 
         }
 
         public void TestEaxEax()
@@ -557,7 +665,7 @@ namespace JollyCCompiler.Compiler.CodeGen.X64
             _instructions.Add(new X64Instruction(offset, bytes, "add rax, rcx"));
         }
 
-        public void MovRaxRax()
+        public void MovRaxFromMemory()
         {
             var offset = Offset;
             var bytes = new byte[] { 0x48, 0x8B, 0x00 };
@@ -667,7 +775,7 @@ namespace JollyCCompiler.Compiler.CodeGen.X64
             if (argumentIndex < 4) 
                 throw new ArgumentOutOfRangeException(nameof(argumentIndex)); 
             
-            var displacement = 40 + ((argumentIndex - 4) * 8); 
+            var displacement = 32 + ((argumentIndex - 4) * 8); 
             MovRspDisp32Rax(displacement); 
         }
 

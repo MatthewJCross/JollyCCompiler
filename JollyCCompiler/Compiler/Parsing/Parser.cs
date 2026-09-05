@@ -113,13 +113,27 @@ namespace JollyCCompiler.Compiler.Parsing
                 while (true)
                 {
                     var type = ParseType();
-                    if (type is null) return null;
+                    if (type is null)
+                        return null;
 
                     var parameterName = Expect(TokenKind.Identifier, "Expected parameter name.");
-                    if (parameterName.Kind == TokenKind.Identifier) 
-                        parameters.Add(new ParameterNode(type, parameterName.Text));
+                    if (parameterName.Kind != TokenKind.Identifier)
+                        return null;
 
-                    if (Current.Kind != TokenKind.Comma) 
+                    if (Current.Kind == TokenKind.LeftBracket)
+                    {
+                        Advance();
+
+                        if (Current.Kind == TokenKind.IntegerLiteral)
+                            Advance();
+
+                        Expect(TokenKind.RightBracket, "Expected ']' after array parameter.");
+                        type += "*";
+                    }
+
+                    parameters.Add(new ParameterNode(type, parameterName.Text));
+
+                    if (Current.Kind != TokenKind.Comma)
                         break;
 
                     Advance();
@@ -215,7 +229,7 @@ namespace JollyCCompiler.Compiler.Parsing
 
         private StatementNode? ParseStatement()
         {
-            if (Current.Kind is TokenKind.Int or TokenKind.Char or TokenKind.Struct) return ParseVariableDeclaration();
+            if (Current.Kind is TokenKind.Const or TokenKind.Int or TokenKind.Char or TokenKind.Struct) return ParseVariableDeclaration();
             if (Current.Kind == TokenKind.For) return ParseFor();
             if (Current.Kind == TokenKind.While) return ParseWhile();
             if (Current.Kind == TokenKind.Do) return ParseDoWhile();
@@ -239,26 +253,38 @@ namespace JollyCCompiler.Compiler.Parsing
             return new ExpressionStatement(expression);
         }
 
-        private VariableDeclarationStatement ParseVariableDeclaration()
-        {
-            var type = ParseType()!;
-            var name = Expect(TokenKind.Identifier, "Expected variable name.");
-            int? arrayLength = null;
-            if (Current.Kind == TokenKind.LeftBracket)
-            {
-                Advance();
-                var lengthToken = Expect(TokenKind.IntegerLiteral, "Expected array size.");
-                arrayLength = int.Parse(lengthToken.Text);
-                Expect(TokenKind.RightBracket, "Expected ']' after array size.");
-            }
-            ExpressionNode? initializer = null;
-            if (Current.Kind == TokenKind.Equals)
-            {
-                Advance();
-                initializer = ParseExpression();
-            }
-            Expect(TokenKind.Semicolon, "Expected ';' after variable declaration.");
-            return new VariableDeclarationStatement(type, name.Text, initializer, arrayLength);
+        private VariableDeclarationStatement ParseVariableDeclaration() 
+        { 
+            bool isConst = false; 
+            if (Current.Kind == TokenKind.Const) 
+            { 
+                Advance(); 
+                isConst = true; 
+            } 
+            
+            var type = ParseType()!; 
+            var name = Expect(TokenKind.Identifier, "Expected variable name."); 
+            int? arrayLength = null; 
+            if (Current.Kind == TokenKind.LeftBracket) 
+            { 
+                Advance(); 
+                var lengthToken = Expect(TokenKind.IntegerLiteral, "Expected array size."); 
+                arrayLength = int.Parse(lengthToken.Text); 
+                Expect(TokenKind.RightBracket, "Expected ']' after array size."); 
+            } 
+            
+            ExpressionNode? initializer = null; 
+            if (Current.Kind == TokenKind.Equals) 
+            { 
+                Advance(); 
+                initializer = ParseExpression(); 
+            } 
+            
+            if (isConst && initializer is null)
+                Error("A const variable must be initialized.");
+            
+            Expect(TokenKind.Semicolon, "Expected ';' after variable declaration."); 
+            return new VariableDeclarationStatement(type, name.Text, initializer, arrayLength, isConst); 
         }
 
         private ForStatement ParseFor()
@@ -268,7 +294,7 @@ namespace JollyCCompiler.Compiler.Parsing
 
             StatementNode? initializer = null;
 
-            if (Current.Kind is TokenKind.Int or TokenKind.Char or TokenKind.Struct)
+            if (Current.Kind is TokenKind.Const or TokenKind.Int or TokenKind.Char or TokenKind.Struct)
             {
                 initializer = ParseVariableDeclaration();
             }
@@ -522,6 +548,23 @@ namespace JollyCCompiler.Compiler.Parsing
 
         private ExpressionNode ParseUnary()
         {
+            if (Current.Kind == TokenKind.Sizeof)
+            {
+                Advance();
+                Expect(TokenKind.LeftParen, "Expected '(' after 'sizeof'.");
+
+                if (Current.Kind is TokenKind.Int or TokenKind.Char or TokenKind.Void or TokenKind.Struct)
+                {
+                    var type = ParseType();
+                    Expect(TokenKind.RightParen, "Expected ')' after sizeof type.");
+                    return new SizeofExpression(null, type);
+                }
+
+                var expression = ParseExpression();
+                Expect(TokenKind.RightParen, "Expected ')' after sizeof expression.");
+                return new SizeofExpression(expression, null);
+            }
+
             if (Current.Kind == TokenKind.Ampersand)
             {
                 Advance();

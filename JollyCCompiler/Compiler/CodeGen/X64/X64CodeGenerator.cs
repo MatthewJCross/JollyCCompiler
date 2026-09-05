@@ -1,6 +1,9 @@
 ﻿using JollyCCompiler.Compiler.Lexing;
 using JollyCCompiler.Compiler.Syntax;
+using System.Runtime.CompilerServices;
 using System.Text;
+using System.Windows;
+using System.Windows.Documents;
 
 namespace JollyCCompiler.Compiler.CodeGen.X64
 {
@@ -24,178 +27,274 @@ namespace JollyCCompiler.Compiler.CodeGen.X64
             var emitter = new X64Emitter();
             var data = new List<X64DataItem>();
             var main = program.Functions.FirstOrDefault(f => f.Name == "main");
+
             if (main is null)
                 throw new InvalidOperationException("Program does not contain a main function.");
+
             var functions = new List<FunctionNode> { main };
+
             foreach (var function in program.Functions)
+            {
                 if (function.Name != "main")
                     functions.Add(function);
+            }
 
             foreach (var function in functions)
             {
-                var variables = new Dictionary<string, (int Offset, string Type)>();
+                var variables = new Dictionary<string, (int Offset, string Type, bool IsConst)>();
                 var arrays = new Dictionary<string, (int Length, string Type)>();
                 var parameters = new Dictionary<string, (int Index, string Type)>();
+
                 CollectParameters(function, parameters);
+
                 var frameSize = CollectVariables(function, variables, arrays);
-                if (frameSize > 0) frameSize = ((frameSize + 15) / 16) * 16;
+
+                if (frameSize > 0)
+                    frameSize = ((frameSize + 15) / 16) * 16;
+
                 GenerateFunction(function, emitter, data, variables, arrays, parameters, frameSize);
             }
 
-            return new X64CodeGenerationResult(emitter.GetCode(), emitter.Instructions, emitter.Fixups, data, emitter.Labels);
+            return new X64CodeGenerationResult(
+                emitter.GetCode(),
+                emitter.Instructions,
+                emitter.Fixups,
+                data,
+                emitter.Labels);
         }
 
-        private static int GetTypeSize(string type) => type switch 
-        { 
-            "char" => 1, 
-            "short" => 2, 
-            "int" => 4, 
-            "long" => 4, 
-            "long long" => 8, 
-            "float" => 4, 
-            "double" => 8, 
-            _ when type.EndsWith("*", StringComparison.Ordinal) => 8, 
-            _ when type.StartsWith("struct ", StringComparison.Ordinal) => GetStructSize(type[7..]), 
-            _ => throw new NotSupportedException($"Cannot determine the size of type '{type}'.") 
+        private static int GetTypeSize(string type) => type switch
+        {
+            "char" => 1,
+            "short" => 2,
+            "int" => 4,
+            "long" => 4,
+            "long long" => 8,
+            "float" => 4,
+            "double" => 8,
+            _ when type.EndsWith("*", StringComparison.Ordinal) => 8,
+            _ when type.StartsWith("struct ", StringComparison.Ordinal) => GetStructSize(type[7..]),
+            _ => throw new NotSupportedException($"Cannot determine the size of type '{type}'.")
         };
 
-        private static int GetStructSize(string name) 
-        { 
-            if (!_structs.TryGetValue(name, out var declaration)) 
-                throw new InvalidOperationException($"Unknown struct type 'struct {name}'."); 
-            
-            var size = 0; 
-            foreach (var field in declaration.Fields) 
-            { 
-                var fieldSize = GetTypeSize(field.Type); 
-                if (field.ArrayLength is int length) 
-                    fieldSize *= length; size += fieldSize; 
-            } 
-            
-            return AlignUp(size, 8); 
-        }
-
-        private static (int Offset, string Type) GetStructField(string structType, string member) 
-        { 
-            if (!structType.StartsWith("struct ", StringComparison.Ordinal)) 
-                throw new InvalidOperationException($"'{structType}' is not a struct type."); 
-            
-            var name = structType[7..]; 
-            if (!_structs.TryGetValue(name, out var declaration)) 
-                throw new InvalidOperationException($"Unknown struct type '{structType}'."); 
-            
-            var offset = 0; 
-            foreach (var field in declaration.Fields) 
-            { 
-                var fieldSize = GetTypeSize(field.Type); 
-                if (field.ArrayLength is int length) 
-                    fieldSize *= length; 
-                
-                if (field.Name == member) 
-                    return (offset, field.Type); 
-                
-                offset += fieldSize; 
-            } 
-
-            throw new InvalidOperationException($"Struct '{name}' has no member '{member}'."); 
-        }
-
-        private static int CollectVariables(FunctionNode function, Dictionary<string, (int Offset, string Type)> variables, Dictionary<string, (int Length, string Type)> arrays)
+        private static int GetStructSize(string name)
         {
-            var nextOffset = 40;
-            foreach (var statement in function.Body.Statements)
-                CollectVariablesFromStatement(statement, variables, arrays, ref nextOffset);
+            if (!_structs.TryGetValue(name, out var declaration))
+                throw new InvalidOperationException($"Unknown struct type 'struct {name}'.");
 
-            return nextOffset;
+            var size = 0;
+
+            foreach (var field in declaration.Fields)
+            {
+                var fieldSize = GetTypeSize(field.Type);
+
+                if (field.ArrayLength is int length)
+                    fieldSize *= length;
+
+                size += fieldSize;
+            }
+
+            return AlignUp(size, 8);
+        }
+
+        private static (int Offset, string Type) GetStructField(string structType, string member)
+        {
+            if (!structType.StartsWith("struct ", StringComparison.Ordinal))
+                throw new InvalidOperationException($"'{structType}' is not a struct type.");
+
+            var name = structType[7..];
+
+            if (!_structs.TryGetValue(name, out var declaration))
+                throw new InvalidOperationException($"Unknown struct type '{structType}'.");
+
+            var offset = 0;
+
+            foreach (var field in declaration.Fields)
+            {
+                var fieldSize = GetTypeSize(field.Type);
+
+                if (field.ArrayLength is int length)
+                    fieldSize *= length;
+
+                if (field.Name == member)
+                    return (offset, field.Type);
+
+                offset += fieldSize;
+            }
+
+            throw new InvalidOperationException($"Struct '{name}' has no member '{member}'.");
+        }
+
+        private static int CollectVariables(FunctionNode function, Dictionary<string, (int Offset, string Type, bool IsConst)> variables, Dictionary<string, (int Length, string Type)> arrays) 
+        { 
+            var nextOffset = 40; 
+            foreach (var statement in function.Body.Statements) 
+                CollectVariablesFromStatement(statement, variables, arrays, ref nextOffset); 
+            return nextOffset; 
         }
 
         private static void CollectParameters(FunctionNode function, Dictionary<string, (int Index, string Type)> parameters)
         {
-            for (var i = 0; i < function.Parameters.Count; i++) { var parameter = function.Parameters[i]; if (parameters.ContainsKey(parameter.Name)) throw new InvalidOperationException($"Duplicate parameter '{parameter.Name}'."); if (i >= 4) throw new NotSupportedException("More than four function parameters are not yet supported."); parameters[parameter.Name] = (i, parameter.Type); }
-        }
-
-        private static void CollectVariablesFromStatement(StatementNode statement, Dictionary<string, (int Offset, string Type)> variables, Dictionary<string, (int Length, string Type)> arrays, ref int nextOffset)
-        {
-            switch (statement)
+            for (var i = 0; i < function.Parameters.Count; i++)
             {
-                case VariableDeclarationStatement variable:
-                    if (!variables.ContainsKey(variable.Name))
-                    {
-                        if (variable.ArrayLength is int arrayLength)
-                        {
-                            if (arrayLength <= 0)
-                                throw new InvalidOperationException($"Array '{variable.Name}' must have a positive size.");
+                var parameter = function.Parameters[i];
 
-                            if (variable.Initializer is not null)
-                                throw new NotSupportedException($"Array initializer for '{variable.Name}' is not yet supported.");
+                if (parameters.ContainsKey(parameter.Name))
+                    throw new InvalidOperationException($"Duplicate parameter '{parameter.Name}'.");
 
-                            var elementSize = GetTypeSize(variable.Type);
-                            var bytes = checked(arrayLength * elementSize);
-                            var allocationSize = AlignUp(bytes, 8);
+                if (i >= 4)
+                    throw new NotSupportedException("More than four function parameters are not yet supported.");
 
-                            nextOffset += allocationSize;
-                            variables[variable.Name] = (-nextOffset, variable.Type);
-                            arrays[variable.Name] = (arrayLength, variable.Type);
-                        }
-                        else
-                        {
-                            variables[variable.Name] = (-nextOffset, variable.Type);
-                            nextOffset += Math.Max(8, GetTypeSize(variable.Type));
-                        }
-                    }
-                    break;
-
-                case BlockStatement block:
-                    foreach (var child in block.Statements)
-                        CollectVariablesFromStatement(child, variables, arrays, ref nextOffset);
-                    break;
-
-                case ForStatement forStatement:
-                    if (forStatement.Initializer is not null)
-                        CollectVariablesFromStatement(forStatement.Initializer, variables, arrays, ref nextOffset);
-
-                    CollectVariablesFromStatement(forStatement.Body, variables, arrays, ref nextOffset);
-                    break;
-
-                case WhileStatement whileStatement:
-                    CollectVariablesFromStatement(whileStatement.Body, variables, arrays, ref nextOffset);
-                    break;
-
-                case DoWhileStatement doWhileStatement:
-                    CollectVariablesFromStatement(doWhileStatement.Body, variables, arrays, ref nextOffset);
-                    break;
-
-                case IfStatement ifStatement:
-                    CollectVariablesFromStatement(ifStatement.Then, variables, arrays, ref nextOffset);
-
-                    if (ifStatement.Else is not null)
-                        CollectVariablesFromStatement(ifStatement.Else, variables, arrays, ref nextOffset);
-                    break;
-
-                case SwitchStatement switchStatement:
-                    foreach (var switchCase in switchStatement.Cases)
-                        foreach (var child in switchCase.Statements)
-                            CollectVariablesFromStatement(child, variables, arrays, ref nextOffset);
-                    break;
+                parameters[parameter.Name] = (i, parameter.Type);
             }
         }
 
-        private static void GenerateFunction(FunctionNode function, X64Emitter emitter, List<X64DataItem> data, Dictionary<string, (int Offset, string Type)> variables, Dictionary<string, (int Length, string Type)> arrays, Dictionary<string, (int Index, string Type)> parameters, int frameSize)
+        private static void CollectVariablesFromStatement(StatementNode statement, Dictionary<string, (int Offset, string Type, bool IsConst)> variables, Dictionary<string, (int Length, string Type)> arrays, ref int nextOffset) 
+        { 
+            switch (statement) 
+            { 
+                case VariableDeclarationStatement variable: 
+                    if (!variables.ContainsKey(variable.Name)) 
+                    { 
+                        if (variable.ArrayLength is int arrayLength) 
+                        { 
+                            if (arrayLength <= 0) 
+                                throw new InvalidOperationException($"Array '{variable.Name}' must have a positive size."); 
+                            
+                            if (variable.Initializer is not null) 
+                                throw new NotSupportedException($"Array initializer for '{variable.Name}' is not yet supported."); 
+                            
+                            var elementSize = GetTypeSize(variable.Type); 
+                            var bytes = checked(arrayLength * elementSize); 
+                            var allocationSize = AlignUp(bytes, 8); 
+                            nextOffset += allocationSize; 
+                            variables[variable.Name] = (-nextOffset, variable.Type, variable.IsConst); 
+                            arrays[variable.Name] = (arrayLength, variable.Type); 
+                        } 
+                        else 
+                        { 
+                            var size = Math.Max(8, GetTypeSize(variable.Type)); 
+                            var allocationSize = AlignUp(size, 8); nextOffset += allocationSize; variables[variable.Name] = (-nextOffset, variable.Type, variable.IsConst); 
+                        } 
+                    } 
+                    break; 
+
+                case BlockStatement block: foreach (var child in block.Statements) CollectVariablesFromStatement(child, variables, arrays, ref nextOffset); break; 
+                case ForStatement forStatement: if (forStatement.Initializer is not null) CollectVariablesFromStatement(forStatement.Initializer, variables, arrays, ref nextOffset); CollectVariablesFromStatement(forStatement.Body, variables, arrays, ref nextOffset); break; 
+                case WhileStatement whileStatement: CollectVariablesFromStatement(whileStatement.Body, variables, arrays, ref nextOffset); break; 
+                case DoWhileStatement doWhileStatement: CollectVariablesFromStatement(doWhileStatement.Body, variables, arrays, ref nextOffset); break; 
+                case IfStatement ifStatement: CollectVariablesFromStatement(ifStatement.Then, variables, arrays, ref nextOffset); if (ifStatement.Else is not null) CollectVariablesFromStatement(ifStatement.Else, variables, arrays, ref nextOffset); break; 
+                case SwitchStatement switchStatement: foreach (var switchCase in switchStatement.Cases) { foreach (var child in switchCase.Statements) CollectVariablesFromStatement(child, variables, arrays, ref nextOffset); } break; } 
+        }
+
+        private static void GenerateFunction(FunctionNode function, X64Emitter emitter, List<X64DataItem> data, Dictionary<string, (int Offset, string Type, bool IsConst)> variables, Dictionary<string, (int Length, string Type)> arrays, Dictionary<string, (int Index, string Type)> parameters, int frameSize)
         {
             var functionLabel = $"$fn_{function.Name}";
+
             emitter.MarkLabel(functionLabel);
             emitter.PushRbp();
             emitter.MovRbpRsp();
             emitter.SubRsp(frameSize);
-            foreach (var parameter in parameters) { var offset = -(parameter.Value.Index + 1) * 8; switch (parameter.Value.Index) { case 0: if (parameter.Value.Type.EndsWith("*", StringComparison.Ordinal)) { emitter.MovRaxRcx(); emitter.MovRbpDisp8Rax(offset); } else { emitter.MovEaxEcx(); emitter.MovRbpDisp8Eax(offset); } break; case 1: if (parameter.Value.Type.EndsWith("*", StringComparison.Ordinal)) { emitter.MovRaxRdx(); emitter.MovRbpDisp8Rax(offset); } else { emitter.MovEaxEdx(); emitter.MovRbpDisp8Eax(offset); } break; case 2: if (parameter.Value.Type.EndsWith("*", StringComparison.Ordinal)) { emitter.MovRaxR8(); emitter.MovRbpDisp8Rax(offset); } else { emitter.MovEaxR8d(); emitter.MovRbpDisp8Eax(offset); } break; case 3: if (parameter.Value.Type.EndsWith("*", StringComparison.Ordinal)) { emitter.MovRaxR9(); emitter.MovRbpDisp8Rax(offset); } else { emitter.MovEaxR9d(); emitter.MovRbpDisp8Eax(offset); } break; } }
-            foreach (var statement in function.Body.Statements) GenerateStatement(statement, emitter, data, variables, arrays, parameters, frameSize);
+
+            foreach (var parameter in parameters)
+            {
+                var offset = -(parameter.Value.Index + 1) * 8;
+                var isPointer = parameter.Value.Type.EndsWith("*", StringComparison.Ordinal);
+                var isChar = GetTypeSize(parameter.Value.Type) == 1;
+
+                switch (parameter.Value.Index)
+                {
+                    case 0:
+                        if (isPointer)
+                        {
+                            emitter.MovRaxRcx();
+                            emitter.MovRbpDisp8Rax(offset);
+                        }
+                        else if (isChar)
+                        {
+                            emitter.MovEaxEcx();
+                            emitter.MovRbpDisp32Al(offset);
+                        }
+                        else
+                        {
+                            emitter.MovEaxEcx();
+                            emitter.MovRbpDisp8Eax(offset);
+                        }
+                        break;
+
+                    case 1:
+                        if (isPointer)
+                        {
+                            emitter.MovRaxRdx();
+                            emitter.MovRbpDisp8Rax(offset);
+                        }
+                        else if (isChar)
+                        {
+                            emitter.MovEaxEdx();
+                            emitter.MovRbpDisp32Al(offset);
+                        }
+                        else
+                        {
+                            emitter.MovEaxEdx();
+                            emitter.MovRbpDisp8Eax(offset);
+                        }
+                        break;
+
+                    case 2:
+                        if (isPointer)
+                        {
+                            emitter.MovRaxR8();
+                            emitter.MovRbpDisp8Rax(offset);
+                        }
+                        else if (isChar)
+                        {
+                            emitter.MovEaxR8d();
+                            emitter.MovRbpDisp32Al(offset);
+                        }
+                        else
+                        {
+                            emitter.MovEaxR8d();
+                            emitter.MovRbpDisp8Eax(offset);
+                        }
+                        break;
+
+                    case 3:
+                        if (isPointer)
+                        {
+                            emitter.MovRaxR9();
+                            emitter.MovRbpDisp8Rax(offset);
+                        }
+                        else if (isChar)
+                        {
+                            emitter.MovEaxR9d();
+                            emitter.MovRbpDisp32Al(offset);
+                        }
+                        else
+                        {
+                            emitter.MovEaxR9d();
+                            emitter.MovRbpDisp8Eax(offset);
+                        }
+                        break;
+                }
+            }
+
+            foreach (var statement in function.Body.Statements)
+                GenerateStatement(statement, emitter, data, variables, arrays, parameters, frameSize);
+
             emitter.MovEax(0);
             emitter.AddRsp(frameSize);
             emitter.PopRbp();
             emitter.Ret();
         }
 
-        private static void GenerateStatement(StatementNode statement, X64Emitter emitter, List<X64DataItem> data, Dictionary<string, (int Offset, string Type)> variables, Dictionary<string, (int Length, string Type)> arrays, Dictionary<string, (int Index, string Type)> parameters, int frameSize)
+        private static void GenerateStatement(
+            StatementNode statement,
+            X64Emitter emitter,
+            List<X64DataItem> data,
+            Dictionary<string, (int Offset, string Type, bool IsConst)> variables,
+            Dictionary<string, (int Length, string Type)> arrays,
+            Dictionary<string, (int Index, string Type)> parameters,
+            int frameSize)
         {
             switch (statement)
             {
@@ -244,101 +343,185 @@ namespace JollyCCompiler.Compiler.CodeGen.X64
                     GenerateSwitchStatement(switchStatement, emitter, data, variables, arrays, parameters, frameSize);
                     break;
 
-                default: throw new NotSupportedException($"Statement '{statement.GetType().Name}' is not yet supported by the x64 backend."); }
+                default:
+                    throw new NotSupportedException($"Statement '{statement.GetType().Name}' is not yet supported by the x64 backend.");
+            }
         }
 
-        private static void GenerateVariableDeclaration(VariableDeclarationStatement statement, X64Emitter emitter, List<X64DataItem> data, Dictionary<string, (int Offset, string Type)> variables, Dictionary<string, (int Length, string Type)> arrays, Dictionary<string, (int Index, string Type)> parameters) 
-        { 
-            if (!variables.TryGetValue(statement.Name, out var variable)) 
-                throw new InvalidOperationException($"Variable '{statement.Name}' has no stack slot."); 
-            
-            if (statement.ArrayLength is int) 
-            { 
-                if (statement.Initializer is not null) 
-                    throw new NotSupportedException($"Array initializer for '{statement.Name}' is not yet supported."); 
-                
-                return; 
-            } 
-            
-            if (statement.Type.StartsWith("struct ", StringComparison.Ordinal)) 
-            { 
-                if (statement.Initializer is not null) 
-                    throw new NotSupportedException($"Struct initializer for '{statement.Name}' is not yet supported."); 
-
-                return; 
-            } 
-            
-            if (statement.Initializer is null) 
-            { 
-                if (statement.Type.EndsWith("*", StringComparison.Ordinal)) 
-                    emitter.MovRax(0); 
-                else 
-                    emitter.MovEax(0); 
-            } 
-            else 
-                GenerateExpression(statement.Initializer, emitter, data, variables, arrays, parameters); 
-            
-            if (statement.Type.EndsWith("*", StringComparison.Ordinal)) 
-                emitter.MovRbpDisp8Rax(variable.Offset); 
-            else 
-                emitter.MovRbpDisp32Eax(variable.Offset); 
-        }
-
-        private static void GenerateReturn(ReturnStatement statement, X64Emitter emitter, List<X64DataItem> data, Dictionary<string, (int Offset, string Type)> variables, Dictionary<string, (int Length, string Type)> arrays, Dictionary<string, (int Index, string Type)> parameters, int frameSize)
+        private static void GenerateVariableDeclaration(
+            VariableDeclarationStatement statement,
+            X64Emitter emitter,
+            List<X64DataItem> data,
+            Dictionary<string, (int Offset, string Type, bool IsConst)> variables,
+            Dictionary<string, (int Length, string Type)> arrays,
+            Dictionary<string, (int Index, string Type)> parameters)
         {
-            if (statement.Expression is null) emitter.MovEax(0); else GenerateExpression(statement.Expression, emitter, data, variables, arrays, parameters);
+            if (!variables.TryGetValue(statement.Name, out var variable))
+                throw new InvalidOperationException($"Variable '{statement.Name}' has no stack slot.");
+
+            if (statement.ArrayLength is int)
+            {
+                if (statement.Initializer is not null)
+                    throw new NotSupportedException($"Array initializer for '{statement.Name}' is not yet supported.");
+
+                return;
+            }
+
+            if (statement.Type.StartsWith("struct ", StringComparison.Ordinal))
+            {
+                if (statement.Initializer is not null)
+                    throw new NotSupportedException($"Struct initializer for '{statement.Name}' is not yet supported.");
+
+                return;
+            }
+
+            if (statement.Initializer is null)
+            {
+                if (statement.Type.EndsWith("*", StringComparison.Ordinal))
+                    emitter.MovRax(0);
+                else
+                    emitter.MovEax(0);
+            }
+            else
+            {
+                GenerateExpression(statement.Initializer, emitter, data, variables, arrays, parameters);
+            }
+
+            if (statement.Type.EndsWith("*", StringComparison.Ordinal))
+                emitter.MovRbpDisp8Rax(variable.Offset);
+            else if (GetTypeSize(statement.Type) == 1)
+                emitter.MovRbpDisp32Al(variable.Offset);
+            else
+                emitter.MovRbpDisp32Eax(variable.Offset);
+        }
+
+        private static void GenerateReturn(
+            ReturnStatement statement,
+            X64Emitter emitter,
+            List<X64DataItem> data,
+            Dictionary<string, (int Offset, string Type, bool IsConst)> variables,
+            Dictionary<string, (int Length, string Type)> arrays,
+            Dictionary<string, (int Index, string Type)> parameters,
+            int frameSize)
+        {
+            if (statement.Expression is null)
+                emitter.MovEax(0);
+            else
+                GenerateExpression(statement.Expression, emitter, data, variables, arrays, parameters);
+
             emitter.AddRsp(frameSize);
             emitter.PopRbp();
             emitter.Ret();
         }
 
-        private static void GenerateExpressionStatement(ExpressionStatement statement, X64Emitter emitter, List<X64DataItem> data, Dictionary<string, (int Offset, string Type)> variables, Dictionary<string, (int Length, string Type)> arrays, Dictionary<string, (int Index, string Type)> parameters) => GenerateExpression(statement.Expression, emitter, data, variables, arrays, parameters);
-
-        private static void GenerateForStatement(ForStatement statement, X64Emitter emitter, List<X64DataItem> data, Dictionary<string, (int Offset, string Type)> variables, Dictionary<string, (int Length, string Type)> arrays, Dictionary<string, (int Index, string Type)> parameters, int frameSize)
+        private static void GenerateExpressionStatement(
+            ExpressionStatement statement,
+            X64Emitter emitter,
+            List<X64DataItem> data,
+            Dictionary<string, (int Offset, string Type, bool IsConst)> variables,
+            Dictionary<string, (int Length, string Type)> arrays,
+            Dictionary<string, (int Index, string Type)> parameters)
         {
-            if (statement.Initializer is not null) GenerateStatement(statement.Initializer, emitter, data, variables, arrays, parameters, frameSize);
+            GenerateExpression(statement.Expression, emitter, data, variables, arrays, parameters);
+        }
+
+        private static void GenerateForStatement(
+            ForStatement statement,
+            X64Emitter emitter,
+            List<X64DataItem> data,
+            Dictionary<string, (int Offset, string Type, bool IsConst)> variables,
+            Dictionary<string, (int Length, string Type)> arrays,
+            Dictionary<string, (int Index, string Type)> parameters,
+            int frameSize)
+        {
+            if (statement.Initializer is not null)
+                GenerateStatement(statement.Initializer, emitter, data, variables, arrays, parameters, frameSize);
+
             var conditionLabel = emitter.CreateLabel("for_condition");
             var continueLabel = emitter.CreateLabel("for_continue");
             var endLabel = emitter.CreateLabel("for_end");
+
             _loopLabels.Push((continueLabel, endLabel));
+
             emitter.MarkLabel(conditionLabel);
-            if (statement.Condition is not null) { GenerateExpression(statement.Condition, emitter, data, variables, arrays, parameters); emitter.TestEaxEax(); emitter.Je(endLabel); }
+
+            if (statement.Condition is not null)
+            {
+                GenerateExpression(statement.Condition, emitter, data, variables, arrays, parameters);
+                emitter.TestEaxEax();
+                emitter.Je(endLabel);
+            }
+
             GenerateStatement(statement.Body, emitter, data, variables, arrays, parameters, frameSize);
+
             emitter.MarkLabel(continueLabel);
-            if (statement.Increment is not null) GenerateExpression(statement.Increment, emitter, data, variables, arrays, parameters);
+
+            if (statement.Increment is not null)
+                GenerateExpression(statement.Increment, emitter, data, variables, arrays, parameters);
+
             emitter.Jmp(conditionLabel);
             emitter.MarkLabel(endLabel);
+
             _loopLabels.Pop();
         }
 
-        private static void GenerateWhileStatement(WhileStatement statement, X64Emitter emitter, List<X64DataItem> data, Dictionary<string, (int Offset, string Type)> variables, Dictionary<string, (int Length, string Type)> arrays, Dictionary<string, (int Index, string Type)> parameters, int frameSize)
+        private static void GenerateWhileStatement(
+            WhileStatement statement,
+            X64Emitter emitter,
+            List<X64DataItem> data,
+            Dictionary<string, (int Offset, string Type, bool IsConst)> variables,
+            Dictionary<string, (int Length, string Type)> arrays,
+            Dictionary<string, (int Index, string Type)> parameters,
+            int frameSize)
         {
             var conditionLabel = emitter.CreateLabel("while_condition");
             var endLabel = emitter.CreateLabel("while_end");
+
             _loopLabels.Push((conditionLabel, endLabel));
+
             emitter.MarkLabel(conditionLabel);
+
             GenerateExpression(statement.Condition, emitter, data, variables, arrays, parameters);
             emitter.TestEaxEax();
             emitter.Je(endLabel);
+
             GenerateStatement(statement.Body, emitter, data, variables, arrays, parameters, frameSize);
+
             emitter.Jmp(conditionLabel);
             emitter.MarkLabel(endLabel);
+
             _loopLabels.Pop();
         }
 
-        private static void GenerateDoWhileStatement(DoWhileStatement statement, X64Emitter emitter, List<X64DataItem> data, Dictionary<string, (int Offset, string Type)> variables, Dictionary<string, (int Length, string Type)> arrays, Dictionary<string, (int Index, string Type)> parameters, int frameSize)
+        private static void GenerateDoWhileStatement(
+            DoWhileStatement statement,
+            X64Emitter emitter,
+            List<X64DataItem> data,
+            Dictionary<string, (int Offset, string Type, bool IsConst)> variables,
+            Dictionary<string, (int Length, string Type)> arrays,
+            Dictionary<string, (int Index, string Type)> parameters,
+            int frameSize)
         {
             var bodyLabel = emitter.CreateLabel("do_while_body");
             var conditionLabel = emitter.CreateLabel("do_while_condition");
+
             emitter.MarkLabel(bodyLabel);
             GenerateStatement(statement.Body, emitter, data, variables, arrays, parameters, frameSize);
+
             emitter.MarkLabel(conditionLabel);
             GenerateExpression(statement.Condition, emitter, data, variables, arrays, parameters);
+
             emitter.CmpEaxImm8(0);
             emitter.Jne(bodyLabel);
         }
 
-        private static void GenerateExpression(ExpressionNode expression, X64Emitter emitter, List<X64DataItem> data, Dictionary<string, (int Offset, string Type)> variables, Dictionary<string, (int Length, string Type)> arrays, Dictionary<string, (int Index, string Type)> parameters)
+        private static void GenerateExpression(
+            ExpressionNode expression,
+            X64Emitter emitter,
+            List<X64DataItem> data,
+            Dictionary<string, (int Offset, string Type, bool IsConst)> variables,
+            Dictionary<string, (int Length, string Type)> arrays,
+            Dictionary<string, (int Index, string Type)> parameters)
         {
             switch (expression)
             {
@@ -401,31 +584,58 @@ namespace JollyCCompiler.Compiler.CodeGen.X64
                     GenerateDereferenceExpression(dereference, emitter, data, variables, arrays, parameters);
                     break;
 
+                case SizeofExpression sizeofExpression:
+                    GenerateSizeofExpression(sizeofExpression, emitter, variables, arrays, parameters);
+                    return;
+
                 default:
-                    throw new NotSupportedException($"Expression '{expression.GetType().Name}' is not supported."); }
+                    throw new NotSupportedException($"Expression '{expression.GetType().Name}' is not supported.");
+            }
         }
 
-        private static void GenerateIdentifier(IdentifierExpression expression, X64Emitter emitter, List<X64DataItem> data, Dictionary<string, (int Offset, string Type)> variables, Dictionary<string, (int Length, string Type)> arrays, Dictionary<string, (int Index, string Type)> parameters)
+        private static void GenerateIdentifier(IdentifierExpression expression, X64Emitter emitter, List<X64DataItem> data, Dictionary<string, (int Offset, string Type, bool IsConst)> variables, Dictionary<string, (int Length, string Type)> arrays, Dictionary<string, (int Index, string Type)> parameters)
         {
             if (arrays.ContainsKey(expression.Name))
                 throw new InvalidOperationException($"Array '{expression.Name}' must be indexed.");
 
             if (variables.TryGetValue(expression.Name, out var variable))
             {
+                Console.WriteLine($"IDENTIFIER {expression.Name}: type={variable.Type}, offset={variable.Offset}");
+
                 if (variable.Type.EndsWith("*", StringComparison.Ordinal))
+                {
                     emitter.MovRaxRbpDisp8(variable.Offset);
+                }
+                else if (GetTypeSize(variable.Type) == 1)
+                {
+                    emitter.MovAlRbpDisp32(variable.Offset);
+                    emitter.MovzxEaxAl();
+                }
                 else
+                {
                     emitter.MovEaxRbpDisp32(variable.Offset);
+                }
 
                 return;
             }
 
             if (parameters.TryGetValue(expression.Name, out var parameter))
             {
+                var offset = -(parameter.Index + 1) * 8;
+
                 if (parameter.Type.EndsWith("*", StringComparison.Ordinal))
-                    emitter.MovRaxRbpDisp8(-(parameter.Index + 1) * 8);
+                {
+                    emitter.MovRaxRbpDisp8(offset);
+                }
+                else if (GetTypeSize(parameter.Type) == 1)
+                {
+                    emitter.MovAlRbpDisp32(offset);
+                    emitter.MovzxEaxAl();
+                }
                 else
-                    emitter.MovEaxRbpDisp32(-(parameter.Index + 1) * 8);
+                {
+                    emitter.MovEaxRbpDisp32(offset);
+                }
 
                 return;
             }
@@ -433,15 +643,25 @@ namespace JollyCCompiler.Compiler.CodeGen.X64
             throw new InvalidOperationException($"Unknown identifier '{expression.Name}'.");
         }
 
-        private static void GenerateSwitchStatement(SwitchStatement statement, X64Emitter emitter, List<X64DataItem> data, Dictionary<string, (int Offset, string Type)> variables, Dictionary<string, (int Length, string Type)> arrays, Dictionary<string, (int Index, string Type)> parameters, int frameSize)
+        private static void GenerateSwitchStatement(
+            SwitchStatement statement,
+            X64Emitter emitter,
+            List<X64DataItem> data,
+            Dictionary<string, (int Offset, string Type, bool IsConst)> variables,
+            Dictionary<string, (int Length, string Type)> arrays,
+            Dictionary<string, (int Index, string Type)> parameters,
+            int frameSize)
         {
             var endLabel = emitter.CreateLabel("switch_end");
             var caseLabels = new List<string>();
             string? defaultLabel = null;
+
             foreach (var switchCase in statement.Cases)
             {
                 var label = emitter.CreateLabel(switchCase.Value is null ? "switch_default" : "switch_case");
-                caseLabels.Add(label); if (switchCase.Value is null)
+                caseLabels.Add(label);
+
+                if (switchCase.Value is null)
                 {
                     if (defaultLabel is not null)
                         throw new InvalidOperationException("A switch statement may contain only one default label.");
@@ -451,9 +671,11 @@ namespace JollyCCompiler.Compiler.CodeGen.X64
             }
 
             GenerateExpression(statement.Expression, emitter, data, variables, arrays, parameters);
+
             for (var i = 0; i < statement.Cases.Count; i++)
             {
                 var switchCase = statement.Cases[i];
+
                 if (switchCase.Value is null)
                     continue;
 
@@ -470,9 +692,11 @@ namespace JollyCCompiler.Compiler.CodeGen.X64
                 emitter.Jmp(endLabel);
 
             _loopLabels.Push((string.Empty, endLabel));
+
             for (var i = 0; i < statement.Cases.Count; i++)
             {
                 emitter.MarkLabel(caseLabels[i]);
+
                 foreach (var child in statement.Cases[i].Statements)
                     GenerateStatement(child, emitter, data, variables, arrays, parameters, frameSize);
             }
@@ -481,7 +705,7 @@ namespace JollyCCompiler.Compiler.CodeGen.X64
             _loopLabels.Pop();
         }
 
-        private static bool TryGetScalarStorageOffset(string name, Dictionary<string, (int Offset, string Type)> variables, Dictionary<string, (int Length, string Type)> arrays, Dictionary<string, (int Index, string Type)> parameters, out int offset, out string type)
+        private static bool TryGetScalarStorageOffset(string name, Dictionary<string, (int Offset, string Type, bool IsConst)> variables, Dictionary<string, (int Length, string Type)> arrays, Dictionary<string, (int Index, string Type)> parameters, out int offset, out string type, out bool isConst)
         {
             if (arrays.ContainsKey(name))
                 throw new NotSupportedException($"Operator on array '{name}' requires an array element.");
@@ -490,6 +714,7 @@ namespace JollyCCompiler.Compiler.CodeGen.X64
             {
                 offset = variable.Offset;
                 type = variable.Type;
+                isConst = variable.IsConst;
                 return true;
             }
 
@@ -497,13 +722,23 @@ namespace JollyCCompiler.Compiler.CodeGen.X64
             {
                 offset = -(parameter.Index + 1) * 8;
                 type = parameter.Type;
+                isConst = false;
                 return true;
             }
 
-            offset = 0; type = string.Empty; return false;
+            offset = 0;
+            type = string.Empty;
+            isConst = false;
+            return false;
         }
 
-        private static void GenerateLValueAddress(ExpressionNode expression, X64Emitter emitter, List<X64DataItem> data, Dictionary<string, (int Offset, string Type)> variables, Dictionary<string, (int Length, string Type)> arrays, Dictionary<string, (int Index, string Type)> parameters)
+        private static void GenerateLValueAddress(
+            ExpressionNode expression,
+            X64Emitter emitter,
+            List<X64DataItem> data,
+            Dictionary<string, (int Offset, string Type, bool IsConst)> variables,
+            Dictionary<string, (int Length, string Type)> arrays,
+            Dictionary<string, (int Index, string Type)> parameters)
         {
             switch (expression)
             {
@@ -557,6 +792,7 @@ namespace JollyCCompiler.Compiler.CodeGen.X64
                     }
 
                     var valueField = GetStructField(objectType, member.Member);
+
                     GenerateLValueAddress(member.Object, emitter, data, variables, arrays, parameters);
 
                     if (valueField.Offset != 0)
@@ -580,7 +816,9 @@ namespace JollyCCompiler.Compiler.CodeGen.X64
                 return true;
             }
 
-            if (expression is UnaryExpression unary && unary.Operator == TokenKind.Minus && unary.Operand is IntegerExpression operand)
+            if (expression is UnaryExpression unary &&
+                unary.Operator == TokenKind.Minus &&
+                unary.Operand is IntegerExpression operand)
             {
                 value = -operand.Value;
                 return true;
@@ -590,48 +828,85 @@ namespace JollyCCompiler.Compiler.CodeGen.X64
             return false;
         }
 
-        private static void GenerateAddressOfExpression(AddressOfExpression expression, X64Emitter emitter, List<X64DataItem> data, Dictionary<string, (int Offset, string Type)> variables, Dictionary<string, (int Length, string Type)> arrays, Dictionary<string, (int Index, string Type)> parameters)
+        private static void GenerateAddressOfExpression(
+            AddressOfExpression expression,
+            X64Emitter emitter,
+            List<X64DataItem> data,
+            Dictionary<string, (int Offset, string Type, bool IsConst)> variables,
+            Dictionary<string, (int Length, string Type)> arrays,
+            Dictionary<string, (int Index, string Type)> parameters)
         {
             GenerateLValueAddress(expression.Operand, emitter, data, variables, arrays, parameters);
         }
 
-        private static void GenerateDereferenceExpression(DereferenceExpression expression, X64Emitter emitter, List<X64DataItem> data, Dictionary<string, (int Offset, string Type)> variables, Dictionary<string, (int Length, string Type)> arrays, Dictionary<string, (int Index, string Type)> parameters)
+        private static void GenerateDereferenceExpression(
+            DereferenceExpression expression,
+            X64Emitter emitter,
+            List<X64DataItem> data,
+            Dictionary<string, (int Offset, string Type, bool IsConst)> variables,
+            Dictionary<string, (int Length, string Type)> arrays,
+            Dictionary<string, (int Index, string Type)> parameters)
         {
+            if (!TryGetPointerType(expression.Operand, variables, arrays, parameters, out var pointerType))
+                throw new InvalidOperationException("Cannot determine pointer type for dereference.");
+
             GenerateExpression(expression.Operand, emitter, data, variables, arrays, parameters);
-            emitter.MovEaxRaxMemory();
+
+            var pointeeType = pointerType[..^1];
+            var pointeeSize = GetTypeSize(pointeeType);
+
+            if (pointeeSize == 1)
+                emitter.MovzxEaxRaxMemoryByte();
+            else if (pointeeSize == 4)
+                emitter.MovEaxRaxMemory();
+            else if (pointeeSize == 8)
+                emitter.MovRaxFromMemory();
+            else
+                throw new NotSupportedException($"Dereference of type '{pointerType}' is not yet supported.");
         }
 
-        private static void GenerateArraySubscriptAddress(ArraySubscriptExpression expression, X64Emitter emitter, List<X64DataItem> data, Dictionary<string, (int Offset, string Type)> variables, Dictionary<string, (int Length, string Type)> arrays, Dictionary<string, (int Index, string Type)> parameters)
+        private static void GenerateArraySubscriptAddress(ArraySubscriptExpression expression, X64Emitter emitter, List<X64DataItem> data, Dictionary<string, (int Offset, string Type, bool IsConst)> variables, Dictionary<string, (int Length, string Type)> arrays, Dictionary<string, (int Index, string Type)> parameters)
         {
             string elementType;
+
             if (expression.Array is IdentifierExpression identifier && arrays.TryGetValue(identifier.Name, out var array))
             {
                 elementType = array.Type;
-                if (!variables.TryGetValue(identifier.Name, out var variable)) 
+
+                if (!variables.TryGetValue(identifier.Name, out var variable))
                     throw new InvalidOperationException($"Array '{identifier.Name}' has no stack slot.");
 
                 emitter.LeaRaxRbpDisp32(variable.Offset);
             }
+            else if (TryGetPointerType(expression.Array, variables, arrays, parameters, out var pointerType))
+            {
+                elementType = pointerType[..^1];
+
+                GenerateExpression(expression.Array, emitter, data, variables, arrays, parameters);
+            }
             else
             {
-                if (!TryGetExpressionType(expression.Array, variables, arrays, parameters, out elementType)) 
+                if (!TryGetExpressionType(expression.Array, variables, arrays, parameters, out elementType))
                     throw new InvalidOperationException("Cannot determine array element type.");
 
                 GenerateLValueAddress(expression.Array, emitter, data, variables, arrays, parameters);
             }
 
             var elementSize = GetTypeSize(elementType);
+
             emitter.PushRax();
+
             GenerateExpression(expression.Index, emitter, data, variables, arrays, parameters);
-            if (elementSize == 2) 
+
+            if (elementSize == 2)
                 emitter.ImulEaxImm8(2);
-            else if (elementSize == 4) 
+            else if (elementSize == 4)
                 emitter.ImulEaxImm8(4);
-            else if (elementSize == 8) 
+            else if (elementSize == 8)
                 emitter.ImulEaxImm8(8);
-            else if (elementSize == 16) 
+            else if (elementSize == 16)
                 emitter.ImulEaxImm8(16);
-            else if (elementSize != 1) 
+            else if (elementSize != 1)
                 throw new NotSupportedException($"Array element size '{elementSize}' is not supported for indexed addressing.");
 
             emitter.MovEcxEax();
@@ -639,16 +914,64 @@ namespace JollyCCompiler.Compiler.CodeGen.X64
             emitter.AddRaxRcx();
         }
 
-        private static void GenerateArraySubscriptExpression(ArraySubscriptExpression expression, X64Emitter emitter, List<X64DataItem> data, Dictionary<string, (int Offset, string Type)> variables, Dictionary<string, (int Length, string Type)> arrays, Dictionary<string, (int Index, string Type)> parameters)
+        private static void GenerateArraySubscriptExpression(ArraySubscriptExpression expression, X64Emitter emitter, List<X64DataItem> data, Dictionary<string, (int Offset, string Type, bool IsConst)> variables, Dictionary<string, (int Length, string Type)> arrays, Dictionary<string, (int Index, string Type)> parameters)
         {
             GenerateArraySubscriptAddress(expression, emitter, data, variables, arrays, parameters);
-            if (expression.Array is IdentifierExpression identifier && arrays.TryGetValue(identifier.Name, out var arrayInfo) && GetTypeSize(arrayInfo.Type) == 4) 
-                emitter.MovEaxRaxMemory(); 
-            else 
-                emitter.MovRaxRax();
+
+            string elementType;
+
+            if (expression.Array is IdentifierExpression identifier && arrays.TryGetValue(identifier.Name, out var array))
+            {
+                elementType = array.Type;
+            }
+            else if (TryGetPointerType(expression.Array, variables, arrays, parameters, out var pointerType))
+            {
+                elementType = pointerType[..^1];
+            }
+            else if (!TryGetExpressionType(expression.Array, variables, arrays, parameters, out elementType))
+            {
+                throw new InvalidOperationException("Cannot determine array element type.");
+            }
+
+            var elementSize = GetTypeSize(elementType);
+
+            if (elementSize == 1)
+                emitter.MovzxEaxRaxMemoryByte();
+            else if (elementSize == 4)
+                emitter.MovEaxRaxMemory();
+            else if (elementSize == 8)
+                emitter.MovRaxFromMemory();
+            else
+                throw new NotSupportedException($"Array element type '{elementType}' is not yet supported.");
         }
 
-        private static void GenerateAssignmentExpression(AssignmentExpression expression, X64Emitter emitter, List<X64DataItem> data, Dictionary<string, (int Offset, string Type)> variables, Dictionary<string, (int Length, string Type)> arrays, Dictionary<string, (int Index, string Type)> parameters)
+
+
+        private static void GeneratePointerArraySubscriptExpression(ArraySubscriptExpression expression, string pointerType, X64Emitter emitter, List<X64DataItem> data, Dictionary<string, (int Offset, string Type, bool IsConst)> variables, Dictionary<string, (int Length, string Type)> arrays, Dictionary<string, (int Index, string Type)> parameters) 
+        { 
+            var elementType = pointerType[..^1]; 
+            var elementSize = GetTypeSize(elementType); 
+            GenerateExpression(expression.Array, emitter, data, variables, arrays, parameters); 
+            emitter.PushRax(); 
+            GenerateExpression(expression.Index, emitter, data, variables, arrays, parameters); 
+            if (elementSize != 1) emitter.ImulEaxImm8((byte)elementSize); 
+            emitter.MovRcxRax(); 
+            emitter.PopRax(); 
+            emitter.AddRaxRcx(); 
+            if (elementSize == 1) 
+                emitter.MovzxEaxRaxMemoryByte(); 
+            else if (elementSize == 4) emitter.MovEaxRaxMemory(); 
+            else if (elementSize == 8) emitter.MovRaxFromMemory(); 
+            else throw new NotSupportedException($"Array element type '{elementType}' is not yet supported."); 
+        }
+
+        private static void GenerateAssignmentExpression(
+            AssignmentExpression expression,
+            X64Emitter emitter,
+            List<X64DataItem> data,
+            Dictionary<string, (int Offset, string Type, bool IsConst)> variables,
+            Dictionary<string, (int Length, string Type)> arrays,
+            Dictionary<string, (int Index, string Type)> parameters)
         {
             switch (expression.Target)
             {
@@ -673,24 +996,110 @@ namespace JollyCCompiler.Compiler.CodeGen.X64
             }
         }
 
-        private static void GenerateDereferenceAssignmentExpression(DereferenceExpression target, TokenKind operatorKind, ExpressionNode value, X64Emitter emitter, List<X64DataItem> data, Dictionary<string, (int Offset, string Type)> variables, Dictionary<string, (int Length, string Type)> arrays, Dictionary<string, (int Index, string Type)> parameters)
+        private static void GenerateDereferenceAssignmentExpression(DereferenceExpression target, TokenKind operatorKind, ExpressionNode value, X64Emitter emitter, List<X64DataItem> data, Dictionary<string, (int Offset, string Type, bool IsConst)> variables, Dictionary<string, (int Length, string Type)> arrays, Dictionary<string, (int Index, string Type)> parameters)
         {
-            if (operatorKind != TokenKind.Equals)
-                throw new NotSupportedException("Compound assignment through a pointer is not yet supported.");
+            if (!TryGetPointerType(target.Operand, variables, arrays, parameters, out var pointerType))
+                throw new InvalidOperationException("Cannot determine pointer type for dereference assignment.");
+
+            var pointeeType = pointerType[..^1];
+            var pointeeSize = GetTypeSize(pointeeType);
+
+            if (operatorKind == TokenKind.Equals)
+            {
+                GenerateExpression(target.Operand, emitter, data, variables, arrays, parameters);
+                emitter.PushRax();
+
+                GenerateExpression(value, emitter, data, variables, arrays, parameters);
+                emitter.MovRdxRax();
+
+                emitter.PopRax();
+
+                if (pointeeSize == 1)
+                {
+                    emitter.EmitBytes(0x88, 0x10);
+                    emitter.MovRaxRdx();
+                }
+                else if (pointeeSize == 4)
+                {
+                    emitter.EmitBytes(0x89, 0x10);
+                    emitter.MovRaxRdx();
+                }
+                else if (pointeeSize == 8)
+                {
+                    emitter.EmitBytes(0x48, 0x89, 0x10);
+                }
+                else
+                {
+                    throw new NotSupportedException($"Assignment through pointer type '{pointerType}' is not yet supported.");
+                }
+
+                return;
+            }
+
+            if (operatorKind is not TokenKind.PlusEquals && operatorKind is not TokenKind.MinusEquals && operatorKind is not TokenKind.StarEquals && operatorKind is not TokenKind.SlashEquals && operatorKind is not TokenKind.PercentEquals)
+            {
+                throw new NotSupportedException($"Assignment operator '{operatorKind}' through a pointer is not supported.");
+            }
+
+            if (pointeeSize != 1 && pointeeSize != 4)
+                throw new NotSupportedException($"Compound assignment through pointer type '{pointerType}' is not yet supported.");
 
             GenerateExpression(target.Operand, emitter, data, variables, arrays, parameters);
             emitter.PushRax();
+
+            if (pointeeSize == 1)
+                emitter.MovzxEaxRaxMemoryByte();
+            else
+                emitter.MovEaxRaxMemory();
+
+            emitter.PushRax();
+
             GenerateExpression(value, emitter, data, variables, arrays, parameters);
+
             emitter.MovEcxEax();
             emitter.PopRax();
-            emitter.EmitBytes(0x89, 0x08);
+
+            if (operatorKind == TokenKind.PlusEquals)
+            {
+                emitter.AddEaxEcx();
+            }
+            else if (operatorKind == TokenKind.MinusEquals)
+            {
+                emitter.SubEaxEcx();
+            }
+            else if (operatorKind == TokenKind.StarEquals)
+            {
+                emitter.ImulEaxEcx();
+            }
+            else
+            {
+                emitter.Cdq();
+                emitter.IdivEcx();
+
+                if (operatorKind == TokenKind.PercentEquals)
+                    emitter.MovEaxEdx();
+            }
+
+            emitter.MovEcxEax();
+            emitter.MovRaxRspDisp32(0);
+
+            if (pointeeSize == 1)
+                emitter.EmitBytes(0x88, 0x08);
+            else
+                emitter.EmitBytes(0x89, 0x08);
+
+            emitter.MovRaxRcx();
+            emitter.AddRsp(8);
         }
 
-        private static void GenerateIdentifierAssignment(IdentifierExpression target, TokenKind operatorKind, ExpressionNode value, X64Emitter emitter, List<X64DataItem> data, Dictionary<string, (int Offset, string Type)> variables, Dictionary<string, (int Length, string Type)> arrays, Dictionary<string, (int Index, string Type)> parameters)
+        private static void GenerateIdentifierAssignment(IdentifierExpression target, TokenKind operatorKind, ExpressionNode value, X64Emitter emitter, List<X64DataItem> data, Dictionary<string, (int Offset, string Type, bool IsConst)> variables, Dictionary<string, (int Length, string Type)> arrays, Dictionary<string, (int Index, string Type)> parameters)
         {
-            if (!TryGetScalarStorageOffset(target.Name, variables, arrays, parameters, out var offset, out var type))
+            if (!TryGetScalarStorageOffset(target.Name, variables, arrays, parameters, out var offset, out var type, out var isConst))
                 throw new InvalidOperationException($"Variable '{target.Name}' has no scalar assignable storage.");
 
+            if (isConst)
+                throw new InvalidOperationException($"Cannot modify const variable '{target.Name}'.");
+            
             if (type.EndsWith("*", StringComparison.Ordinal))
             {
                 if (operatorKind != TokenKind.Equals)
@@ -701,71 +1110,184 @@ namespace JollyCCompiler.Compiler.CodeGen.X64
                 return;
             }
 
+            var typeSize = GetTypeSize(type);
+
             if (operatorKind == TokenKind.Equals)
             {
                 GenerateExpression(value, emitter, data, variables, arrays, parameters);
-                emitter.MovRbpDisp32Eax(offset);
+
+                if (typeSize == 1)
+                    emitter.MovRbpDisp32Al(offset);
+                else if (typeSize == 4)
+                    emitter.MovRbpDisp32Eax(offset);
+                else
+                    throw new NotSupportedException($"Assignment to type '{type}' is not yet supported.");
+
                 return;
             }
 
-            emitter.MovEaxRbpDisp32(offset);
+            if (typeSize == 1)
+            {
+                emitter.MovAlRbpDisp32(offset);
+                emitter.MovzxEaxAl();
+            }
+            else if (typeSize == 4)
+                emitter.MovEaxRbpDisp32(offset);
+            else
+                throw new NotSupportedException($"Compound assignment on type '{type}' is not yet supported.");
+
             emitter.PushRax();
+
             GenerateExpression(value, emitter, data, variables, arrays, parameters);
             emitter.MovEcxEax();
+
             emitter.PopRax();
+
             GenerateCompoundAssignmentOperation(operatorKind, emitter);
-            emitter.MovRbpDisp32Eax(offset);
+
+            if (typeSize == 1)
+                emitter.MovRbpDisp32Al(offset);
+            else
+                emitter.MovRbpDisp32Eax(offset);
         }
 
-        private static void GenerateArrayAssignmentExpression(ArraySubscriptExpression target, TokenKind operatorKind, ExpressionNode value, X64Emitter emitter, List<X64DataItem> data, Dictionary<string, (int Offset, string Type)> variables, Dictionary<string, (int Length, string Type)> arrays, Dictionary<string, (int Index, string Type)> parameters)
+        private static void GenerateArrayAssignmentExpression(ArraySubscriptExpression target, TokenKind operatorKind, ExpressionNode value, X64Emitter emitter, List<X64DataItem> data, Dictionary<string, (int Offset, string Type, bool IsConst)> variables, Dictionary<string, (int Length, string Type)> arrays, Dictionary<string, (int Index, string Type)> parameters)
         {
+            if (!TryGetExpressionType(target, variables, arrays, parameters, out var elementType))
+                throw new InvalidOperationException("Cannot determine array element type.");
+
+            var elementSize = GetTypeSize(elementType);
+
             GenerateArraySubscriptAddress(target, emitter, data, variables, arrays, parameters);
             emitter.PushRax();
-            if (operatorKind == TokenKind.Equals) { GenerateExpression(value, emitter, data, variables, arrays, parameters); emitter.EmitBytes(0x48, 0x8B, 0x0C, 0x24); emitter.EmitBytes(0x89, 0x01); emitter.AddRsp(8); return; }
-            emitter.MovEaxRaxMemory();
+
+            if (operatorKind == TokenKind.Equals)
+            {
+                GenerateExpression(value, emitter, data, variables, arrays, parameters);
+
+                emitter.MovRcxRspDisp32(0);
+
+                if (elementSize == 1)
+                    emitter.EmitBytes(0x88, 0x01);
+                else if (elementSize == 4)
+                    emitter.EmitBytes(0x89, 0x01);
+                else if (elementSize == 8)
+                {
+                    emitter.MovRcxRax();
+                    emitter.EmitBytes(0x48, 0x89, 0x01);
+                }
+                else
+                    throw new NotSupportedException($"Array element type '{elementType}' is not yet supported for indexed stores.");
+
+                emitter.AddRsp(8);
+                return;
+            }
+
+            if (elementSize != 1 && elementSize != 4)
+                throw new NotSupportedException($"Compound assignment on array element type '{elementType}' is not yet supported.");
+
+            if (elementSize == 1)
+                emitter.MovzxEaxRaxMemoryByte();
+            else
+                emitter.MovEaxRaxMemory();
+
             emitter.PushRax();
+
             GenerateExpression(value, emitter, data, variables, arrays, parameters);
             emitter.MovEcxEax();
+
             emitter.PopRax();
+
             GenerateCompoundAssignmentOperation(operatorKind, emitter);
-            emitter.EmitBytes(0x48, 0x8B, 0x0C, 0x24);
-            emitter.EmitBytes(0x89, 0x01);
+
+            emitter.MovEcxEax();
+            emitter.MovRaxRspDisp32(0);
             emitter.AddRsp(8);
+
+            if (elementSize == 1)
+                emitter.EmitBytes(0x88, 0x08);
+            else
+                emitter.EmitBytes(0x89, 0x08);
         }
 
-        private static void GenerateCompoundAssignmentOperation(TokenKind operatorKind, X64Emitter emitter)
+        private static void GenerateCompoundAssignmentOperation(
+            TokenKind operatorKind,
+            X64Emitter emitter)
         {
-            switch (operatorKind) { case TokenKind.PlusEquals: emitter.AddEaxEcx(); break; case TokenKind.MinusEquals: emitter.SubEaxEcx(); break; case TokenKind.StarEquals: emitter.ImulEaxEcx(); break; case TokenKind.SlashEquals: emitter.Cdq(); emitter.IdivEcx(); break; case TokenKind.PercentEquals: emitter.Cdq(); emitter.IdivEcx(); emitter.MovEaxEdx(); break; default: throw new NotSupportedException($"Assignment operator '{operatorKind}' is not supported."); }
+            switch (operatorKind)
+            {
+                case TokenKind.PlusEquals:
+                    emitter.AddEaxEcx();
+                    break;
+
+                case TokenKind.MinusEquals:
+                    emitter.SubEaxEcx();
+                    break;
+
+                case TokenKind.StarEquals:
+                    emitter.ImulEaxEcx();
+                    break;
+
+                case TokenKind.SlashEquals:
+                    emitter.Cdq();
+                    emitter.IdivEcx();
+                    break;
+
+                case TokenKind.PercentEquals:
+                    emitter.Cdq();
+                    emitter.IdivEcx();
+                    emitter.MovEaxEdx();
+                    break;
+
+                default:
+                    throw new NotSupportedException($"Assignment operator '{operatorKind}' is not supported.");
+            }
         }
 
-        private static void GenerateBinaryExpression(BinaryExpression expression, X64Emitter emitter, List<X64DataItem> data, Dictionary<string, (int Offset, string Type)> variables, Dictionary<string, (int Length, string Type)> arrays, Dictionary<string, (int Index, string Type)> parameters)
+        private static void GenerateBinaryExpression(
+            BinaryExpression expression,
+            X64Emitter emitter,
+            List<X64DataItem> data,
+            Dictionary<string, (int Offset, string Type, bool IsConst)> variables,
+            Dictionary<string, (int Length, string Type)> arrays,
+            Dictionary<string, (int Index, string Type)> parameters)
         {
-            if (expression.Operator is TokenKind.Plus or TokenKind.Minus && TryGetPointerType(expression.Left, variables, arrays, parameters, out var leftPointerType))
+            if (expression.Operator is TokenKind.Plus or TokenKind.Minus &&
+                TryGetPointerType(expression.Left, variables, arrays, parameters, out var leftPointerType))
             {
                 var elementSize = GetPointeeSize(leftPointerType);
+
                 GenerateExpression(expression.Left, emitter, data, variables, arrays, parameters);
                 emitter.PushRax();
+
                 GenerateExpression(expression.Right, emitter, data, variables, arrays, parameters);
+
                 if (elementSize != 1)
                     emitter.ImulEaxImm8((byte)elementSize);
+
                 emitter.MovEcxEax();
                 emitter.PopRax();
+
                 if (expression.Operator == TokenKind.Plus)
                     emitter.AddRaxRcx();
                 else
                     emitter.SubRaxRcx();
+
                 return;
             }
 
-            if (expression.Operator == TokenKind.Plus && TryGetPointerType(expression.Right, variables, arrays, parameters, out var rightPointerType))
+            if (expression.Operator == TokenKind.Plus &&
+                TryGetPointerType(expression.Right, variables, arrays, parameters, out _))
             {
                 throw new NotSupportedException("Integer plus pointer is not yet supported by the x64 backend.");
             }
 
             GenerateExpression(expression.Left, emitter, data, variables, arrays, parameters);
             emitter.PushRax();
+
             GenerateExpression(expression.Right, emitter, data, variables, arrays, parameters);
             emitter.MovEcxEax();
+
             emitter.PopRax();
 
             switch (expression.Operator)
@@ -798,7 +1320,7 @@ namespace JollyCCompiler.Compiler.CodeGen.X64
             }
         }
 
-        private static void GenerateCallExpression(CallExpression call, X64Emitter emitter, List<X64DataItem> data, Dictionary<string, (int Offset, string Type)> variables, Dictionary<string, (int Length, string Type)> arrays, Dictionary<string, (int Index, string Type)> parameters)
+        private static void GenerateCallExpression(CallExpression call, X64Emitter emitter, List<X64DataItem> data, Dictionary<string, (int Offset, string Type, bool IsConst)> variables, Dictionary<string, (int Length, string Type)> arrays, Dictionary<string, (int Index, string Type)> parameters)
         {
             if (call.Name == "printf")
             {
@@ -810,61 +1332,92 @@ namespace JollyCCompiler.Compiler.CodeGen.X64
             var callStackSize = emitter.GetCallStackSize(argumentCount);
             var temporaryBytes = argumentCount * 8;
             var totalBytes = callStackSize + temporaryBytes;
+
             totalBytes = (totalBytes + 15) & ~15;
+
             emitter.SubRsp(totalBytes);
+
             var temporaryBase = callStackSize;
 
-            for (var i = 0; i < argumentCount; i++) 
-            { 
-                var argument = call.Arguments[i]; 
-                if (argument is IdentifierExpression identifier && arrays.TryGetValue(identifier.Name, out _)) 
-                { 
-                    if (!variables.TryGetValue(identifier.Name, out var arrayVariable)) 
-                        throw new InvalidOperationException($"Array '{identifier.Name}' has no stack slot."); 
-                    
-                    emitter.LeaRaxRbpDisp32(arrayVariable.Offset); 
-                } 
-                else 
-                { 
-                    GenerateExpression(argument, emitter, data, variables, arrays, parameters); 
-                } 
-                var temporaryOffset = temporaryBase + (i * 8); 
+            for (var i = 0; i < argumentCount; i++)
+            {
+                var argument = call.Arguments[i];
+
+                if (argument is IdentifierExpression identifier &&
+                    arrays.TryGetValue(identifier.Name, out _))
+                {
+                    if (!variables.TryGetValue(identifier.Name, out var arrayVariable))
+                        throw new InvalidOperationException($"Array '{identifier.Name}' has no stack slot.");
+
+                    emitter.LeaRaxRbpDisp32(arrayVariable.Offset);
+                }
+                else
+                {
+                    GenerateExpression(argument, emitter, data, variables, arrays, parameters);
+                }
+
+                var temporaryOffset = temporaryBase + (i * 8);
                 emitter.MovRspDisp32Rax(temporaryOffset);
             }
 
-            for (var i = 0; i < argumentCount; i++) 
-            { 
-                var argument = call.Arguments[i]; var temporaryOffset = temporaryBase + (i * 8); 
-                emitter.MovRaxRspDisp32(temporaryOffset); 
-                var isPointerArgument = argument is IdentifierExpression identifier && (arrays.ContainsKey(identifier.Name) || (variables.TryGetValue(identifier.Name, out var variable) && variable.Type.EndsWith("*", StringComparison.Ordinal)) || (parameters.TryGetValue(identifier.Name, out var parameter) && parameter.Type.EndsWith("*", StringComparison.Ordinal))) || argument is AddressOfExpression || argument is ArraySubscriptExpression; 
-                
-                if (isPointerArgument) 
-                { 
-                    if (i < 4) 
-                        emitter.MoveRaxToArgumentRegister(i); 
-                    else 
-                        emitter.MoveRaxToStackArgument(i); 
-                } 
-                else 
-                { 
-                    if (i < 4) 
-                        emitter.MoveEaxToArgumentRegister(i); 
-                    else 
-                        emitter.MoveEaxToStackArgument(i); 
-                } 
+            for (var i = 0; i < argumentCount; i++)
+            {
+                var argument = call.Arguments[i];
+                var temporaryOffset = temporaryBase + (i * 8);
+
+                emitter.MovRaxRspDisp32(temporaryOffset);
+
+                var isPointerArgument =
+                    argument is IdentifierExpression identifier &&
+                    (
+                        arrays.ContainsKey(identifier.Name) ||
+                        (variables.TryGetValue(identifier.Name, out var variable) &&
+                         variable.Type.EndsWith("*", StringComparison.Ordinal)) ||
+                        (parameters.TryGetValue(identifier.Name, out var parameter) &&
+                         parameter.Type.EndsWith("*", StringComparison.Ordinal))
+                    ) ||
+                    argument is AddressOfExpression ||
+                    argument is ArraySubscriptExpression;
+
+                if (isPointerArgument)
+                {
+                    if (i < 4)
+                        emitter.MoveRaxToArgumentRegister(i);
+                    else
+                        emitter.MoveRaxToStackArgument(i);
+                }
+                else
+                {
+                    if (i < 4)
+                        emitter.MoveEaxToArgumentRegister(i);
+                    else
+                        emitter.MoveEaxToStackArgument(i);
+                }
             }
 
             emitter.CallRelative($"$fn_{call.Name}");
             emitter.AddRsp(totalBytes);
-        } 
+        }
 
-        private static void GeneratePrintfCall(CallExpression call, X64Emitter emitter, List<X64DataItem> data, Dictionary<string, (int Offset, string Type)> variables, Dictionary<string, (int Length, string Type)> arrays, Dictionary<string, (int Index, string Type)> parameters)
+        private static void GeneratePrintfCall(
+            CallExpression call,
+            X64Emitter emitter,
+            List<X64DataItem> data,
+            Dictionary<string, (int Offset, string Type, bool IsConst)> variables,
+            Dictionary<string, (int Length, string Type)> arrays,
+            Dictionary<string, (int Index, string Type)> parameters)
         {
-            if (call.Arguments.Count == 0) throw new NotSupportedException("printf requires a format string.");
-            if (call.Arguments[0] is not StringExpression formatString) throw new NotSupportedException("printf requires a string literal as its first argument.");
+            if (call.Arguments.Count == 0)
+                throw new NotSupportedException("printf requires a format string.");
+
+            if (call.Arguments[0] is not StringExpression formatString)
+                throw new NotSupportedException("printf requires a string literal as its first argument.");
+
             var symbol = $"$str{data.Count}";
             var bytes = Encoding.UTF8.GetBytes(formatString.Value + "\0");
+
             data.Add(new X64DataItem(symbol, bytes));
+
             var argumentCount = call.Arguments.Count;
             var valueArgumentCount = argumentCount - 1;
             var stackArgumentCount = Math.Max(0, argumentCount - 4);
@@ -872,121 +1425,268 @@ namespace JollyCCompiler.Compiler.CodeGen.X64
             var stackArgumentBytes = stackArgumentCount * 8;
             var temporaryBytes = valueArgumentCount * 8;
             var totalBytes = shadowSpace + stackArgumentBytes + temporaryBytes;
+
             totalBytes = (totalBytes + 15) & ~15;
+
             emitter.SubRsp(totalBytes);
+
             var temporaryBase = shadowSpace + stackArgumentBytes;
-            for (var i = 1; i < argumentCount; i++) { GenerateExpression(call.Arguments[i], emitter, data, variables, arrays, parameters); var temporaryOffset = temporaryBase + ((i - 1) * 8); var isPointer = IsPointerExpression(call.Arguments[i], parameters); if (isPointer) emitter.MovRspDisp32Rax(temporaryOffset); else emitter.MovRspDisp32Eax(temporaryOffset); }
+
+            for (var i = 1; i < argumentCount; i++)
+            {
+                GenerateExpression(call.Arguments[i], emitter, data, variables, arrays, parameters);
+
+                var temporaryOffset = temporaryBase + ((i - 1) * 8);
+                var isPointer = IsPointerExpression(call.Arguments[i], parameters);
+
+                if (isPointer)
+                    emitter.MovRspDisp32Rax(temporaryOffset);
+                else
+                    emitter.MovRspDisp32Eax(temporaryOffset);
+            }
+
             emitter.LeaRcxRipRelative(symbol);
-            for (var i = 1; i < argumentCount; i++) { var temporaryOffset = temporaryBase + ((i - 1) * 8); var isPointer = IsPointerExpression(call.Arguments[i], parameters); if (isPointer) emitter.MovRaxRspDisp32(temporaryOffset); else emitter.MovEaxRspDisp32(temporaryOffset); switch (i) { case 1: if (isPointer) emitter.MovRdxRax(); else emitter.MovEdxEax(); break; case 2: if (isPointer) emitter.MovR8Rax(); else emitter.MovR8dEax(); break; case 3: if (isPointer) emitter.MovR9Rax(); else emitter.MovR9dEax(); break; default: if (isPointer) emitter.MovRspDisp32Rax(32 + ((i - 4) * 8)); else emitter.MovRspDisp32Eax(32 + ((i - 4) * 8)); break; } }
+
+            for (var i = 1; i < argumentCount; i++)
+            {
+                var temporaryOffset = temporaryBase + ((i - 1) * 8);
+                var isPointer = IsPointerExpression(call.Arguments[i], parameters);
+
+                if (isPointer)
+                    emitter.MovRaxRspDisp32(temporaryOffset);
+                else
+                    emitter.MovEaxRspDisp32(temporaryOffset);
+
+                switch (i)
+                {
+                    case 1:
+                        if (isPointer)
+                            emitter.MovRdxRax();
+                        else
+                            emitter.MovEdxEax();
+                        break;
+
+                    case 2:
+                        if (isPointer)
+                            emitter.MovR8Rax();
+                        else
+                            emitter.MovR8dEax();
+                        break;
+
+                    case 3:
+                        if (isPointer)
+                            emitter.MovR9Rax();
+                        else
+                            emitter.MovR9dEax();
+                        break;
+
+                    default:
+                        if (isPointer)
+                            emitter.MovRspDisp32Rax(32 + ((i - 4) * 8));
+                        else
+                            emitter.MovRspDisp32Eax(32 + ((i - 4) * 8));
+                        break;
+                }
+            }
+
             emitter.CallIndirectRipRelative("printf", "printf");
             emitter.AddRsp(totalBytes);
         }
 
-        private static bool IsPointerExpression(ExpressionNode expression, Dictionary<string, (int Index, string Type)> parameters)
+        private static bool IsPointerExpression(
+            ExpressionNode expression,
+            Dictionary<string, (int Index, string Type)> parameters)
         {
-            if (expression is IdentifierExpression identifier && parameters.TryGetValue(identifier.Name, out var parameter)) return parameter.Type.EndsWith("*", StringComparison.Ordinal);
-            if (expression is ArraySubscriptExpression) return false;
+            if (expression is IdentifierExpression identifier &&
+                parameters.TryGetValue(identifier.Name, out var parameter))
+            {
+                return parameter.Type.EndsWith("*", StringComparison.Ordinal);
+            }
+
+            if (expression is ArraySubscriptExpression)
+                return false;
+
             return false;
         }
 
-        private static void GenerateComparison(BinaryExpression expression, X64Emitter emitter, List<X64DataItem> data, Dictionary<string, (int Offset, string Type)> variables, Dictionary<string, (int Length, string Type)> arrays, Dictionary<string, (int Index, string Type)> parameters)
+        private static void GenerateComparison(
+            BinaryExpression expression,
+            X64Emitter emitter,
+            List<X64DataItem> data,
+            Dictionary<string, (int Offset, string Type, bool IsConst)> variables,
+            Dictionary<string, (int Length, string Type)> arrays,
+            Dictionary<string, (int Index, string Type)> parameters)
         {
             GenerateExpression(expression.Left, emitter, data, variables, arrays, parameters);
             emitter.PushRax();
+
             GenerateExpression(expression.Right, emitter, data, variables, arrays, parameters);
             emitter.MovEcxEax();
+
             emitter.PopRax();
             emitter.CmpEaxEcx();
+
             var trueLabel = $"$cmp_true_{emitter.Offset}";
             var endLabel = $"$cmp_end_{emitter.Offset}";
-            switch (expression.Operator) { case TokenKind.EqualEqual: emitter.Je(trueLabel); break; case TokenKind.NotEqual: emitter.Jne(trueLabel); break; case TokenKind.Less: emitter.Jl(trueLabel); break; case TokenKind.LessEqual: emitter.Jle(trueLabel); break; case TokenKind.Greater: emitter.Jg(trueLabel); break; case TokenKind.GreaterEqual: emitter.Jge(trueLabel); break; default: throw new NotSupportedException($"Operator '{expression.Operator}' is not a comparison operator."); }
+
+            switch (expression.Operator)
+            {
+                case TokenKind.EqualEqual:
+                    emitter.Je(trueLabel);
+                    break;
+
+                case TokenKind.NotEqual:
+                    emitter.Jne(trueLabel);
+                    break;
+
+                case TokenKind.Less:
+                    emitter.Jl(trueLabel);
+                    break;
+
+                case TokenKind.LessEqual:
+                    emitter.Jle(trueLabel);
+                    break;
+
+                case TokenKind.Greater:
+                    emitter.Jg(trueLabel);
+                    break;
+
+                case TokenKind.GreaterEqual:
+                    emitter.Jge(trueLabel);
+                    break;
+
+                default:
+                    throw new NotSupportedException($"Operator '{expression.Operator}' is not a comparison operator.");
+            }
+
             emitter.MovEax(0);
             emitter.Jmp(endLabel);
+
             emitter.MarkLabel(trueLabel);
             emitter.MovEax(1);
+
             emitter.MarkLabel(endLabel);
         }
 
-        private static void GenerateLogicalAnd(BinaryExpression expression, X64Emitter emitter, List<X64DataItem> data, Dictionary<string, (int Offset, string Type)> variables, Dictionary<string, (int Length, string Type)> arrays, Dictionary<string, (int Index, string Type)> parameters)
+        private static void GenerateLogicalAnd(
+            BinaryExpression expression,
+            X64Emitter emitter,
+            List<X64DataItem> data,
+            Dictionary<string, (int Offset, string Type, bool IsConst)> variables,
+            Dictionary<string, (int Length, string Type)> arrays,
+            Dictionary<string, (int Index, string Type)> parameters)
         {
             var falseLabel = emitter.CreateLabel("and_false");
             var endLabel = emitter.CreateLabel("and_end");
+
             GenerateExpression(expression.Left, emitter, data, variables, arrays, parameters);
             emitter.TestEaxEax();
             emitter.Je(falseLabel);
+
             GenerateExpression(expression.Right, emitter, data, variables, arrays, parameters);
             emitter.TestEaxEax();
             emitter.Je(falseLabel);
+
             emitter.MovEax(1);
             emitter.Jmp(endLabel);
+
             emitter.MarkLabel(falseLabel);
             emitter.MovEax(0);
+
             emitter.MarkLabel(endLabel);
         }
 
-        private static void GenerateLogicalOr(BinaryExpression expression, X64Emitter emitter, List<X64DataItem> data, Dictionary<string, (int Offset, string Type)> variables, Dictionary<string, (int Length, string Type)> arrays, Dictionary<string, (int Index, string Type)> parameters)
+        private static void GenerateLogicalOr(
+            BinaryExpression expression,
+            X64Emitter emitter,
+            List<X64DataItem> data,
+            Dictionary<string, (int Offset, string Type, bool IsConst)> variables,
+            Dictionary<string, (int Length, string Type)> arrays,
+            Dictionary<string, (int Index, string Type)> parameters)
         {
             var trueLabel = emitter.CreateLabel("or_true");
             var endLabel = emitter.CreateLabel("or_end");
+
             GenerateExpression(expression.Left, emitter, data, variables, arrays, parameters);
             emitter.TestEaxEax();
             emitter.Jne(trueLabel);
+
             GenerateExpression(expression.Right, emitter, data, variables, arrays, parameters);
             emitter.TestEaxEax();
             emitter.Jne(trueLabel);
+
             emitter.MovEax(0);
             emitter.Jmp(endLabel);
+
             emitter.MarkLabel(trueLabel);
             emitter.MovEax(1);
+
             emitter.MarkLabel(endLabel);
         }
 
-        private static void GenerateUnaryExpression(UnaryExpression expression, X64Emitter emitter, List<X64DataItem> data, Dictionary<string, (int Offset, string Type)> variables, Dictionary<string, (int Length, string Type)> arrays, Dictionary<string, (int Index, string Type)> parameters)
+        private static void GenerateUnaryExpression(
+            UnaryExpression expression,
+            X64Emitter emitter,
+            List<X64DataItem> data,
+            Dictionary<string, (int Offset, string Type, bool IsConst)> variables,
+            Dictionary<string, (int Length, string Type)> arrays,
+            Dictionary<string, (int Index, string Type)> parameters)
         {
-            if (expression.Operator is TokenKind.PlusPlus or TokenKind.MinusMinus) 
-            { 
-                GenerateIncrementDecrement(expression, emitter, data, variables, arrays, parameters); 
-                return; 
+            if (expression.Operator is TokenKind.PlusPlus or TokenKind.MinusMinus)
+            {
+                GenerateIncrementDecrement(expression, emitter, data, variables, arrays, parameters);
+                return;
             }
 
             GenerateExpression(expression.Operand, emitter, data, variables, arrays, parameters);
-            switch (expression.Operator) 
-            { 
-                case TokenKind.Minus: 
-                    emitter.NegEax(); 
-                    break; 
-                
-                case TokenKind.Exclamation: 
-                    var trueLabel = emitter.CreateLabel("not_true"); 
-                    var endLabel = emitter.CreateLabel("not_end"); 
-                    emitter.TestEaxEax(); emitter.Je(trueLabel); 
-                    emitter.MovEax(0); emitter.Jmp(endLabel); 
-                    emitter.MarkLabel(trueLabel); 
-                    emitter.MovEax(1); 
-                    emitter.MarkLabel(endLabel); 
-                    break; 
-                
-                default: 
-                    throw new NotSupportedException($"Unary operator '{expression.Operator}' is not supported."); 
+
+            switch (expression.Operator)
+            {
+                case TokenKind.Minus:
+                    emitter.NegEax();
+                    break;
+
+                case TokenKind.Exclamation:
+                    var trueLabel = emitter.CreateLabel("not_true");
+                    var endLabel = emitter.CreateLabel("not_end");
+
+                    emitter.TestEaxEax();
+                    emitter.Je(trueLabel);
+
+                    emitter.MovEax(0);
+                    emitter.Jmp(endLabel);
+
+                    emitter.MarkLabel(trueLabel);
+                    emitter.MovEax(1);
+
+                    emitter.MarkLabel(endLabel);
+                    break;
+
+                default:
+                    throw new NotSupportedException($"Unary operator '{expression.Operator}' is not supported.");
             }
         }
 
-        private static void GenerateIncrementDecrement(UnaryExpression expression, X64Emitter emitter, List<X64DataItem> data, Dictionary<string, (int Offset, string Type)> variables, Dictionary<string, (int Length, string Type)> arrays, Dictionary<string, (int Index, string Type)> parameters) 
-        { 
-            if (expression.Operand is IdentifierExpression identifier) 
-            { 
-                if (!TryGetScalarStorageOffset(identifier.Name, variables, arrays, parameters, out var offset, out var type)) 
-                    throw new InvalidOperationException($"Variable or parameter '{identifier.Name}' has no stack slot.");
+        private static void GenerateIncrementDecrement(UnaryExpression expression, X64Emitter emitter, List<X64DataItem> data, Dictionary<string, (int Offset, string Type, bool IsConst)> variables, Dictionary<string, (int Length, string Type)> arrays, Dictionary<string, (int Index, string Type)> parameters)
+        {
+            if (expression.Operand is IdentifierExpression identifier)
+            {
+                if (!TryGetScalarStorageOffset(identifier.Name, variables, arrays, parameters, out var offset, out var type, out var isConst))
+                    throw new InvalidOperationException($"Variable or parameter '{identifier.Name}' has no scalar storage.");
 
+                if (isConst)
+                    throw new InvalidOperationException($"Cannot modify const variable '{identifier.Name}'.");
+                
                 if (type.EndsWith("*", StringComparison.Ordinal))
                 {
                     var elementSize = GetPointeeSize(type);
+
                     emitter.MovRaxRbpDisp8(offset);
 
                     if (expression.IsPostfix)
                         emitter.PushRax();
 
-                    emitter.MovEcx((byte)elementSize);
+                    emitter.MovEcx(elementSize);
 
                     if (expression.Operator == TokenKind.PlusPlus)
                         emitter.AddRaxRcx();
@@ -1001,93 +1701,353 @@ namespace JollyCCompiler.Compiler.CodeGen.X64
                     return;
                 }
 
-                emitter.MovEaxRbpDisp32(offset); 
-                if (expression.IsPostfix) 
-                    emitter.PushRax(); 
-                
-                emitter.MovEcx(1); 
-                if (expression.Operator == TokenKind.PlusPlus) 
-                    emitter.AddEaxEcx(); 
-                else 
-                    emitter.SubEaxEcx(); 
+                var typeSize = GetTypeSize(type);
 
-                emitter.MovRbpDisp32Eax(offset); 
+                if (typeSize == 1)
+                    emitter.MovAlRbpDisp32(offset);
+                else if (typeSize == 4)
+                    emitter.MovEaxRbpDisp32(offset);
+                else if (typeSize == 8)
+                    emitter.MovRaxRbpDisp8(offset);
+                else
+                    throw new NotSupportedException($"Increment/decrement on type '{type}' is not yet supported.");
+
+                if (typeSize == 1)
+                    emitter.MovzxEaxAl();
+
                 if (expression.IsPostfix)
-                    emitter.PopRax(); 
-                
-                return; 
-            } 
-            
-            if (expression.Operand is ArraySubscriptExpression subscript) 
-            { 
-                GenerateArrayIncrementDecrement(subscript, expression, emitter, data, variables, arrays, parameters); 
-                return; 
-            } 
+                    emitter.PushRax();
 
-            throw new NotSupportedException("Increment and decrement operators require an assignable identifier or array element."); 
+                emitter.MovEcx(1);
+
+                if (expression.Operator == TokenKind.PlusPlus)
+                {
+                    if (typeSize == 8)
+                        emitter.AddRaxRcx();
+                    else
+                        emitter.AddEaxEcx();
+                }
+                else
+                {
+                    if (typeSize == 8)
+                        emitter.SubRaxRcx();
+                    else
+                        emitter.SubEaxEcx();
+                }
+
+                if (typeSize == 1)
+                    emitter.MovRbpDisp32Al(offset);
+                else if (typeSize == 4)
+                    emitter.MovRbpDisp32Eax(offset);
+                else
+                    emitter.MovRbpDisp8Rax(offset);
+
+                if (expression.IsPostfix)
+                    emitter.PopRax();
+
+                return;
+            }
+
+            if (expression.Operand is ArraySubscriptExpression subscript)
+            {
+                GenerateArrayIncrementDecrement(subscript, expression, emitter, data, variables, arrays, parameters);
+                return;
+            }
+
+            if (expression.Operand is DereferenceExpression dereference)
+            {
+                if (!TryGetPointerType(dereference.Operand, variables, arrays, parameters, out var pointerType))
+                    throw new InvalidOperationException("Cannot determine pointer type for increment/decrement.");
+
+                var pointeeType = pointerType[..^1];
+                var pointeeSize = GetTypeSize(pointeeType);
+
+                if (pointeeSize != 1 && pointeeSize != 4 && pointeeSize != 8)
+                    throw new NotSupportedException($"Increment/decrement through pointer type '{pointerType}' is not yet supported.");
+
+                GenerateExpression(dereference.Operand, emitter, data, variables, arrays, parameters);
+                emitter.PushRax();
+
+                if (pointeeSize == 1)
+                    emitter.MovzxEaxRaxMemoryByte();
+                else if (pointeeSize == 4)
+                    emitter.MovEaxRaxMemory();
+                else
+                    emitter.MovRaxFromMemory();
+
+                if (expression.IsPostfix)
+                    emitter.PushRax();
+
+                if (pointeeSize == 8)
+                {
+                    emitter.MovEcx((int)GetPointeeSize(pointerType));
+                    if (expression.Operator == TokenKind.PlusPlus)
+                        emitter.AddRaxRcx();
+                    else
+                        emitter.SubRaxRcx();
+                }
+                else
+                {
+                    emitter.MovEcx(1);
+                    if (expression.Operator == TokenKind.PlusPlus)
+                        emitter.AddEaxEcx();
+                    else
+                        emitter.SubEaxEcx();
+                }
+
+                if (expression.IsPostfix)
+                {
+                    emitter.MovRcxRax();
+                    emitter.MovRaxRspDisp32(8);
+
+                    if (pointeeSize == 1)
+                        emitter.EmitBytes(0x88, 0x08);
+                    else if (pointeeSize == 4)
+                        emitter.EmitBytes(0x89, 0x08);
+                    else
+                        emitter.EmitBytes(0x48, 0x89, 0x08);
+
+                    emitter.PopRax();
+                    emitter.AddRsp(8);
+                }
+                else
+                {
+                    emitter.MovRcxRax();
+                    emitter.PopRax();
+
+                    if (pointeeSize == 1)
+                        emitter.EmitBytes(0x88, 0x08);
+                    else if (pointeeSize == 4)
+                        emitter.EmitBytes(0x89, 0x08);
+                    else
+                        emitter.EmitBytes(0x48, 0x89, 0x08);
+
+                    emitter.MovRaxRcx();
+                }
+
+                return;
+            }
+
+            if (expression.Operand is MemberAccessExpression member)
+            {
+                GenerateMemberIncrementDecrement(member, expression, emitter, data, variables, arrays, parameters);
+                return;
+            }
+
+            throw new NotSupportedException($"Increment/decrement operand AST: {expression.Operand}");
         }
 
-        private static void GenerateArrayIncrementDecrement(ArraySubscriptExpression subscript, UnaryExpression expression, X64Emitter emitter, List<X64DataItem> data, Dictionary<string, (int Offset, string Type)> variables, Dictionary<string, (int Length, string Type)> arrays, Dictionary<string, (int Index, string Type)> parameters)
+        private static void GenerateMemberIncrementDecrement(
+            MemberAccessExpression target,
+            UnaryExpression expression,
+            X64Emitter emitter,
+            List<X64DataItem> data,
+            Dictionary<string, (int Offset, string Type, bool IsConst)> variables,
+            Dictionary<string, (int Length, string Type)> arrays,
+            Dictionary<string, (int Index, string Type)> parameters)
         {
-            GenerateArraySubscriptAddress(subscript, emitter, data, variables, arrays, parameters);
-            emitter.PushRax();
-            emitter.MovEaxRaxMemory();
-            if (expression.IsPostfix) emitter.PushRax();
-            emitter.MovEcx(1);
-            if (expression.Operator == TokenKind.PlusPlus) 
-                emitter.AddEaxEcx(); 
-            else emitter.SubEaxEcx();
+            var member = GetMemberInfo(target, variables, arrays, parameters);
+            var memberType = member.Type;
+            var memberSize = GetTypeSize(memberType);
 
-            if (expression.IsPostfix) 
-            { 
-                emitter.EmitBytes(0x48, 0x8B, 0x4C, 0x24, 0x08); 
-                emitter.EmitBytes(0x89, 0x01); 
-                emitter.PopRax(); 
-                emitter.AddRsp(8); 
-            } 
-            else 
-            { 
-                emitter.EmitBytes(0x48, 0x8B, 0x0C, 0x24); 
-                emitter.EmitBytes(0x89, 0x01); 
-                emitter.AddRsp(8); 
+            if (memberSize != 1 && memberSize != 4 && memberSize != 8)
+                throw new NotSupportedException($"Increment/decrement on struct member type '{memberType}' is not yet supported.");
+
+            GenerateLValueAddress(target, emitter, data, variables, arrays, parameters);
+            emitter.PushRax();
+
+            if (memberSize == 1)
+                emitter.MovzxEaxRaxMemoryByte();
+            else if (memberSize == 4)
+                emitter.MovEaxRaxMemory();
+            else
+                emitter.MovRaxFromMemory();
+
+            if (expression.IsPostfix)
+                emitter.PushRax();
+
+            if (memberType.EndsWith("*", StringComparison.Ordinal))
+            {
+                var elementSize = GetPointeeSize(memberType);
+                emitter.MovEcx(elementSize);
+
+                if (expression.Operator == TokenKind.PlusPlus)
+                    emitter.AddRaxRcx();
+                else
+                    emitter.SubRaxRcx();
+            }
+            else
+            {
+                emitter.MovEcx(1);
+
+                if (expression.Operator == TokenKind.PlusPlus)
+                {
+                    if (memberSize == 8)
+                        emitter.AddRaxRcx();
+                    else
+                        emitter.AddEaxEcx();
+                }
+                else
+                {
+                    if (memberSize == 8)
+                        emitter.SubRaxRcx();
+                    else
+                        emitter.SubEaxEcx();
+                }
+            }
+
+            emitter.MovRcxRax();
+
+            if (expression.IsPostfix)
+            {
+                emitter.MovRaxRspDisp32(8);
+
+                if (memberSize == 1)
+                    emitter.EmitBytes(0x88, 0x08);
+                else if (memberSize == 4)
+                    emitter.EmitBytes(0x89, 0x08);
+                else
+                    emitter.EmitBytes(0x48, 0x89, 0x08);
+
+                emitter.MovRaxRspDisp32(0);
+                emitter.AddRsp(16);
+            }
+            else
+            {
+                emitter.PopRax();
+
+                if (memberSize == 1)
+                    emitter.EmitBytes(0x88, 0x08);
+                else if (memberSize == 4)
+                    emitter.EmitBytes(0x89, 0x08);
+                else
+                    emitter.EmitBytes(0x48, 0x89, 0x08);
+
+                emitter.MovRaxRcx();
             }
         }
 
-        private static void GenerateIfStatement(IfStatement statement, X64Emitter emitter, List<X64DataItem> data, Dictionary<string, (int Offset, string Type)> variables, Dictionary<string, (int Length, string Type)> arrays, Dictionary<string, (int Index, string Type)> parameters, int frameSize)
+        private static void GenerateArrayIncrementDecrement(
+            ArraySubscriptExpression subscript,
+            UnaryExpression expression,
+            X64Emitter emitter,
+            List<X64DataItem> data,
+            Dictionary<string, (int Offset, string Type, bool IsConst)> variables,
+            Dictionary<string, (int Length, string Type)> arrays,
+            Dictionary<string, (int Index, string Type)> parameters)
+        {
+            if (!TryGetExpressionType(subscript, variables, arrays, parameters, out var elementType))
+                throw new InvalidOperationException("Cannot determine array element type.");
+
+            var elementSize = GetTypeSize(elementType);
+
+            if (elementSize != 1 && elementSize != 4)
+                throw new NotSupportedException($"Increment/decrement on array element type '{elementType}' is not yet supported.");
+
+            GenerateArraySubscriptAddress(subscript, emitter, data, variables, arrays, parameters);
+            emitter.PushRax();
+
+            if (elementSize == 1)
+                emitter.MovzxEaxRaxMemoryByte();
+            else
+                emitter.MovEaxRaxMemory();
+
+            if (expression.IsPostfix)
+                emitter.PushRax();
+
+            emitter.MovEcx(1);
+
+            if (expression.Operator == TokenKind.PlusPlus)
+                emitter.AddEaxEcx();
+            else
+                emitter.SubEaxEcx();
+
+            if (expression.IsPostfix)
+            {
+                emitter.EmitBytes(0x48, 0x8B, 0x4C, 0x24, 0x08);
+
+                if (elementSize == 1)
+                    emitter.EmitBytes(0x88, 0x01);
+                else
+                    emitter.EmitBytes(0x89, 0x01);
+
+                emitter.PopRax();
+                emitter.AddRsp(8);
+            }
+            else
+            {
+                emitter.EmitBytes(0x48, 0x8B, 0x0C, 0x24);
+
+                if (elementSize == 1)
+                    emitter.EmitBytes(0x88, 0x01);
+                else
+                    emitter.EmitBytes(0x89, 0x01);
+
+                emitter.AddRsp(8);
+            }
+        }
+
+        private static void GenerateIfStatement(
+            IfStatement statement,
+            X64Emitter emitter,
+            List<X64DataItem> data,
+            Dictionary<string, (int Offset, string Type, bool IsConst)> variables,
+            Dictionary<string, (int Length, string Type)> arrays,
+            Dictionary<string, (int Index, string Type)> parameters,
+            int frameSize)
         {
             var elseLabel = emitter.CreateLabel("if_else");
             var endLabel = emitter.CreateLabel("if_end");
+
             GenerateExpression(statement.Condition, emitter, data, variables, arrays, parameters);
             emitter.TestEaxEax();
             emitter.Je(elseLabel);
+
             GenerateStatement(statement.Then, emitter, data, variables, arrays, parameters, frameSize);
-            if (statement.Else is not null) { emitter.Jmp(endLabel); emitter.MarkLabel(elseLabel); GenerateStatement(statement.Else, emitter, data, variables, arrays, parameters, frameSize); emitter.MarkLabel(endLabel); } else emitter.MarkLabel(elseLabel);
+
+            if (statement.Else is not null)
+            {
+                emitter.Jmp(endLabel);
+                emitter.MarkLabel(elseLabel);
+
+                GenerateStatement(statement.Else, emitter, data, variables, arrays, parameters, frameSize);
+
+                emitter.MarkLabel(endLabel);
+            }
+            else
+            {
+                emitter.MarkLabel(elseLabel);
+            }
         }
 
-        private static void GenerateBreakStatement(X64Emitter emitter) 
-        { 
-            if (_loopLabels.Count == 0) 
-                throw new InvalidOperationException("'break' may only be used inside a loop or switch."); 
-            
-            emitter.Jmp(_loopLabels.Peek().BreakLabel); 
+        private static void GenerateBreakStatement(X64Emitter emitter)
+        {
+            if (_loopLabels.Count == 0)
+                throw new InvalidOperationException("'break' may only be used inside a loop or switch.");
+
+            emitter.Jmp(_loopLabels.Peek().BreakLabel);
         }
 
-        private static void GenerateContinueStatement(X64Emitter emitter) 
-        { 
-            foreach (var labels in _loopLabels) 
-            { 
-                if (!string.IsNullOrEmpty(labels.ContinueLabel)) 
-                { 
-                    emitter.Jmp(labels.ContinueLabel); return; 
-                } 
-            } 
-            
-            throw new InvalidOperationException("'continue' may only be used inside a loop."); 
+        private static void GenerateContinueStatement(X64Emitter emitter)
+        {
+            foreach (var labels in _loopLabels)
+            {
+                if (!string.IsNullOrEmpty(labels.ContinueLabel))
+                {
+                    emitter.Jmp(labels.ContinueLabel);
+                    return;
+                }
+            }
+
+            throw new InvalidOperationException("'continue' may only be used inside a loop.");
         }
 
-        private static int AlignUp(int value, int alignment) => (value + alignment - 1) / alignment * alignment;
+        private static int AlignUp(int value, int alignment)
+        {
+            return (value + alignment - 1) / alignment * alignment;
+        }
 
-        private static bool TryGetPointerType(ExpressionNode expression, Dictionary<string, (int Offset, string Type)> variables, Dictionary<string, (int Length, string Type)> arrays, Dictionary<string, (int Index, string Type)> parameters, out string type)
+        private static bool TryGetPointerType(ExpressionNode expression, Dictionary<string, (int Offset, string Type, bool IsConst)> variables, Dictionary<string, (int Length, string Type)> arrays, Dictionary<string, (int Index, string Type)> parameters, out string type)
         {
             switch (expression)
             {
@@ -1125,7 +2085,8 @@ namespace JollyCCompiler.Compiler.CodeGen.X64
                     break;
 
                 case CallExpression call:
-                    if (_functionReturnTypes.TryGetValue(call.Name, out var returnType) && returnType.EndsWith("*", StringComparison.Ordinal))
+                    if (_functionReturnTypes.TryGetValue(call.Name, out var returnType) &&
+                        returnType.EndsWith("*", StringComparison.Ordinal))
                     {
                         type = returnType;
                         return true;
@@ -1138,12 +2099,18 @@ namespace JollyCCompiler.Compiler.CodeGen.X64
             return false;
         }
 
-        private static bool TryGetExpressionType(ExpressionNode expression, Dictionary<string, (int Offset, string Type)> variables, Dictionary<string, (int Length, string Type)> arrays, Dictionary<string, (int Index, string Type)> parameters, out string type)
+        private static bool TryGetExpressionType(
+            ExpressionNode expression,
+            Dictionary<string, (int Offset, string Type, bool IsConst)> variables,
+            Dictionary<string, (int Length, string Type)> arrays,
+            Dictionary<string, (int Index, string Type)> parameters,
+            out string type)
         {
             if (TryGetPointerType(expression, variables, arrays, parameters, out type))
                 return true;
 
-            if (expression is CallExpression call && _functionReturnTypes.TryGetValue(call.Name, out var returnType))
+            if (expression is CallExpression call &&
+                _functionReturnTypes.TryGetValue(call.Name, out var returnType))
             {
                 type = returnType;
                 return true;
@@ -1169,6 +2136,12 @@ namespace JollyCCompiler.Compiler.CodeGen.X64
                 if (subscript.Array is IdentifierExpression arrayIdentifier && arrays.TryGetValue(arrayIdentifier.Name, out var arrayInfo))
                 {
                     type = arrayInfo.Type;
+                    return true;
+                }
+
+                if (TryGetPointerType(subscript.Array, variables, arrays, parameters, out var pointerType))
+                {
+                    type = pointerType[..^1];
                     return true;
                 }
             }
@@ -1206,24 +2179,38 @@ namespace JollyCCompiler.Compiler.CodeGen.X64
                 throw new InvalidOperationException($"'{pointerType}' is not a pointer type.");
 
             var baseType = pointerType[..^1];
+
             return GetTypeSize(baseType);
         }
 
-        private static void GenerateMemberAccessExpression(MemberAccessExpression expression, X64Emitter emitter, List<X64DataItem> data, Dictionary<string, (int Offset, string Type)> variables, Dictionary<string, (int Length, string Type)> arrays, Dictionary<string, (int Index, string Type)> parameters) 
-        { 
-            GenerateLValueAddress(expression, emitter, data, variables, arrays, parameters); 
-            var member = GetMemberInfo(expression, variables, arrays, parameters); 
-            if (member.Type.EndsWith("*", StringComparison.Ordinal)) 
-                emitter.EmitBytes(0x48, 0x8B, 0x00); 
-            else if (GetTypeSize(member.Type) == 4) 
-                emitter.EmitBytes(0x8B, 0x00); 
-            else 
-                throw new NotSupportedException($"Struct member type '{member.Type}' is not yet supported for generated loads."); 
+        private static void GenerateMemberAccessExpression(
+            MemberAccessExpression expression,
+            X64Emitter emitter,
+            List<X64DataItem> data,
+            Dictionary<string, (int Offset, string Type, bool IsConst)> variables,
+            Dictionary<string, (int Length, string Type)> arrays,
+            Dictionary<string, (int Index, string Type)> parameters)
+        {
+            GenerateLValueAddress(expression, emitter, data, variables, arrays, parameters);
+
+            var member = GetMemberInfo(expression, variables, arrays, parameters);
+            var memberSize = GetTypeSize(member.Type);
+
+            if (memberSize == 1)
+                emitter.MovzxEaxRaxMemoryByte();
+            else if (memberSize == 4)
+                emitter.EmitBytes(0x8B, 0x00);
+            else if (memberSize == 8)
+                emitter.EmitBytes(0x48, 0x8B, 0x00);
+            else
+                throw new NotSupportedException($"Struct member type '{member.Type}' is not yet supported for generated loads.");
         }
 
-        private static void GenerateMemberAssignmentExpression(MemberAccessExpression target, TokenKind operatorKind, ExpressionNode value, X64Emitter emitter, List<X64DataItem> data, Dictionary<string, (int Offset, string Type)> variables, Dictionary<string, (int Length, string Type)> arrays, Dictionary<string, (int Index, string Type)> parameters) 
-        { 
+        private static void GenerateMemberAssignmentExpression(MemberAccessExpression target, TokenKind operatorKind, ExpressionNode value, X64Emitter emitter, List<X64DataItem> data, Dictionary<string, (int Offset, string Type, bool IsConst)> variables, Dictionary<string, (int Length, string Type)> arrays, Dictionary<string, (int Index, string Type)> parameters)
+        {
             var member = GetMemberInfo(target, variables, arrays, parameters);
+            var memberSize = GetTypeSize(member.Type);
+
             if (member.Type.EndsWith("*", StringComparison.Ordinal))
             {
                 if (operatorKind != TokenKind.Equals)
@@ -1231,40 +2218,102 @@ namespace JollyCCompiler.Compiler.CodeGen.X64
 
                 GenerateLValueAddress(target, emitter, data, variables, arrays, parameters);
                 emitter.PushRax();
+
                 GenerateExpression(value, emitter, data, variables, arrays, parameters);
                 emitter.MovRcxRax();
+
                 emitter.PopRax();
                 emitter.EmitBytes(0x48, 0x89, 0x08);
+
                 return;
             }
 
-            if (GetTypeSize(member.Type) != 4) 
-                throw new NotSupportedException($"Struct member type '{member.Type}' is not yet supported for generated stores."); 
-            
-            if (operatorKind == TokenKind.Equals) 
-            { 
-                GenerateLValueAddress(target, emitter, data, variables, arrays, parameters); 
-                emitter.PushRax(); 
-                GenerateExpression(value, emitter, data, variables, arrays, parameters); 
-                emitter.MovEcxEax(); 
-                emitter.PopRax(); 
-                emitter.EmitBytes(0x89, 0x08); return; 
-            } 
-            
-            GenerateLValueAddress(target, emitter, data, variables, arrays, parameters); 
-            emitter.PushRax(); 
-            emitter.MovEaxRaxMemory(); 
-            emitter.PushRax(); 
-            GenerateExpression(value, emitter, data, variables, arrays, parameters); 
-            emitter.MovEcxEax(); 
-            emitter.PopRax(); 
-            GenerateCompoundAssignmentOperation(operatorKind, emitter); 
-            emitter.MovEcxEax(); 
-            emitter.PopRax(); 
-            emitter.EmitBytes(0x89, 0x08); 
+            if (memberSize != 1 && memberSize != 4 && memberSize != 8)
+                throw new NotSupportedException($"Struct member type '{member.Type}' is not yet supported for generated stores.");
+
+            if (operatorKind == TokenKind.Equals)
+            {
+                GenerateLValueAddress(target, emitter, data, variables, arrays, parameters);
+                emitter.PushRax();
+
+                GenerateExpression(value, emitter, data, variables, arrays, parameters);
+                emitter.MovRcxRax();
+
+                emitter.PopRax();
+
+                if (memberSize == 1)
+                    emitter.EmitBytes(0x88, 0x08);
+                else if (memberSize == 4)
+                    emitter.EmitBytes(0x89, 0x08);
+                else
+                    emitter.EmitBytes(0x48, 0x89, 0x08);
+
+                return;
+            }
+
+            if (memberSize != 1 && memberSize != 4)
+                throw new NotSupportedException($"Compound assignment on struct member type '{member.Type}' is not yet supported.");
+
+            GenerateLValueAddress(target, emitter, data, variables, arrays, parameters);
+            emitter.PushRax();
+
+            if (memberSize == 1)
+                emitter.MovzxEaxRaxMemoryByte();
+            else
+                emitter.MovEaxRaxMemory();
+
+            emitter.PushRax();
+
+            GenerateExpression(value, emitter, data, variables, arrays, parameters);
+            emitter.MovEcxEax();
+
+            emitter.PopRax();
+
+            GenerateCompoundAssignmentOperation(operatorKind, emitter);
+
+            emitter.MovEcxEax();
+            emitter.MovRaxRspDisp32(0);
+            emitter.AddRsp(8);
+
+            if (memberSize == 1)
+                emitter.EmitBytes(0x88, 0x08);
+            else
+                emitter.EmitBytes(0x89, 0x08);
         }
 
-        private static (int Offset, string Type) GetMemberInfo(MemberAccessExpression expression, Dictionary<string, (int Offset, string Type)> variables, Dictionary<string, (int Length, string Type)> arrays, Dictionary<string, (int Index, string Type)> parameters)
+        private static void GenerateSizeofExpression(
+            SizeofExpression expression,
+            X64Emitter emitter,
+            Dictionary<string, (int Offset, string Type, bool IsConst)> variables,
+            Dictionary<string, (int Length, string Type)> arrays,
+            Dictionary<string, (int Index, string Type)> parameters)
+        {
+            if (expression.Type is not null)
+            {
+                emitter.MovEax(GetTypeSize(expression.Type));
+                return;
+            }
+
+            if (expression.Expression is IdentifierExpression identifier)
+            {
+                if (arrays.TryGetValue(identifier.Name, out var array))
+                {
+                    emitter.MovEax(array.Length * GetTypeSize(array.Type));
+                    return;
+                }
+            }
+
+            if (!TryGetExpressionType(expression.Expression!, variables, arrays, parameters, out var type))
+                throw new InvalidOperationException("Cannot determine type for sizeof expression.");
+
+            emitter.MovEax(GetTypeSize(type));
+        }
+
+        private static (int Offset, string Type) GetMemberInfo(
+            MemberAccessExpression expression,
+            Dictionary<string, (int Offset, string Type, bool IsConst)> variables,
+            Dictionary<string, (int Length, string Type)> arrays,
+            Dictionary<string, (int Index, string Type)> parameters)
         {
             if (!TryGetExpressionType(expression.Object, variables, arrays, parameters, out var objectType))
                 throw new InvalidOperationException("Cannot determine the type of struct member object.");

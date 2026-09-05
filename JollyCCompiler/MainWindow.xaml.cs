@@ -37,19 +37,1589 @@ namespace JollyCCompiler
             int y;
         };
 
-        struct Point* getPoint(struct Point* p) 
+        struct Data 
         {
-            return p;
+            char id;
+            int value;
+            int count;
+        };
+
+        int add(int a, int b) 
+        {
+            return a + b;
         }
 
-        int main() 
+        int subtract(int a, int b) 
+        {
+            return a - b;
+        }
+
+        int multiply(int a, int b) 
+        {
+            return a * b;
+        }
+
+        int increment(int value) 
+        {
+            return value + 1;
+        }
+
+        int decrement(int value)
+        {
+            return value - 1;
+        }
+
+        int square(int value) 
+        {
+            return value * value;
+        }
+
+        int sumArray(int values[10])
+        {
+            int i;
+            int total;
+
+            i = 0;
+            total = 0;
+
+            while (i < 10) 
+            {
+                total += values[i];
+                i++;
+            }
+
+            return total;
+        }
+
+        int sumFirstFive(int values[10]) 
+        {
+            int i;
+            int total;
+
+            i = 0;
+            total = 0;
+
+            while (i < 5) 
+            {
+                total += values[i];
+                i++;
+            }
+
+            return total;
+        }
+
+        int pointerValue(int* value)
+        {
+            return *value;
+        }
+
+        int pointerAdd(int* value, int amount)
+        {
+            *value += amount;
+            return *value;
+        }
+
+        int pointerSubtract(int* value, int amount) 
+        {
+            *value -= amount;
+            return *value;
+        }
+
+        int getPointX(struct Point* point) 
+        {
+            return point->x;
+        }
+
+        int getPointY(struct Point* point)
+        {
+            return point->y;
+        }
+
+        int pointTotal(struct Point* point)
+        {
+            return point->x + point->y;
+        }
+
+        int getDataValue(struct Data* data)
+        {
+            return data->value;
+        }
+
+        int getDataCount(struct Data* data)
+        {
+            return data->count;
+        }
+
+        int charToInt(char value) 
+        {
+            return value;
+        }
+
+        int testCharArray(char values[10])
+        {
+            int i;
+            int total;
+
+            i = 0;
+            total = 0;
+
+            while (i < 10) 
+            {
+                total += values[i];
+                i++;
+            }
+
+            return total;
+        }
+
+        int testForLoop(int start, int end) 
+        {
+            int i;
+            int total;
+
+            total = 0;
+
+            for (i = start; i < end; i++) 
+            {
+                total += i;
+            }
+
+            return total;
+        }
+
+        int testNestedLoops(int limit) 
+        {
+            int i;
+            int j;
+            int total;
+
+            i = 0;
+            total = 0;
+
+            while (i < limit) 
+            {
+                j = 0;
+
+                while (j < limit) 
+                {
+                    total += i;
+                    total += j;
+                    j++;
+                }
+
+                i++;
+            }
+
+            return total;
+        }
+
+        int testBreak(int limit) 
+        {
+            int i;
+            int total;
+
+            i = 0;
+            total = 0;
+
+            while (i < 100) 
+            {
+                if (i == limit)
+                {
+                    break;
+                }
+
+                total += i;
+                i++;
+            }
+
+            return total;
+        }
+
+        int testContinue(int limit)
+        {
+            int i;
+            int total;
+
+            i = 0;
+            total = 0;
+
+            while (i < limit)
+            {
+                i++;
+
+                if (i % 2 == 0)
+                {
+                    continue;
+                }
+
+                total += i;
+            }
+
+            return total;
+        }
+
+        int testDoWhile(int limit) 
+        {
+            int i;
+            int total;
+
+            i = 0;
+            total = 0;
+
+            do
+            {
+                total += i;
+                i++;
+            } while (i < limit);
+
+            return total;
+        }
+
+        int testSwitch(int value) 
+        {
+            int result;
+
+            result = 0;
+
+            switch (value)
+            {
+                case 0:
+                    result = 10;
+                    break;
+
+                case 1:
+                    result = 20;
+                    break;
+
+                case 2:
+                    result = 30;
+                    break;
+
+                case 3:
+                    result = 40;
+                    break;
+
+                case 4:
+                    result = 50;
+                    break;
+
+                default:
+                    result = 99;
+                    break;
+            }
+
+            return result;
+        }
+
+        int testCompound(int value)
+        {
+            int result;
+
+            result = value;
+
+            result += 10;
+            result -= 3;
+            result *= 2;
+            result /= 2;
+            result %= 7;
+
+            return result;
+        }
+
+        int testIncrement(int value) 
+        {
+            int result;
+
+            result = value;
+
+            result++;
+            ++result;
+            result--;
+            --result;
+
+            return result;
+        }
+
+        int testPointerArithmetic(int* values)
+        {
+            int* p;
+            int total;
+
+            p = values;
+            total = 0;
+
+            total += *p;
+            p++;
+            total += *p;
+            p++;
+            total += *p;
+            p++;
+            total += *p;
+
+            return total;
+        }
+
+        int testPointerIndexing(int* values) 
+        {
+            int total;
+
+            total = 0;
+
+            total += values[0];
+            total += values[1];
+            total += values[2];
+            total += values[3];
+            total += values[4];
+
+            return total;
+        }
+
+        int testPointerWrite(int* value) 
+        {
+            *value = 1234;
+            return *value;
+        }
+
+        int testCharPointer(char* value)
+        {
+            *value = 77;
+            return *value;
+        }
+
+        int testCharIncrement(char* value) 
+        {
+            (*value)++;
+            return *value;
+        }
+
+        int testCharDecrement(char* value)
+        {
+            (*value)--;
+            return *value;
+        }
+
+        int testStruct(struct Point* point) 
+        {
+            point->x += 10;
+            point->y += 20;
+
+            return point->x + point->y;
+        }
+
+        int testStructValues()
+        {
+            struct Point point;
+            int result;
+
+            point.x = 100;
+            point.y = 200;
+
+            result = point.x;
+            result += point.y;
+
+            return result;
+        }
+
+        int testDataStruct() 
+        {
+            struct Data data;
+            int result;
+
+            data.id = 65;
+            data.value = 1000;
+            data.count = 50;
+
+            result = data.id;
+            result += data.value;
+            result += data.count;
+
+            return result;
+        }
+
+        int testNestedCalculations() 
+        {
+            int a;
+            int b;
+            int c;
+            int d;
+            int e;
+            int result;
+
+            a = 10;
+            b = 20;
+            c = 30;
+            d = 40;
+            e = 50;
+
+            result = add(a, b);
+            result = add(result, c);
+            result = subtract(result, d);
+            result = add(result, e);
+            result = multiply(result, 2);
+            result = subtract(result, 10);
+            result = square(result);
+
+            return result;
+        }
+
+        int testConditionals(int value)
+        {
+            int result;
+
+            if (value < 0)
+            {
+                result = 1;
+            } 
+            else if (value == 0)
+            {
+                result = 2;
+            }
+            else if (value < 10) 
+            {
+                result = 3;
+            }
+            else if (value < 100) 
+            {
+                result = 4;
+            } 
+            else
+            {
+                result = 5;
+            }
+
+            return result;
+        }
+
+        int testLogical(int a, int b)
+        {
+            int result;
+
+            result = 0;
+
+            if (a > 0 && b > 0) 
+            {
+                result += 10;
+            }
+
+            if (a == 0 || b == 0)
+            {
+                result += 20;
+            }
+
+            if (a != b) 
+            {
+                result += 30;
+            }
+
+            if (a <= b) 
+            {
+                result += 40;
+            }
+
+            if (a >= b)
+            {
+                result += 50;
+            }
+
+            return result;
+        }
+
+        int testRelations(int a, int b)
+        {
+            int result;
+
+            result = 0;
+
+            if (a == b) 
+            {
+                result += 1;
+            }
+
+            if (a != b) 
+            {
+                result += 2;
+            }
+
+            if (a < b) 
+            {
+                result += 4;
+            }
+
+            if (a <= b)
+            {
+                result += 8;
+            }
+
+            if (a > b)
+            {
+                result += 16;
+            }
+
+            if (a >= b) 
+            {
+                result += 32;
+            }
+
+            return result;
+        }
+
+        int testArrays() 
+        {
+            int values[10];
+            int result;
+
+            values[0] = 10;
+            values[1] = 20;
+            values[2] = 30;
+            values[3] = 40;
+            values[4] = 50;
+            values[5] = 60;
+            values[6] = 70;
+            values[7] = 80;
+            values[8] = 90;
+            values[9] = 100;
+
+            result = values[0];
+            result += values[3];
+            result += values[6];
+            result += values[9];
+
+            return result;
+        }
+
+        int testCharValues()
+        {
+            char a;
+            char b;
+            char c;
+            char d;
+            char e;
+            int result;
+
+            a = 10;
+            b = 20;
+            c = 30;
+            d = 40;
+            e = 50;
+
+            result = a;
+            result += b;
+            result += c;
+            result += d;
+            result += e;
+
+            return result;
+        }
+
+        int testLargeCharValues()
+        {
+            char a;
+            char b;
+            char c;
+            int result;
+
+            a = 255;
+            b = 128;
+            c = 300;
+
+            result = a;
+            result += b;
+            result += c;
+
+            return result;
+        }
+
+        int testCharArrayValues()
+        {
+            char values[10];
+            int result;
+
+            values[0] = 1;
+            values[1] = 2;
+            values[2] = 3;
+            values[3] = 4;
+            values[4] = 5;
+            values[5] = 6;
+            values[6] = 7;
+            values[7] = 8;
+            values[8] = 9;
+            values[9] = 10;
+
+            result = values[0];
+            result += values[1];
+            result += values[2];
+            result += values[3];
+            result += values[4];
+            result += values[5];
+            result += values[6];
+            result += values[7];
+            result += values[8];
+            result += values[9];
+
+            return result;
+        }
+
+        int testCharArrayCompound()
+        {
+            char values[4];
+            int result;
+
+            values[0] = 10;
+            values[1] = 20;
+            values[2] = 30;
+            values[3] = 40;
+
+            values[0] += 5;
+            values[1] -= 5;
+            values[2] *= 2;
+            values[3] /= 2;
+
+            result = values[0];
+            result += values[1];
+            result += values[2];
+            result += values[3];
+
+            return result;
+        }
+
+        int testArrayIncrement() 
+        {
+            int values[5];
+            int result;
+
+            values[0] = 10;
+            values[1] = 20;
+            values[2] = 30;
+            values[3] = 40;
+            values[4] = 50;
+
+            values[0]++;
+            ++values[1];
+            values[2]--;
+            --values[3];
+
+            result = values[0];
+            result += values[1];
+            result += values[2];
+            result += values[3];
+            result += values[4];
+
+            return result;
+        }
+
+        int testCharIncrementArray()
+        {
+            char values[4];
+            int result;
+
+            values[0] = 10;
+            values[1] = 20;
+            values[2] = 30;
+            values[3] = 40;
+
+            values[0]++;
+            values[1]++;
+            values[2]--;
+            values[3]--;
+
+            result = values[0];
+            result += values[1];
+            result += values[2];
+            result += values[3];
+
+            return result;
+        }
+
+        int testPointerAssignment() 
+        {
+            int value;
+            int* pointer;
+            int result;
+
+            value = 100;
+            pointer = &value;
+
+            result = *pointer;
+
+            *pointer = 250;
+
+            result += *pointer;
+
+            return result;
+        }
+
+        int testPointerCompound()
+        {
+            int value;
+            int* pointer;
+
+            value = 100;
+            pointer = &value;
+
+            *pointer += 50;
+
+            return *pointer;
+        }
+
+        int testAddressOf() 
+        {
+            int value;
+            int* pointer;
+
+            value = 123;
+            pointer = &value;
+
+            return pointerValue(pointer);
+        }
+
+        int testMultiplePointers() 
+        {
+            int a;
+            int b;
+            int c;
+            int* pa;
+            int* pb;
+            int* pc;
+            int result;
+
+            a = 10;
+            b = 20;
+            c = 30;
+
+            pa = &a;
+            pb = &b;
+            pc = &c;
+
+            result = *pa;
+            result += *pb;
+            result += *pc;
+
+            *pa = 100;
+            *pb = 200;
+            *pc = 300;
+
+            result += *pa;
+            result += *pb;
+            result += *pc;
+
+            return result;
+        }
+
+        int testArrayPointerMove() 
+        {
+            int values[5];
+            int* pointer;
+            int result;
+
+            values[0] = 11;
+            values[1] = 22;
+            values[2] = 33;
+            values[3] = 44;
+            values[4] = 55;
+
+            pointer = &values[0];
+
+            result = *pointer;
+
+            pointer++;
+            result += *pointer;
+
+            pointer++;
+            result += *pointer;
+
+            pointer++;
+            result += *pointer;
+
+            pointer++;
+            result += *pointer;
+
+            return result;
+        }
+
+        int testStructPointer() 
+        {
+            struct Point point;
+            struct Point* pointer;
+            int result;
+
+            point.x = 12;
+            point.y = 34;
+
+            pointer = &point;
+
+            result = pointer->x;
+            result += pointer->y;
+
+            pointer->x = 56;
+            pointer->y = 78;
+
+            result += pointer->x;
+            result += pointer->y;
+
+            return result;
+        }
+
+        int testStructChar() 
+        {
+            struct Data data;
+            struct Data* pointer;
+            int result;
+
+            data.id = 65;
+            data.value = 100;
+            data.count = 5;
+
+            pointer = &data;
+
+            result = pointer->id;
+            result += pointer->value;
+            result += pointer->count;
+
+            pointer->id++;
+            pointer->value += 100;
+            pointer->count++;
+
+            result += pointer->id;
+            result += pointer->value;
+            result += pointer->count;
+
+            return result;
+        }
+
+        int testSizeof()
+        {
+            int a;
+            char c;
+            int values[10];
+            int result;
+
+            a = sizeof(int);
+            c = sizeof(char);
+
+            result = a;
+            result += c;
+            result += sizeof(values);
+
+            return result;
+        }
+
+        int testSizeofPointers() 
+        {
+            int value;
+            int* pointer;
+            char character;
+            char* charPointer;
+            int result;
+
+            value = 10;
+            character = 20;
+
+            pointer = &value;
+            charPointer = &character;
+
+            result = sizeof(pointer);
+            result += sizeof(charPointer);
+
+            return result;
+        }
+
+        int testNull()
+        {
+            int* pointer;
+            int result;
+
+            pointer = NULL;
+
+            if (pointer == NULL)
+            {
+                result = 123;
+            } 
+            else 
+            {
+                result = 456;
+            }
+
+            return result;
+        }
+
+        int testManyLocals()
+        {
+            int a;
+            int b;
+            int c;
+            int d;
+            int e;
+            int f;
+            int g;
+            int h;
+            int i;
+            int j;
+            int k;
+            int l;
+            int m;
+            int n;
+            int o;
+            int p;
+            int q;
+            int r;
+            int s;
+            int t;
+            int result;
+
+            a = 1;
+            b = 2;
+            c = 3;
+            d = 4;
+            e = 5;
+            f = 6;
+            g = 7;
+            h = 8;
+            i = 9;
+            j = 10;
+            k = 11;
+            l = 12;
+            m = 13;
+            n = 14;
+            o = 15;
+            p = 16;
+            q = 17;
+            r = 18;
+            s = 19;
+            t = 20;
+
+            result = a;
+            result += b;
+            result += c;
+            result += d;
+            result += e;
+            result += f;
+            result += g;
+            result += h;
+            result += i;
+            result += j;
+            result += k;
+            result += l;
+            result += m;
+            result += n;
+            result += o;
+            result += p;
+            result += q;
+            result += r;
+            result += s;
+            result += t;
+
+            return result;
+        }
+
+        int testMathChain()
+        {
+            int value;
+
+            value = 5;
+
+            value = add(value, 10);
+            value = multiply(value, 3);
+            value = subtract(value, 7);
+            value = increment(value);
+            value = increment(value);
+            value = decrement(value);
+            value = square(value);
+
+            return value;
+        }
+
+        int testAllArithmetic() 
+        {
+            int a;
+            int b;
+            int result;
+
+            a = 100;
+            b = 7;
+
+            result = a + b;
+            result -= a - b;
+            result += a * b;
+            result -= a / b;
+            result += a % b;
+
+            return result;
+        }
+
+        int testNestedIf(int value)
+        {
+            int result;
+
+            if (value > 0)
+            {
+                if (value < 10) 
+                {
+                    result = 1;
+                }
+                else 
+                {
+                    if (value < 100)
+                    {
+                        result = 2;
+                    }
+                    else
+                    {
+                        result = 3;
+                    }
+                }
+            }
+            else 
+            {
+                if (value == 0)
+                {
+                    result = 4;
+                } 
+                else 
+                {
+                    result = 5;
+                }
+            }
+
+            return result;
+        }
+
+        int testLoopArithmetic()
+        {
+            int i;
+            int total;
+
+            i = 0;
+            total = 0;
+
+            while (i < 20) 
+            {
+                total += i * 2;
+                total -= i / 2;
+                total += i % 3;
+                i++;
+            }
+
+            return total;
+        }
+
+        int testArrayLoop() 
+        {
+            int values[20];
+            int i;
+            int total;
+
+            i = 0;
+
+            while (i < 20)
+            {
+                values[i] = i * 3;
+                i++;
+            }
+
+            i = 0;
+            total = 0;
+
+            while (i < 20)
+            {
+                total += values[i];
+                i++;
+            }
+
+            return total;
+        }
+
+        int testCharLoop() 
+        {
+            char values[20];
+            int i;
+            int total;
+
+            i = 0;
+
+            while (i < 20) 
+            {
+                values[i] = i + 1;
+                i++;
+            }
+
+            i = 0;
+            total = 0;
+
+            while (i < 20) 
+            {
+                total += values[i];
+                i++;
+            }
+
+            return total;
+        }
+
+        int testArrayPointerAndFunction()
+        {
+            int values[10];
+            int* pointer;
+            int result;
+
+            values[0] = 1;
+            values[1] = 2;
+            values[2] = 3;
+            values[3] = 4;
+            values[4] = 5;
+            values[5] = 6;
+            values[6] = 7;
+            values[7] = 8;
+            values[8] = 9;
+            values[9] = 10;
+
+            pointer = &values[0];
+
+            result = pointerValue(pointer);
+
+            pointer++;
+
+            result += pointerValue(pointer);
+
+            pointer++;
+
+            result += pointerValue(pointer);
+
+            return result;
+        }
+
+        int testFunctionArguments() 
+        {
+            int result;
+
+            result = add(1, 2);
+            result += add(3, 4);
+            result += multiply(5, 6);
+            result += subtract(100, 25);
+            result += square(7);
+
+            return result;
+        }
+
+        int testMultipleArguments()
+        {
+            int a;
+            int b;
+            int c;
+            int d;
+            int result;
+
+            a = 10;
+            b = 20;
+            c = 30;
+            d = 40;
+
+            result = add(a, b);
+            result += add(c, d);
+            result += multiply(a, c);
+            result -= subtract(d, b);
+
+            return result;
+        }
+
+        int testReturnPaths(int value)
+        {
+            if (value == 1)
+            {
+                return 11;
+            }
+
+            if (value == 2)
+            {
+                return 22;
+            }
+
+            if (value == 3)
+            {
+                return 33;
+            }
+
+            if (value == 4)
+            {
+                return 44;
+            }
+
+            return 99;
+        }
+
+        int testDeepCalls(int value) 
+        {
+            int result;
+
+            result = increment(value);
+            result = square(result);
+            result = add(result, 10);
+            result = multiply(result, 2);
+            result = subtract(result, 5);
+            result = decrement(result);
+
+            return result;
+        }
+
+        int testPointerIncrementValues()
+        {
+            int value;
+            int* pointer;
+            int result;
+
+            value = 10;
+            pointer = &value;
+
+            result = (*pointer)++;
+            result += (*pointer)++;
+            result += ++(*pointer);
+            result += --(*pointer);
+
+            return result;
+        }
+
+        int testPointerAllCompound()
+        {
+            int value;
+            int* pointer;
+
+            value = 100;
+            pointer = &value;
+
+            *pointer += 20;
+            *pointer -= 10;
+            *pointer *= 2;
+            *pointer /= 2;
+            *pointer %= 7;
+
+            return *pointer;
+        }
+
+        int testStructAllCompound()
         {
             struct Point point;
 
-            point.x = 123;
-            point.y = 456;
+            point.x = 100;
+            point.y = 200;
 
-            return getPoint(&point)->x;
+            point.x += 10;
+            point.x -= 5;
+            point.x *= 2;
+            point.x /= 5;
+            point.x %= 7;
+
+            return point.x;
+        }
+
+        int testIntArrayCompound()
+        {
+            int values[4];
+
+            values[0] = 10;
+            values[1] = 20;
+            values[2] = 30;
+            values[3] = 40;
+
+            values[0] += 5;
+            values[1] -= 5;
+            values[2] *= 2;
+            values[3] /= 2;
+
+            return values[0] + values[1] + values[2] + values[3];
+        }
+
+        int testPointerToPointer()
+        {
+            int value;
+            int* pointer;
+            int** pointerPointer;
+
+            value = 100;
+            pointer = &value;
+            pointerPointer = &pointer;
+
+            **pointerPointer = 250;
+
+            return value;
+        }
+
+        int testStructMemberIncrementValues()
+        {
+            struct Point point;
+            int result;
+
+            point.x = 10;
+            point.y = 20;
+
+            result = point.x++;
+            result += ++point.x;
+            result += point.y--;
+            result += --point.y;
+
+            return result;
+        }        
+        
+        int main()
+        {
+            const int finalExpectedResult = 12694;    
+            int result;
+            int temporary;
+
+            result = 0;
+
+            result += 10;
+            result += 100;
+            result += 1;
+            result += 10;
+            result += 100;
+            result += 200;
+            result += 100;
+            result += 200;
+            result += 65;
+            result += 1000;
+            result += 10;
+            result += 65;
+            result += 1000;
+            result += 10;
+            result += 20;
+            result += 30;
+            result += 500;
+            result += 101;
+            result += 2;
+            result += 3;
+            result += 2;
+            result += 3;
+
+            printf("INITIAL: got=%d expected=3532 running=%d\n", 3532, result);
+
+            temporary = testArrays();
+            result += temporary;
+            printf("testArrays: got=%d expected=220 running=%d\n", temporary, result);
+
+            temporary = testCharValues();
+            result += temporary;
+            printf("testCharValues: got=%d expected=150 running=%d\n", temporary, result);
+
+            temporary = testCharArrayValues();
+            result += temporary;
+            printf("testCharArrayValues: got=%d expected=55 running=%d\n", temporary, result);
+
+            temporary = testCharArrayCompound();
+            result += temporary;
+            printf("testCharArrayCompound: got=%d expected=110 running=%d\n", temporary, result);
+
+            temporary = testArrayIncrement();
+            result += temporary;
+            printf("testArrayIncrement: got=%d expected=150 running=%d\n", temporary, result);
+
+            temporary = testCharIncrementArray();
+            result += temporary;
+            printf("testCharIncrementArray: got=%d expected=100 running=%d\n", temporary, result);
+
+            temporary = testPointerAssignment();
+            result += temporary;
+            printf("testPointerAssignment: got=%d expected=350 running=%d\n", temporary, result);
+
+            temporary = testPointerCompound();
+            result += temporary;
+            printf("testPointerCompound: got=%d expected=150 running=%d\n", temporary, result);
+
+            temporary = testMultiplePointers();
+            result += temporary;
+            printf("testMultiplePointers: got=%d expected=660 running=%d\n", temporary, result);
+
+            temporary = testArrayPointerMove();
+            result += temporary;
+            printf("testArrayPointerMove: got=%d expected=165 running=%d\n", temporary, result);
+
+            temporary = testStructValues();
+            result += temporary;
+            printf("testStructValues: got=%d expected=300 running=%d\n", temporary, result);
+
+            temporary = testStructPointer();
+            result += temporary;
+            printf("testStructPointer: got=%d expected=180 running=%d\n", temporary, result);
+
+            temporary = testStructChar();
+            result += temporary;
+            printf("testStructChar: got=%d expected=442 running=%d\n", temporary, result);
+
+            temporary = testSizeof();
+            result += temporary;
+            printf("testSizeof: got=%d expected=45 running=%d\n", temporary, result);
+
+            temporary = testSizeofPointers();
+            result += temporary;
+            printf("testSizeofPointers: got=%d expected=16 running=%d\n", temporary, result);
+
+            temporary = testNull();
+            result += temporary;
+            printf("testNull: got=%d expected=123 running=%d\n", temporary, result);
+
+            temporary = testManyLocals();
+            result += temporary;
+            printf("testManyLocals: got=%d expected=210 running=%d\n", temporary, result);
+
+            temporary = testMathChain();
+            result += temporary;
+            printf("testMathChain: got=%d expected=1521 running=%d\n", temporary, result);
+
+            temporary = testAllArithmetic();
+            result += temporary;
+            printf("testAllArithmetic: got=%d expected=702 running=%d\n", temporary, result);
+
+            temporary = testConditionals(5);
+            result += temporary;
+            printf("testConditionals(5): got=%d expected=3 running=%d\n", temporary, result);
+
+            temporary = testConditionals(50);
+            result += temporary;
+            printf("testConditionals(50): got=%d expected=4 running=%d\n", temporary, result);
+
+            temporary = testConditionals(500);
+            result += temporary;
+            printf("testConditionals(500): got=%d expected=5 running=%d\n", temporary, result);
+
+            temporary = testLogical(10, 20);
+            result += temporary;
+            printf("testLogical(10,20): got=%d expected=80 running=%d\n", temporary, result);
+
+            temporary = testRelations(10, 20);
+            result += temporary;
+            printf("testRelations(10,20): got=%d expected=14 running=%d\n", temporary, result);
+
+            temporary = testNestedIf(5);
+            result += temporary;
+            printf("testNestedIf(5): got=%d expected=1 running=%d\n", temporary, result);
+
+            temporary = testSwitch(0);
+            result += temporary;
+            printf("testSwitch(0): got=%d expected=10 running=%d\n", temporary, result);
+
+            temporary = testSwitch(1);
+            result += temporary;
+            printf("testSwitch(1): got=%d expected=20 running=%d\n", temporary, result);
+
+            temporary = testSwitch(2);
+            result += temporary;
+            printf("testSwitch(2): got=%d expected=30 running=%d\n", temporary, result);
+
+            temporary = testSwitch(3);
+            result += temporary;
+            printf("testSwitch(3): got=%d expected=40 running=%d\n", temporary, result);
+
+            temporary = testSwitch(4);
+            result += temporary;
+            printf("testSwitch(4): got=%d expected=50 running=%d\n", temporary, result);
+
+            temporary = testSwitch(99);
+            result += temporary;
+            printf("testSwitch(99): got=%d expected=99 running=%d\n", temporary, result);
+
+            temporary = testCompound(100);
+            result += temporary;
+            printf("testCompound(100): got=%d expected=2 running=%d\n", temporary, result);
+
+            temporary = testIncrement(100);
+            result += temporary;
+            printf("testIncrement(100): got=%d expected=100 running=%d\n", temporary, result);
+
+            temporary = testForLoop(0, 20);
+            result += temporary;
+            printf("testForLoop(0,20): got=%d expected=190 running=%d\n", temporary, result);
+
+            temporary = testNestedLoops(5);
+            result += temporary;
+            printf("testNestedLoops(5): got=%d expected=100 running=%d\n", temporary, result);
+
+            temporary = testBreak(10);
+            result += temporary;
+            printf("testBreak(10): got=%d expected=45 running=%d\n", temporary, result);
+
+            temporary = testContinue(20);
+            result += temporary;
+            printf("testContinue(20): got=%d expected=100 running=%d\n", temporary, result);
+
+            temporary = testDoWhile(10);
+            result += temporary;
+            printf("testDoWhile(10): got=%d expected=45 running=%d\n", temporary, result);
+
+            temporary = testLoopArithmetic();
+            result += temporary;
+            printf("testLoopArithmetic: got=%d expected=309 running=%d\n", temporary, result);
+
+            temporary = testArrayLoop();
+            result += temporary;
+            printf("testArrayLoop: got=%d expected=570 running=%d\n", temporary, result);
+
+            temporary = testCharLoop();
+            result += temporary;
+            printf("testCharLoop: got=%d expected=210 running=%d\n", temporary, result);
+
+            temporary = testArrayPointerAndFunction();
+            result += temporary;
+            printf("testArrayPointerAndFunction: got=%d expected=6 running=%d\n", temporary, result);
+
+            temporary = testFunctionArguments();
+            result += temporary;
+            printf("testFunctionArguments: got=%d expected=164 running=%d\n", temporary, result);
+
+            temporary = testMultipleArguments();
+            result += temporary;
+            printf("testMultipleArguments: got=%d expected=380 running=%d\n", temporary, result);
+
+            temporary = testDeepCalls(10);
+            result += temporary;
+            printf("testDeepCalls(10): got=%d expected=256 running=%d\n", temporary, result);
+
+            temporary = testReturnPaths(1);
+            result += temporary;
+            printf("testReturnPaths(1): got=%d expected=11 running=%d\n", temporary, result);
+
+            temporary = testReturnPaths(2);
+            result += temporary;
+            printf("testReturnPaths(2): got=%d expected=22 running=%d\n", temporary, result);
+
+            temporary = testReturnPaths(3);
+            result += temporary;
+            printf("testReturnPaths(3): got=%d expected=33 running=%d\n", temporary, result);
+
+            temporary = testReturnPaths(4);
+            result += temporary;
+            printf("testReturnPaths(4): got=%d expected=44 running=%d\n", temporary, result);
+
+            temporary = testReturnPaths(99);
+            result += temporary;
+            printf("testReturnPaths(99): got=%d expected=99 running=%d\n", temporary, result);
+
+            temporary = testPointerIncrementValues();
+            result += temporary;
+            printf("testPointerIncrementValues: got=%d expected=46 running=%d\n", temporary, result);
+
+            temporary = testPointerAllCompound();
+            result += temporary;
+            printf("testPointerAllCompound: got=%d expected=5 running=%d\n", temporary, result);
+
+            temporary = testStructAllCompound();
+            result += temporary;
+            printf("testStructAllCompound: got=%d expected=0 running=%d\n", temporary, result);
+
+            temporary = testStructMemberIncrementValues();
+            result += temporary;
+            printf("testStructMemberIncrementValues: got=%d expected=60 running=%d\n", temporary, result);
+
+            temporary = testIntArrayCompound();
+            result += temporary;
+            printf("testIntArrayCompound: got=%d expected=110 running=%d\n", temporary, result);
+
+            temporary = testPointerToPointer();
+            result += temporary;
+            printf("testPointerToPointer: got=%d expected=250 running=%d\n", temporary, result);
+
+            printf("FINAL: got=%d expected=%d difference=%d\n", result, finalExpectedResult, result - finalExpectedResult);
+
+            if (result == finalExpectedResult)
+                return 0;
+            else
+                return -1;        
         }
         """;
 

@@ -219,6 +219,7 @@ public sealed class Lexer
             "char" => TokenKind.Char,
             "void" => TokenKind.Void,
             "struct" => TokenKind.Struct,
+            "const" => TokenKind.Const,
             "return" => TokenKind.Return,
             "if" => TokenKind.If,
             "else" => TokenKind.Else,
@@ -230,6 +231,7 @@ public sealed class Lexer
             "default" => TokenKind.Default,
             "break" => TokenKind.Break,
             "continue" => TokenKind.Continue,
+            "sizeof" => TokenKind.Sizeof,
             _ => TokenKind.Identifier
         };
 

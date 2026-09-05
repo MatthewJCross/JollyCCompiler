@@ -8,7 +8,7 @@ namespace JollyCCompiler.Compiler.Syntax
     public sealed record ParameterNode(string Type, string Name) : AstNode;
     public abstract record StatementNode : AstNode;
     public sealed record BlockStatement(IReadOnlyList<StatementNode> Statements) : StatementNode;
-    public sealed record VariableDeclarationStatement(string Type, string Name, ExpressionNode? Initializer, int? ArrayLength = null) : StatementNode;
+    public sealed record VariableDeclarationStatement(string Type, string Name, ExpressionNode? Initializer, int? ArrayLength = null, bool IsConst = false) : StatementNode;
     public sealed record ReturnStatement(ExpressionNode? Expression) : StatementNode;
     public sealed record ExpressionStatement(ExpressionNode Expression) : StatementNode;
     public sealed record ForStatement(StatementNode? Initializer, ExpressionNode? Condition, ExpressionNode? Increment, StatementNode Body) : StatementNode;
@@ -33,4 +33,5 @@ namespace JollyCCompiler.Compiler.Syntax
     public sealed record StructDeclarationNode(string Name, IReadOnlyList<StructFieldNode> Fields) : AstNode;
     public sealed record StructFieldNode(string Type, string Name, int? ArrayLength = null) : AstNode;
     public sealed record MemberAccessExpression(ExpressionNode Object, string Member, bool ThroughPointer = false) : ExpressionNode;
+    public sealed record SizeofExpression(ExpressionNode? Expression, string? Type) : ExpressionNode;
 }
