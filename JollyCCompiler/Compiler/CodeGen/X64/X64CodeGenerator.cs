@@ -1,5 +1,6 @@
 ﻿using JollyCCompiler.Compiler.Lexing;
 using JollyCCompiler.Compiler.Syntax;
+using System.Diagnostics;
 using System.Runtime.CompilerServices;
 using System.Text;
 using System.Windows;
@@ -11,15 +12,20 @@ namespace JollyCCompiler.Compiler.CodeGen.X64
     {
         private static readonly Stack<(string ContinueLabel, string BreakLabel)> _loopLabels = new();
         private static readonly Dictionary<string, StructDeclarationNode> _structs = new();
+        private static readonly Dictionary<string, UnionDeclarationNode> _unions = new();
         private static readonly Dictionary<string, string> _functionReturnTypes = new();
 
         public X64CodeGenerationResult Generate(ProgramNode program)
         {
             _structs.Clear();
+            _unions.Clear();
             _functionReturnTypes.Clear();
 
             foreach (var structDeclaration in program.Structs)
                 _structs[structDeclaration.Name] = structDeclaration;
+
+            foreach (var unionDeclaration in program.Unions)
+                _unions[unionDeclaration.Name] = unionDeclaration;
 
             foreach (var function in program.Functions)
                 _functionReturnTypes[function.Name] = function.ReturnType;
@@ -74,6 +80,7 @@ namespace JollyCCompiler.Compiler.CodeGen.X64
             "double" => 8,
             _ when type.EndsWith("*", StringComparison.Ordinal) => 8,
             _ when type.StartsWith("struct ", StringComparison.Ordinal) => GetStructSize(type[7..]),
+            _ when type.StartsWith("union ", StringComparison.Ordinal) => GetUnionSize(type[6..]),
             _ => throw new NotSupportedException($"Cannot determine the size of type '{type}'.")
         };
 
@@ -95,6 +102,22 @@ namespace JollyCCompiler.Compiler.CodeGen.X64
             }
 
             return AlignUp(size, 8);
+        }
+
+        private static int GetUnionSize(string name) 
+        {
+            if (!_unions.TryGetValue(name, out var union)) 
+                throw new InvalidOperationException($"Unknown union type '{name}'."); 
+            
+            var size = 0; 
+            foreach (var field in union.Fields) 
+            { 
+                var fieldSize = GetTypeSize(field.Type) * (field.ArrayLength ?? 1); 
+                if (fieldSize > size) 
+                    size = fieldSize; 
+            }
+
+            return ((size + 7) / 8) * 8; 
         }
 
         private static (int Offset, string Type) GetStructField(string structType, string member)
@@ -395,14 +418,7 @@ namespace JollyCCompiler.Compiler.CodeGen.X64
                 emitter.MovRbpDisp32Eax(variable.Offset);
         }
 
-        private static void GenerateReturn(
-            ReturnStatement statement,
-            X64Emitter emitter,
-            List<X64DataItem> data,
-            Dictionary<string, (int Offset, string Type, bool IsConst)> variables,
-            Dictionary<string, (int Length, string Type)> arrays,
-            Dictionary<string, (int Index, string Type)> parameters,
-            int frameSize)
+        private static void GenerateReturn(ReturnStatement statement, X64Emitter emitter, List<X64DataItem> data, Dictionary<string, (int Offset, string Type, bool IsConst)> variables, Dictionary<string, (int Length, string Type)> arrays, Dictionary<string, (int Index, string Type)> parameters, int frameSize)
         {
             if (statement.Expression is null)
                 emitter.MovEax(0);
@@ -515,13 +531,7 @@ namespace JollyCCompiler.Compiler.CodeGen.X64
             emitter.Jne(bodyLabel);
         }
 
-        private static void GenerateExpression(
-            ExpressionNode expression,
-            X64Emitter emitter,
-            List<X64DataItem> data,
-            Dictionary<string, (int Offset, string Type, bool IsConst)> variables,
-            Dictionary<string, (int Length, string Type)> arrays,
-            Dictionary<string, (int Index, string Type)> parameters)
+        private static void GenerateExpression(ExpressionNode expression, X64Emitter emitter, List<X64DataItem> data, Dictionary<string, (int Offset, string Type, bool IsConst)> variables, Dictionary<string, (int Length, string Type)> arrays, Dictionary<string, (int Index, string Type)> parameters)
         {
             switch (expression)
             {
@@ -596,7 +606,13 @@ namespace JollyCCompiler.Compiler.CodeGen.X64
         private static void GenerateIdentifier(IdentifierExpression expression, X64Emitter emitter, List<X64DataItem> data, Dictionary<string, (int Offset, string Type, bool IsConst)> variables, Dictionary<string, (int Length, string Type)> arrays, Dictionary<string, (int Index, string Type)> parameters)
         {
             if (arrays.ContainsKey(expression.Name))
-                throw new InvalidOperationException($"Array '{expression.Name}' must be indexed.");
+            {
+                if (!variables.TryGetValue(expression.Name, out var arrayVariable))
+                    throw new InvalidOperationException($"Array '{expression.Name}' has no storage.");
+
+                emitter.LeaRaxRbpDisp32(arrayVariable.Offset);
+                return;
+            }
 
             if (variables.TryGetValue(expression.Name, out var variable))
             {
@@ -643,14 +659,7 @@ namespace JollyCCompiler.Compiler.CodeGen.X64
             throw new InvalidOperationException($"Unknown identifier '{expression.Name}'.");
         }
 
-        private static void GenerateSwitchStatement(
-            SwitchStatement statement,
-            X64Emitter emitter,
-            List<X64DataItem> data,
-            Dictionary<string, (int Offset, string Type, bool IsConst)> variables,
-            Dictionary<string, (int Length, string Type)> arrays,
-            Dictionary<string, (int Index, string Type)> parameters,
-            int frameSize)
+        private static void GenerateSwitchStatement(SwitchStatement statement, X64Emitter emitter, List<X64DataItem> data, Dictionary<string, (int Offset, string Type, bool IsConst)> variables, Dictionary<string, (int Length, string Type)> arrays, Dictionary<string, (int Index, string Type)> parameters, int frameSize)
         {
             var endLabel = emitter.CreateLabel("switch_end");
             var caseLabels = new List<string>();
@@ -732,13 +741,7 @@ namespace JollyCCompiler.Compiler.CodeGen.X64
             return false;
         }
 
-        private static void GenerateLValueAddress(
-            ExpressionNode expression,
-            X64Emitter emitter,
-            List<X64DataItem> data,
-            Dictionary<string, (int Offset, string Type, bool IsConst)> variables,
-            Dictionary<string, (int Length, string Type)> arrays,
-            Dictionary<string, (int Index, string Type)> parameters)
+        private static void GenerateLValueAddress(ExpressionNode expression, X64Emitter emitter, List<X64DataItem> data, Dictionary<string, (int Offset, string Type, bool IsConst)> variables, Dictionary<string, (int Length, string Type)> arrays, Dictionary<string, (int Index, string Type)> parameters)
         {
             switch (expression)
             {
@@ -778,7 +781,16 @@ namespace JollyCCompiler.Compiler.CodeGen.X64
                             throw new InvalidOperationException($"The '->' operator requires a pointer to a struct, but '{objectType}' is not a pointer.");
 
                         var structType = objectType[..^1];
-                        var field = GetStructField(structType, member.Member);
+                        (int Offset, string Type) field;
+                        if (structType.StartsWith("union ", StringComparison.Ordinal))
+                        {
+                            var unionField = GetUnionField(structType, member.Member);
+                            field = (unionField.Offset, unionField.Type);
+                        }
+                        else
+                        {
+                            field = GetStructField(structType, member.Member);
+                        }
 
                         GenerateExpression(member.Object, emitter, data, variables, arrays, parameters);
 
@@ -791,7 +803,16 @@ namespace JollyCCompiler.Compiler.CodeGen.X64
                         return;
                     }
 
-                    var valueField = GetStructField(objectType, member.Member);
+                    (int Offset, string Type) valueField;
+                    if (objectType.StartsWith("union ", StringComparison.Ordinal))
+                    {
+                        var unionField = GetUnionField(objectType, member.Member);
+                        valueField = (unionField.Offset, unionField.Type);
+                    }
+                    else
+                    {
+                        valueField = GetStructField(objectType, member.Member);
+                    }
 
                     GenerateLValueAddress(member.Object, emitter, data, variables, arrays, parameters);
 
@@ -1114,12 +1135,52 @@ namespace JollyCCompiler.Compiler.CodeGen.X64
 
             if (operatorKind == TokenKind.Equals)
             {
+                if (type.StartsWith("union ", StringComparison.Ordinal))
+                {
+                    if (value is IdentifierExpression source)
+                    {
+                        if (!TryGetScalarStorageOffset(source.Name, variables, arrays, parameters, out var sourceOffset, out var sourceType, out _))
+                            throw new InvalidOperationException($"Variable '{source.Name}' has no scalar assignable storage.");
+
+                        if (!string.Equals(type, sourceType, StringComparison.Ordinal))
+                            throw new InvalidOperationException($"Cannot assign '{sourceType}' to '{type}'.");
+
+                        var unionSize = GetTypeSize(type);
+
+                        if (unionSize == 8)
+                        {
+                            emitter.MovRaxRbpDisp32(sourceOffset);
+                            emitter.MovRbpDisp8Rax(offset);
+                            return;
+                        }
+
+                        throw new NotSupportedException($"Union assignment size {unionSize} is not yet supported.");
+                    }
+
+                    if (!TryGetExpressionType(value, variables, arrays, parameters, out var valueType))
+                        throw new InvalidOperationException("Cannot determine type of union assignment value.");
+
+                    if (!string.Equals(type, valueType, StringComparison.Ordinal))
+                        throw new InvalidOperationException($"Cannot assign '{valueType}' to '{type}'.");
+
+                    var expressionSize = GetTypeSize(type);
+
+                    if (expressionSize != 8)
+                        throw new NotSupportedException($"Union assignment size {expressionSize} is not yet supported.");
+
+                    GenerateExpression(value, emitter, data, variables, arrays, parameters);
+                    emitter.MovRbpDisp8Rax(offset);
+                    return;
+                }
+
                 GenerateExpression(value, emitter, data, variables, arrays, parameters);
 
                 if (typeSize == 1)
                     emitter.MovRbpDisp32Al(offset);
                 else if (typeSize == 4)
                     emitter.MovRbpDisp32Eax(offset);
+                else if (typeSize == 8)
+                    emitter.MovRbpDisp8Rax(offset);
                 else
                     throw new NotSupportedException($"Assignment to type '{type}' is not yet supported.");
 
@@ -2079,7 +2140,9 @@ namespace JollyCCompiler.Compiler.CodeGen.X64
                     if (TryGetPointerType(dereference.Operand, variables, arrays, parameters, out var pointerType))
                     {
                         type = pointerType[..^1];
-                        return type.EndsWith("*", StringComparison.Ordinal);
+
+                        if (type.EndsWith("*", StringComparison.Ordinal))
+                            return true;
                     }
 
                     break;
@@ -2093,18 +2156,62 @@ namespace JollyCCompiler.Compiler.CodeGen.X64
                     }
 
                     break;
+
+                case MemberAccessExpression member:
+                    if (TryGetExpressionType(member.Object, variables, arrays, parameters, out var objectType))
+                    {
+                        if (member.ThroughPointer)
+                        {
+                            if (!objectType.EndsWith("*", StringComparison.Ordinal))
+                                break;
+
+                            objectType = objectType[..^1];
+                        }
+
+                        if (objectType.StartsWith("union ", StringComparison.Ordinal))
+                        {
+                            var unionField = GetUnionField(objectType, member.Member);
+                            if (unionField.Type.EndsWith("*", StringComparison.Ordinal))
+                            {
+                                type = unionField.Type;
+                                return true;
+                            }
+                        }
+                        else if (objectType.StartsWith("struct ", StringComparison.Ordinal))
+                        {
+                            var structField = GetStructField(objectType, member.Member);
+                            if (structField.Type.EndsWith("*", StringComparison.Ordinal))
+                            {
+                                type = structField.Type;
+                                return true;
+                            }
+                        }
+                    }
+
+                    break;
+
+                case BinaryExpression binary when binary.Operator is TokenKind.Plus or TokenKind.Minus:
+                    if (TryGetPointerType(binary.Left, variables, arrays, parameters, out var leftPointerType))
+                    {
+                        type = leftPointerType;
+                        return true;
+                    }
+
+                    if (binary.Operator == TokenKind.Plus &&
+                        TryGetPointerType(binary.Right, variables, arrays, parameters, out var rightPointerType))
+                    {
+                        type = rightPointerType;
+                        return true;
+                    }
+
+                    break;
             }
 
             type = string.Empty;
             return false;
         }
 
-        private static bool TryGetExpressionType(
-            ExpressionNode expression,
-            Dictionary<string, (int Offset, string Type, bool IsConst)> variables,
-            Dictionary<string, (int Length, string Type)> arrays,
-            Dictionary<string, (int Index, string Type)> parameters,
-            out string type)
+        private static bool TryGetExpressionType(ExpressionNode expression, Dictionary<string, (int Offset, string Type, bool IsConst)> variables, Dictionary<string, (int Length, string Type)> arrays, Dictionary<string, (int Index, string Type)> parameters, out string type)
         {
             if (TryGetPointerType(expression, variables, arrays, parameters, out type))
                 return true;
@@ -2144,6 +2251,42 @@ namespace JollyCCompiler.Compiler.CodeGen.X64
                     type = pointerType[..^1];
                     return true;
                 }
+
+                if (subscript.Array is MemberAccessExpression arrayMember)
+                {
+                    if (!TryGetExpressionType(arrayMember.Object, variables, arrays, parameters, out var objectType))
+                    {
+                        type = string.Empty;
+                        return false;
+                    }
+
+                    if (arrayMember.ThroughPointer)
+                    {
+                        if (!objectType.EndsWith("*", StringComparison.Ordinal))
+                        {
+                            type = string.Empty;
+                            return false;
+                        }
+
+                        objectType = objectType[..^1];
+                    }
+
+                    if (objectType.StartsWith("union ", StringComparison.Ordinal))
+                    {
+                        var field = GetUnionField(objectType, arrayMember.Member);
+                        if (field.ArrayLength is not null)
+                        {
+                            type = field.Type;
+                            return true;
+                        }
+                    }
+                    else if (objectType.StartsWith("struct ", StringComparison.Ordinal))
+                    {
+                        var field = GetStructField(objectType, arrayMember.Member);
+                        type = field.Type;
+                        return true;
+                    }
+                }
             }
 
             if (expression is MemberAccessExpression member)
@@ -2165,7 +2308,15 @@ namespace JollyCCompiler.Compiler.CodeGen.X64
                     objectType = objectType[..^1];
                 }
 
-                type = GetStructField(objectType, member.Member).Type;
+                if (objectType.StartsWith("union ", StringComparison.Ordinal))
+                {
+                    var unionField = GetUnionField(objectType, member.Member);
+                    type = unionField.Type;
+                    return true;
+                }
+
+                var structField = GetStructField(objectType, member.Member);
+                type = structField.Type;
                 return true;
             }
 
@@ -2183,14 +2334,41 @@ namespace JollyCCompiler.Compiler.CodeGen.X64
             return GetTypeSize(baseType);
         }
 
-        private static void GenerateMemberAccessExpression(
-            MemberAccessExpression expression,
-            X64Emitter emitter,
-            List<X64DataItem> data,
-            Dictionary<string, (int Offset, string Type, bool IsConst)> variables,
-            Dictionary<string, (int Length, string Type)> arrays,
-            Dictionary<string, (int Index, string Type)> parameters)
+        private static void GenerateMemberAccessExpression(MemberAccessExpression expression, X64Emitter emitter, List<X64DataItem> data, Dictionary<string, (int Offset, string Type, bool IsConst)> variables, Dictionary<string, (int Length, string Type)> arrays, Dictionary<string, (int Index, string Type)> parameters)
         {
+            if (expression.Object is CallExpression call && _functionReturnTypes.TryGetValue(call.Name, out var returnType) && returnType.StartsWith("union ", StringComparison.Ordinal) && !returnType.EndsWith("*", StringComparison.Ordinal))
+            {
+                GenerateExpression(call, emitter, data, variables, arrays, parameters);
+
+                var returnedUnionSize = GetTypeSize(returnType);
+                var returnedMember = GetMemberInfo(expression, variables, arrays, parameters);
+                var returnedMemberSize = GetTypeSize(returnedMember.Type);
+
+                if (returnedUnionSize != 8)
+                    throw new NotSupportedException($"Union return size {returnedUnionSize} is not yet supported for direct member access.");
+
+                if (returnedMember.Offset != 0)
+                    throw new NotSupportedException("Union members must have offset 0.");
+
+                if (returnedMemberSize == 1)
+                {
+                    emitter.MovzxEaxAl();
+                    return;
+                }
+
+                if (returnedMemberSize == 4)
+                {
+                    return;
+                }
+
+                if (returnedMemberSize == 8)
+                {
+                    return;
+                }
+
+                throw new NotSupportedException($"Union member type '{returnedMember.Type}' is not yet supported for direct returned-union member access.");
+            }
+
             GenerateLValueAddress(expression, emitter, data, variables, arrays, parameters);
 
             var member = GetMemberInfo(expression, variables, arrays, parameters);
@@ -2281,12 +2459,7 @@ namespace JollyCCompiler.Compiler.CodeGen.X64
                 emitter.EmitBytes(0x89, 0x08);
         }
 
-        private static void GenerateSizeofExpression(
-            SizeofExpression expression,
-            X64Emitter emitter,
-            Dictionary<string, (int Offset, string Type, bool IsConst)> variables,
-            Dictionary<string, (int Length, string Type)> arrays,
-            Dictionary<string, (int Index, string Type)> parameters)
+        private static void GenerateSizeofExpression(SizeofExpression expression, X64Emitter emitter, Dictionary<string, (int Offset, string Type, bool IsConst)> variables, Dictionary<string, (int Length, string Type)> arrays, Dictionary<string, (int Index, string Type)> parameters)
         {
             if (expression.Type is not null)
             {
@@ -2309,11 +2482,7 @@ namespace JollyCCompiler.Compiler.CodeGen.X64
             emitter.MovEax(GetTypeSize(type));
         }
 
-        private static (int Offset, string Type) GetMemberInfo(
-            MemberAccessExpression expression,
-            Dictionary<string, (int Offset, string Type, bool IsConst)> variables,
-            Dictionary<string, (int Length, string Type)> arrays,
-            Dictionary<string, (int Index, string Type)> parameters)
+        private static (int Offset, string Type) GetMemberInfo(MemberAccessExpression expression, Dictionary<string, (int Offset, string Type, bool IsConst)> variables, Dictionary<string, (int Length, string Type)> arrays, Dictionary<string, (int Index, string Type)> parameters)
         {
             if (!TryGetExpressionType(expression.Object, variables, arrays, parameters, out var objectType))
                 throw new InvalidOperationException("Cannot determine the type of struct member object.");
@@ -2326,7 +2495,26 @@ namespace JollyCCompiler.Compiler.CodeGen.X64
                 objectType = objectType[..^1];
             }
 
+            if (objectType.StartsWith("union ", StringComparison.Ordinal))
+            {
+                var field = GetUnionField(objectType, expression.Member);
+                return (field.Offset, field.Type);
+            }
+
             return GetStructField(objectType, expression.Member);
+        }
+
+        private static (int Offset, string Type, int? ArrayLength) GetUnionField(string type, string member)
+        {
+            var name = type[6..];
+            if (!_unions.TryGetValue(name, out var union))
+                throw new InvalidOperationException($"Unknown union type '{name}'.");
+
+            var field = union.Fields.FirstOrDefault(f => f.Name == member);
+            if (field is null)
+                throw new InvalidOperationException($"Union '{name}' has no member '{member}'.");
+
+            return (0, field.Type, field.ArrayLength);
         }
     }
 }

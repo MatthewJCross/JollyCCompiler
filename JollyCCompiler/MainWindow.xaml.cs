@@ -44,6 +44,12 @@ namespace JollyCCompiler
             int count;
         };
 
+        union Value
+        {
+            int number;
+            char letter;
+        };
+        
         int add(int a, int b) 
         {
             return a + b;
@@ -1356,10 +1362,255 @@ namespace JollyCCompiler
 
             return result;
         }        
-        
+
+        int testUnionPointerReturn()
+        {
+        	union Value v;
+        	v.number = 123;
+        	return getValue(&v)->number;
+        }
+
+        int testUnionPointerLocal()
+        {
+        	union Value v;
+        	union Value* p;
+
+
+        	v.number = 100;
+        	p = &v;
+        	p->number = 456;
+
+        	return v.number;
+
+
+        }
+
+        int testUnionCharPointer()
+        {
+        	union Value v;
+        	union Value* p;
+
+        	p = &v;
+        	p->letter = 65;
+
+        	return p->letter;
+
+
+        }
+
+        int testUnionPointerWrite()
+        {
+        	union Value v;
+        	union Value* p;
+
+
+        	v.number = 100;
+        	p = &v;
+        	p->number = 999;
+
+        	return v.number;
+
+
+        }
+
+        union Value* identityValue(union Value* p)
+        {
+        	return p;
+        }
+
+        union Value* getValue(union Value* p)
+        {
+        	return identityValue(p);
+        }
+
+        int testUnionMultipleCalls()
+        {
+        	union Value v;
+
+
+        	v.number = 789;
+
+        	return getValue(&v)->number;
+
+
+        }
+
+        int testStructPointerAccess()
+        {
+        	struct Point p;
+        	struct Point* ptr;
+
+
+        	p.x = 100;
+        	p.y = 200;
+        	ptr = &p;
+
+        	return ptr->x + ptr->y;
+
+
+        }
+
+        struct Point* getPoint(struct Point* p)
+        {
+        	return p;
+        }
+
+        int testStructPointerReturn()
+        {
+        	struct Point p;
+
+
+        	p.x = 111;
+        	p.y = 222;
+
+        	return getPoint(&p)->y;
+
+
+        }
+
+        void setPointX(struct Point* p)
+        {
+        	p->x = 555;
+        }
+
+        int testStructPointerWrite()
+        {
+        	struct Point point;
+
+
+        	point.x = 100;
+        	point.y = 200;
+
+        	setPointX(&point);
+
+        	return point.x;
+
+
+        }
+
+        void setUnionNumber(union Value* p)
+        {
+        	p->number = 999;
+        }
+
+        int testUnionParameterWrite()
+        {
+        	union Value value;
+
+
+        	value.number = 100;
+        	setUnionNumber(&value);
+
+        	return value.number;
+
+
+        }
+
+        int testNestedStructAccess()
+        {
+        	struct Point topLeft;
+        	struct Point bottomRight;
+
+
+        	topLeft.x = 10;
+        	topLeft.y = 20;
+        	bottomRight.x = 30;
+        	bottomRight.y = 40;
+
+        	return topLeft.x + bottomRight.y;
+
+
+        }
+
+        struct Rectangle
+        {
+        	struct Point topLeft;
+        	struct Point bottomRight;
+        };
+
+        int testNestedStructPointer()
+        {
+        	struct Rectangle r;
+        	struct Rectangle* p;
+
+
+        	r.topLeft.x = 10;
+        	r.topLeft.y = 20;
+        	r.bottomRight.x = 30;
+        	r.bottomRight.y = 40;
+
+        	p = &r;
+
+        	return p->bottomRight.x + p->topLeft.y;
+
+
+        }
+
+        struct PointerData
+        {
+        	int* value;
+        };
+
+        int testPointerMember()
+        {
+        	int number;
+        	struct PointerData data;
+
+        	number = 321;
+        	data.value = &number;
+
+        	return *data.value;
+
+        }
+
+        int testPointerMemberThroughArrow()
+        {
+        	int number;
+        	struct PointerData data;
+        	struct PointerData* p;
+
+        	number = 654;
+        	data.value = &number;
+        	p = &data;
+
+        	return *p->value;
+
+        }
+
+        int testPointerToPointerRegression()
+        {
+        	int value;
+        	int* p;
+        	int** pp;
+
+
+        	value = 777;
+        	p = &value;
+        	pp = &p;
+
+        	return **pp;
+        }
+
+        int testPointerArithmeticRegression()
+        {
+        	int values[3];
+        	int* p;
+
+
+        	values[0] = 10;
+        	values[1] = 20;
+        	values[2] = 30;
+
+        	p = values;
+
+        	return *(p + 2);
+
+
+        }
+
         int main()
         {
-            const int finalExpectedResult = 12694;    
+            const int finalExpectedResult = 19084;    
             int result;
             int temporary;
 
@@ -1613,6 +1864,66 @@ namespace JollyCCompiler
             temporary = testPointerToPointer();
             result += temporary;
             printf("testPointerToPointer: got=%d expected=250 running=%d\n", temporary, result);
+
+        	temporary = testUnionPointerReturn();
+        	result += temporary;
+        	printf("testUnionPointerReturn: got=%d expected=123 running=%d\n", temporary, result);
+
+        	temporary = testUnionPointerLocal();
+        	result += temporary;
+        	printf("testUnionPointerLocal: got=%d expected=456 running=%d\n", temporary, result);
+
+        	temporary = testUnionCharPointer();
+        	result += temporary;
+        	printf("testUnionCharPointer: got=%d expected=65 running=%d\n", temporary, result);
+
+        	temporary = testUnionPointerWrite();
+        	result += temporary;
+        	printf("testUnionPointerWrite: got=%d expected=999 running=%d\n", temporary, result);
+
+        	temporary = testUnionMultipleCalls();
+        	result += temporary;
+        	printf("testUnionMultipleCalls: got=%d expected=789 running=%d\n", temporary, result);
+
+        	temporary = testStructPointerAccess();
+        	result += temporary;
+        	printf("testStructPointerAccess: got=%d expected=300 running=%d\n", temporary, result);
+
+        	temporary = testStructPointerReturn();
+        	result += temporary;
+        	printf("testStructPointerReturn: got=%d expected=222 running=%d\n", temporary, result);
+
+        	temporary = testStructPointerWrite();
+        	result += temporary;
+        	printf("testStructPointerWrite: got=%d expected=555 running=%d\n", temporary, result);
+
+        	temporary = testUnionParameterWrite();
+        	result += temporary;
+        	printf("testUnionParameterWrite: got=%d expected=999 running=%d\n", temporary, result);
+
+        	temporary = testNestedStructAccess();
+        	result += temporary;
+        	printf("testNestedStructAccess: got=%d expected=50 running=%d\n", temporary, result);
+
+        	temporary = testNestedStructPointer();
+        	result += temporary;
+        	printf("testNestedStructPointer: got=%d expected=50 running=%d\n", temporary, result);
+
+        	temporary = testPointerMember();
+        	result += temporary;
+        	printf("testPointerMember: got=%d expected=321 running=%d\n", temporary, result);
+
+        	temporary = testPointerMemberThroughArrow();
+        	result += temporary;
+        	printf("testPointerMemberThroughArrow: got=%d expected=654 running=%d\n", temporary, result);
+
+        	temporary = testPointerToPointerRegression();
+        	result += temporary;
+        	printf("testPointerToPointerRegression: got=%d expected=777 running=%d\n", temporary, result);
+
+        	temporary = testPointerArithmeticRegression();
+        	result += temporary;
+        	printf("testPointerArithmeticRegression: got=%d expected=30 running=%d\n", temporary, result);
 
             printf("FINAL: got=%d expected=%d difference=%d\n", result, finalExpectedResult, result - finalExpectedResult);
 

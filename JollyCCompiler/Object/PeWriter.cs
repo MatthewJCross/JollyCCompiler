@@ -45,8 +45,6 @@ namespace JollyCCompiler.Object
             PatchRelative32(startup, mainCallDispOffset, TextRva + (uint)(mainCallDispOffset + 4), mainRva); 
             byte[] text = new byte[AlignUp(entryStubSize + result.MachineCode.Length, (int)FileAlignment)];
 
-            Debug.WriteLine($"PE DEBUG: Functions={result.Labels.Count}, MachineCode={result.MachineCode.Length}, Startup={entryStubSize}, Text={text.Length}, Fixups={result.Fixups.Count}, Data={result.Data.Count}");
-
             Buffer.BlockCopy(startup, 0, text, 0, startup.Length); 
             Buffer.BlockCopy(result.MachineCode, 0, text, entryStubSize, result.MachineCode.Length); 
             uint textVirtualSize = (uint)text.Length; 
@@ -102,8 +100,6 @@ namespace JollyCCompiler.Object
             uint idataSectionEndRva = AlignUp(idataRva + (uint)Math.Max(1, idata.Length), SectionAlignment); 
             uint sizeOfImage = idataSectionEndRva; const ushort numberOfSections = 3;
 
-            Debug.WriteLine($"PE DEBUG: TextRVA=0x{TextRva:X}, TextVirtualSize=0x{text.Length:X}, TextRawSize=0x{textRawSize:X}, RDataRVA=0x{rdataRva:X}, RDataSize=0x{rdata.Length:X}, IDataRVA=0x{idataRva:X}, IDataSize=0x{idata.Length:X}, SizeOfImage=0x{sizeOfImage:X}");
-            
             const ushort sizeOfOptionalHeader = 0xF0; 
             int dosHeaderSize = 0x80; 
             int peSignatureSize = 4; 

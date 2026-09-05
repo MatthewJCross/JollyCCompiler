@@ -10,6 +10,7 @@
 
         Int,
         Char,
+        Long,
         Void,
         Return,
         If,
@@ -64,6 +65,7 @@
         OrOr,
 
         Struct,
+        Union,
         
         Comma,
         Semicolon,

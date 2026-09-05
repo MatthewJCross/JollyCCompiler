@@ -217,8 +217,10 @@ public sealed class Lexer
         {
             "int" => TokenKind.Int,
             "char" => TokenKind.Char,
+            "long" => TokenKind.Long,
             "void" => TokenKind.Void,
             "struct" => TokenKind.Struct,
+            "union" => TokenKind.Union,
             "const" => TokenKind.Const,
             "return" => TokenKind.Return,
             "if" => TokenKind.If,

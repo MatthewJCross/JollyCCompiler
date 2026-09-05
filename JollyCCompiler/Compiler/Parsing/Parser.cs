@@ -1,6 +1,7 @@
 ﻿using JollyCCompiler.Compiler.Diagnostics;
 using JollyCCompiler.Compiler.Lexing;
 using JollyCCompiler.Compiler.Syntax;
+using System.Diagnostics;
 
 namespace JollyCCompiler.Compiler.Parsing
 {
@@ -18,6 +19,7 @@ namespace JollyCCompiler.Compiler.Parsing
         public ProgramNode ParseProgram()
         {
             var structs = new List<StructDeclarationNode>();
+            var unions = new List<UnionDeclarationNode>();
             var functions = new List<FunctionNode>();
 
             while (Current.Kind != TokenKind.EndOfFile)
@@ -30,6 +32,12 @@ namespace JollyCCompiler.Compiler.Parsing
                     if (structDeclaration is not null)
                         structs.Add(structDeclaration);
                 }
+                else if (IsUnionDeclaration())
+                {
+                    var unionDeclaration = ParseUnionDeclaration();
+                    if (unionDeclaration is not null)
+                        unions.Add(unionDeclaration);
+                }
                 else
                 {
                     var function = ParseFunction();
@@ -41,7 +49,7 @@ namespace JollyCCompiler.Compiler.Parsing
                     Synchronize();
             }
 
-            return new ProgramNode(structs, functions);
+            return new ProgramNode(structs, unions, functions);
         }
 
         private bool IsStructDeclaration()
@@ -92,6 +100,49 @@ namespace JollyCCompiler.Compiler.Parsing
             Expect(TokenKind.RightBrace, "Expected '}' after struct fields.");
             Expect(TokenKind.Semicolon, "Expected ';' after struct declaration.");
             return new StructDeclarationNode(name.Text, fields);
+        }
+
+        private bool IsUnionDeclaration() 
+        { 
+            return Current.Kind == TokenKind.Union && Peek(1).Kind == TokenKind.Identifier && Peek(2).Kind == TokenKind.LeftBrace; 
+        }
+
+        private UnionDeclarationNode? ParseUnionDeclaration() 
+        { 
+            Expect(TokenKind.Union, "Expected 'union'."); 
+            var name = Expect(TokenKind.Identifier, "Expected union name."); 
+            if (name.Kind != TokenKind.Identifier) 
+                return null; 
+            
+            Expect(TokenKind.LeftBrace, "Expected '{' after union name."); 
+            var fields = new List<StructFieldNode>(); 
+            while (Current.Kind != TokenKind.RightBrace && Current.Kind != TokenKind.EndOfFile) 
+            { 
+                var type = ParseType(); 
+                if (type is null)
+                    return null; 
+                
+                var fieldName = Expect(TokenKind.Identifier, "Expected union field name."); 
+                if (fieldName.Kind != TokenKind.Identifier) 
+                    return null; int? arrayLength = null; 
+                
+                if (Current.Kind == TokenKind.LeftBracket) 
+                { 
+                    Advance(); 
+                    var lengthToken = Expect(TokenKind.IntegerLiteral, "Expected array size."); 
+                    if (lengthToken.Kind == TokenKind.IntegerLiteral)
+                        arrayLength = int.Parse(lengthToken.Text); 
+                    
+                    Expect(TokenKind.RightBracket, "Expected ']' after array size."); 
+                } 
+                
+                Expect(TokenKind.Semicolon, "Expected ';' after union field."); 
+                fields.Add(new StructFieldNode(type, fieldName.Text, arrayLength)); 
+            } 
+            
+            Expect(TokenKind.RightBrace, "Expected '}' after union fields."); 
+            Expect(TokenKind.Semicolon, "Expected ';' after union declaration.");
+            return new UnionDeclarationNode(name.Text, fields); 
         }
 
         private FunctionNode? ParseFunction()
@@ -165,6 +216,19 @@ namespace JollyCCompiler.Compiler.Parsing
             {
                 type = AdvanceAndReturn("char");
             }
+            else if (Current.Kind == TokenKind.Long) 
+            { 
+                Advance(); 
+                if (Current.Kind == TokenKind.Long) 
+                { 
+                    Advance(); 
+                    type = "long long"; 
+                } 
+                else 
+                { 
+                    type = "long"; 
+                } 
+            }
             else if (Current.Kind == TokenKind.Void)
             {
                 type = AdvanceAndReturn("void");
@@ -179,6 +243,17 @@ namespace JollyCCompiler.Compiler.Parsing
                     return null;
 
                 type = $"struct {name.Text}";
+            }
+            else if (Current.Kind == TokenKind.Union)
+            {
+                Advance();
+
+                var name = Expect(TokenKind.Identifier, "Expected union name.");
+
+                if (name.Kind != TokenKind.Identifier)
+                    return null;
+
+                type = $"union {name.Text}";
             }
             else
             {
@@ -229,7 +304,7 @@ namespace JollyCCompiler.Compiler.Parsing
 
         private StatementNode? ParseStatement()
         {
-            if (Current.Kind is TokenKind.Const or TokenKind.Int or TokenKind.Char or TokenKind.Struct) return ParseVariableDeclaration();
+            if (Current.Kind is TokenKind.Const or TokenKind.Int or TokenKind.Char or TokenKind.Struct or TokenKind.Union) return ParseVariableDeclaration();
             if (Current.Kind == TokenKind.For) return ParseFor();
             if (Current.Kind == TokenKind.While) return ParseWhile();
             if (Current.Kind == TokenKind.Do) return ParseDoWhile();
@@ -294,7 +369,7 @@ namespace JollyCCompiler.Compiler.Parsing
 
             StatementNode? initializer = null;
 
-            if (Current.Kind is TokenKind.Const or TokenKind.Int or TokenKind.Char or TokenKind.Struct)
+            if (Current.Kind is TokenKind.Const or TokenKind.Int or TokenKind.Char or TokenKind.Struct or TokenKind.Union)
             {
                 initializer = ParseVariableDeclaration();
             }
@@ -553,7 +628,7 @@ namespace JollyCCompiler.Compiler.Parsing
                 Advance();
                 Expect(TokenKind.LeftParen, "Expected '(' after 'sizeof'.");
 
-                if (Current.Kind is TokenKind.Int or TokenKind.Char or TokenKind.Void or TokenKind.Struct)
+                if (Current.Kind is TokenKind.Int or TokenKind.Char or TokenKind.Void or TokenKind.Struct or TokenKind.Union)
                 {
                     var type = ParseType();
                     Expect(TokenKind.RightParen, "Expected ')' after sizeof type.");
