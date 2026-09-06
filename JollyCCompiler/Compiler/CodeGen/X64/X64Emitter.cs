@@ -1301,6 +1301,24 @@ namespace JollyCCompiler.Compiler.CodeGen.X64
             _instructions.Add(new X64Instruction(offset, bytes, "mov word ptr [rcx], ax"));
         }
 
+        public void XorEdxEdx()
+        {
+            var offset = Offset;
+            var bytes = new byte[] { 0x31, 0xD2 };
+
+            _code.AddRange(bytes);
+            _instructions.Add(new X64Instruction(offset, bytes, "xor edx, edx"));
+        }
+
+        public void DivEcx()
+        {
+            var offset = Offset;
+            var bytes = new byte[] { 0xF7, 0xF1 };
+
+            _code.AddRange(bytes);
+            _instructions.Add(new X64Instruction(offset, bytes, "div ecx"));
+        }
+
         public void MovsxEaxRaxMemoryWord()
         {
             var offset = Offset;

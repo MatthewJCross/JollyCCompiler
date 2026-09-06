@@ -67,6 +67,7 @@ namespace JollyCCompiler.Compiler.CodeGen.X64
             "short" => 2,
             "unsigned short" => 2,
             "int" => 4,
+            "unsigned int" => 4,
             "long" => 4,
             "long long" => 8,
             "float" => 4,
@@ -79,6 +80,7 @@ namespace JollyCCompiler.Compiler.CodeGen.X64
 
         private static bool IsUnsignedChar(string type) => string.Equals(type, "unsigned char", StringComparison.Ordinal);
         private static bool IsUnsignedShort(string type) => string.Equals(type, "unsigned short", StringComparison.Ordinal);
+        private static bool IsUnsignedInt(string type) => string.Equals(type, "unsigned int", StringComparison.Ordinal);
 
         private static void LoadShortFromMemory(X64Emitter emitter, string type) 
         { 
@@ -476,13 +478,7 @@ namespace JollyCCompiler.Compiler.CodeGen.X64
             emitter.Ret();
         }
 
-        private static void GenerateExpressionStatement(
-            ExpressionStatement statement,
-            X64Emitter emitter,
-            List<X64DataItem> data,
-            Dictionary<string, (int Offset, string Type, bool IsConst)> variables,
-            Dictionary<string, (int Length, string Type)> arrays,
-            Dictionary<string, (int Index, string Type)> parameters)
+        private static void GenerateExpressionStatement(ExpressionStatement statement, X64Emitter emitter, List<X64DataItem> data, Dictionary<string, (int Offset, string Type, bool IsConst)> variables, Dictionary<string, (int Length, string Type)> arrays, Dictionary<string, (int Index, string Type)> parameters)
         {
             GenerateExpression(statement.Expression, emitter, data, variables, arrays, parameters);
         }
@@ -1501,16 +1497,9 @@ namespace JollyCCompiler.Compiler.CodeGen.X64
             }
         }
 
-        private static void GenerateBinaryExpression(
-            BinaryExpression expression,
-            X64Emitter emitter,
-            List<X64DataItem> data,
-            Dictionary<string, (int Offset, string Type, bool IsConst)> variables,
-            Dictionary<string, (int Length, string Type)> arrays,
-            Dictionary<string, (int Index, string Type)> parameters)
+        private static void GenerateBinaryExpression(BinaryExpression expression, X64Emitter emitter, List<X64DataItem> data, Dictionary<string, (int Offset, string Type, bool IsConst)> variables, Dictionary<string, (int Length, string Type)> arrays, Dictionary<string, (int Index, string Type)> parameters)
         {
-            if (expression.Operator is TokenKind.Plus or TokenKind.Minus &&
-                TryGetPointerType(expression.Left, variables, arrays, parameters, out var leftPointerType))
+            if (expression.Operator is TokenKind.Plus or TokenKind.Minus && TryGetPointerType(expression.Left, variables, arrays, parameters, out var leftPointerType))
             {
                 var elementSize = GetPointeeSize(leftPointerType);
 
@@ -1539,6 +1528,8 @@ namespace JollyCCompiler.Compiler.CodeGen.X64
                 throw new NotSupportedException("Integer plus pointer is not yet supported by the x64 backend.");
             }
 
+            var isUnsignedIntOperation = TryGetExpressionType(expression.Left, variables, arrays, parameters, out var leftType) && TryGetExpressionType(expression.Right, variables, arrays, parameters, out var rightType) && GetCommonArithmeticType(leftType, rightType) == "unsigned int";
+
             GenerateExpression(expression.Left, emitter, data, variables, arrays, parameters);
             emitter.PushRax();
 
@@ -1562,18 +1553,36 @@ namespace JollyCCompiler.Compiler.CodeGen.X64
                     break;
 
                 case TokenKind.Slash:
-                    emitter.Cdq();
-                    emitter.IdivEcx();
+                    if (isUnsignedIntOperation)
+                    {
+                        emitter.XorEdxEdx();
+                        emitter.DivEcx();
+                    }
+                    else
+                    {
+                        emitter.Cdq();
+                        emitter.IdivEcx();
+                    }
                     break;
 
                 case TokenKind.Percent:
-                    emitter.Cdq();
-                    emitter.IdivEcx();
+                    if (isUnsignedIntOperation)
+                    {
+                        emitter.XorEdxEdx();
+                        emitter.DivEcx();
+                    }
+                    else
+                    {
+                        emitter.Cdq();
+                        emitter.IdivEcx();
+                    }
+
                     emitter.MovEaxEdx();
                     break;
 
                 default:
-                    throw new NotSupportedException($"Operator '{expression.Operator}' is not yet supported by the x64 backend.");
+                    throw new NotSupportedException(
+                        $"Operator '{expression.Operator}' is not yet supported by the x64 backend.");
             }
         }
 
@@ -1758,8 +1767,12 @@ namespace JollyCCompiler.Compiler.CodeGen.X64
             return false;
         }
 
-        private static void GenerateComparison(BinaryExpression expression, X64Emitter emitter, List<X64DataItem> data, Dictionary<string, (int Offset, string Type, bool IsConst)> variables, Dictionary<string, (int Length, string Type)> arrays, Dictionary<string, (int Index, string Type)> parameters)
+        private static void GenerateComparison( BinaryExpression expression, X64Emitter emitter, List<X64DataItem> data, Dictionary<string, (int Offset, string Type, bool IsConst)> variables, Dictionary<string, (int Length, string Type)> arrays, Dictionary<string, (int Index, string Type)> parameters)
         {
+            var useUnsignedComparison = TryGetExpressionType(expression.Left, variables, arrays, parameters, out var leftType) &&
+                TryGetExpressionType(expression.Right, variables, arrays, parameters, out var rightType) &&
+                GetCommonArithmeticType(leftType, rightType) == "unsigned int";
+
             GenerateExpression(expression.Left, emitter, data, variables, arrays, parameters);
             emitter.PushRax();
 
@@ -1783,19 +1796,31 @@ namespace JollyCCompiler.Compiler.CodeGen.X64
                     break;
 
                 case TokenKind.Less:
-                    emitter.Jl(trueLabel);
+                    if (useUnsignedComparison)
+                        emitter.Jb(trueLabel);
+                    else
+                        emitter.Jl(trueLabel);
                     break;
 
                 case TokenKind.LessEqual:
-                    emitter.Jle(trueLabel);
+                    if (useUnsignedComparison)
+                        emitter.Jbe(trueLabel);
+                    else
+                        emitter.Jle(trueLabel);
                     break;
 
                 case TokenKind.Greater:
-                    emitter.Jg(trueLabel);
+                    if (useUnsignedComparison)
+                        emitter.Ja(trueLabel);
+                    else
+                        emitter.Jg(trueLabel);
                     break;
 
                 case TokenKind.GreaterEqual:
-                    emitter.Jge(trueLabel);
+                    if (useUnsignedComparison)
+                        emitter.Jae(trueLabel);
+                    else
+                        emitter.Jge(trueLabel);
                     break;
 
                 default:
@@ -2552,8 +2577,55 @@ namespace JollyCCompiler.Compiler.CodeGen.X64
                 return true;
             }
 
+            if (expression is IntegerExpression)
+            {
+                type = "int";
+                return true;
+            }
+
+            if (expression is BinaryExpression binary)
+            {
+                if (binary.Operator is TokenKind.EqualEqual or TokenKind.NotEqual or TokenKind.Less or TokenKind.LessEqual or TokenKind.Greater or TokenKind.GreaterEqual or TokenKind.AndAnd or TokenKind.OrOr)
+                {
+                    type = "int";
+                    return true;
+                }
+
+                if (TryGetExpressionType(binary.Left, variables, arrays, parameters, out var leftType) && TryGetExpressionType(binary.Right, variables, arrays, parameters, out var rightType))
+                {
+                    type = GetCommonArithmeticType(leftType, rightType);
+                    return true;
+                }
+            }
+
             type = string.Empty;
             return false;
+        }
+
+        private static string GetCommonArithmeticType(string leftType, string rightType)
+        {
+            if (leftType == "unsigned int" || rightType == "unsigned int")
+                return "unsigned int";
+
+            if (leftType == "int" || rightType == "int")
+                return "int";
+
+            if (leftType == "unsigned short" || rightType == "unsigned short")
+                return "int";
+
+            if (leftType == "short")
+                return "int";
+
+            if (rightType == "short")
+                return "int";
+
+            if (leftType == "unsigned char" || rightType == "unsigned char")
+                return "int";
+
+            if (leftType == "char" || rightType == "char")
+                return "int";
+
+            return leftType;
         }
 
         private static int GetPointeeSize(string pointerType)

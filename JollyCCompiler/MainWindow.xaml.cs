@@ -2087,9 +2087,313 @@ namespace JollyCCompiler
             return result;
         }
         
+        int testUnsignedIntGreater()
+        {
+            unsigned int a;
+            unsigned int b;
+
+            a = 0;
+            a--;
+            b = 1;
+
+            return a > b;
+        }
+
+        int testUnsignedIntLess()
+        {
+            unsigned int a;
+            unsigned int b;
+
+            a = 0;
+            a--;
+            b = 1;
+
+            return a < b;
+        }
+
+        int testUnsignedIntDivision()
+        {
+            unsigned int a;
+            unsigned int b;
+
+            a = 0;
+            a--;
+            b = 2;
+
+            return a / b;
+        }
+
+        int testUnsignedIntRemainder()
+        {
+            unsigned int a;
+            unsigned int b;
+
+            a = 0;
+            a--;
+            b = 2;
+
+            return a % b;
+        }
+        
+        int testUnsignedIntAssignment()
+        {
+            unsigned int a;
+            unsigned int b;
+
+            a = 2000000000;
+            b = a;
+
+            return b == 2000000000;
+        }
+
+        int testUnsignedIntAddAssignment()
+        {
+            unsigned int value;
+
+            value = 100;
+            value += 50;
+
+            return value == 150;
+        }
+
+        int testUnsignedIntSubAssignment()
+        {
+            unsigned int value;
+
+            value = 150;
+            value -= 25;
+
+            return value == 125;
+        }
+
+        int testUnsignedIntMulAssignment()
+        {
+            unsigned int value;
+
+            value = 125;
+            value *= 2;
+
+            return value == 250;
+        }
+
+        int testUnsignedIntDivAssignment()
+        {
+            unsigned int value;
+
+            value = 250;
+            value /= 5;
+
+            return value == 50;
+        }
+
+        int testUnsignedIntArray()
+        {
+            unsigned int values[4];
+
+            values[0] = 1000000000;
+            values[1] = 1100000000;
+            values[2] = 1200000000;
+            values[3] = 1300000000;
+
+            return values[0] == 1000000000 &&
+                   values[1] == 1100000000 &&
+                   values[2] == 1200000000 &&
+                   values[3] == 1300000000;
+        }
+
+        int testUnsignedIntArrayArithmetic()
+        {
+            unsigned int values[3];
+
+            values[0] = 2000000000;
+            values[1] = 1000000000;
+            values[2] = values[0] - values[1];
+
+            return values[2] == 1000000000;
+        }
+
+        int testUnsignedIntPointer()
+        {
+            unsigned int value;
+            unsigned int* pointer;
+
+            value = 1000000000;
+            pointer = &value;
+
+            *pointer = 2000000000;
+
+            return value == 2000000000;
+        }
+
+        int testUnsignedIntPointerArithmetic()
+        {
+            unsigned int values[3];
+            unsigned int* pointer;
+
+            values[0] = 1000000000;
+            values[1] = 1100000000;
+            values[2] = 1200000000;
+
+            pointer = values;
+
+            return pointer[0] == 1000000000 &&
+                   pointer[1] == 1100000000 &&
+                   pointer[2] == 1200000000;
+        }
+
+        int testUnsignedIntIncrement()
+        {
+            unsigned int value;
+            unsigned int result;
+
+            value = 100;
+
+            result = value++;
+            result += value++;
+
+            return result == 201;
+        }
+
+        int testUnsignedIntDecrement()
+        {
+            unsigned int value;
+
+            value = 100;
+
+            value--;
+            value--;
+
+            return value == 98;
+        }
+
+        int testUnsignedIntPreIncrement()
+        {
+            unsigned int value;
+
+            value = 100;
+
+            return ++value == 101;
+        }
+
+        int testUnsignedIntPreDecrement()
+        {
+            unsigned int value;
+
+            value = 100;
+
+            return --value == 99;
+        }
+
+        unsigned int testUnsignedIntParameter(unsigned int value)
+        {
+            return value + 100;
+        }
+
+        int testUnsignedIntFunctionParameter()
+        {
+            unsigned int value;
+
+            value = testUnsignedIntParameter(2000000000);
+
+            return value == 2000000100;
+        }
+
+        unsigned int testUnsignedIntReturn()
+        {
+            unsigned int value;
+
+            value = 2000000000;
+
+            return value;
+        }
+
+        int testUnsignedIntFunctionReturn()
+        {
+            return testUnsignedIntReturn() == 2000000000;
+        }
+
+        int testUnsignedIntSignedMixed()
+        {
+            unsigned int value;
+            int signedValue;
+
+            value = 2000000000;
+            signedValue = 1000000000;
+
+            return value > signedValue &&
+                   value != signedValue &&
+                   value >= signedValue;
+        }
+
+        int testUnsignedIntSignedMixedArithmetic()
+        {
+            unsigned int value;
+            int signedValue;
+
+            value = 2000000000;
+            signedValue = 1000000000;
+
+            return value - signedValue == 1000000000;
+        }
+
+        int testUnsignedIntZero()
+        {
+            unsigned int value;
+
+            value = 0;
+
+            return value == 0 &&
+                   value <= 0 &&
+                   !(value > 0);
+        }
+
+        int testUnsignedIntMaximum()
+        {
+            unsigned int value;
+
+            value = 0;
+            value--;
+
+            return value > 2000000000 &&
+                   value >= 2000000000;
+        }
+
+        int testUnsignedIntWraparound()
+        {
+            unsigned int value;
+
+            value = 0;
+            value--;
+
+            value++;
+
+            return value == 0;
+        }
+
+        int testUnsignedIntArrayPointerIncrement()
+        {
+            unsigned int values[3];
+            unsigned int* pointer;
+            unsigned int result;
+
+            values[0] = 100;
+            values[1] = 200;
+            values[2] = 300;
+
+            pointer = values;
+
+            result = *pointer;
+            pointer++;
+            result += *pointer;
+            pointer++;
+            result += *pointer;
+
+            return result == 600;
+        }
+                
         int main()
         {
-            const int finalExpectedResult = 215151;    
+            const int finalExpectedResult = -2147268475;
             int result;
             int temporary;
 
@@ -2515,6 +2819,109 @@ namespace JollyCCompiler
             temporary = testUnsignedShortRelations();
             result += temporary;
             printf("testUnsignedShortRelations: got=%d expected=31 running=%d\n", temporary, result);
+            
+            temporary = testUnsignedIntGreater();
+            result += temporary;
+            printf("testUnsignedIntGreater: got=%d expected=1 running=%d\n", temporary, result);
+
+            temporary = testUnsignedIntLess();
+            result += temporary;
+            printf("testUnsignedIntLess: got=%d expected=0 running=%d\n", temporary, result);
+
+            temporary = testUnsignedIntDivision();
+            result += temporary;
+            printf("testUnsignedIntDivision: got=%d expected=2147483647 running=%d\n", temporary, result);
+
+            temporary = testUnsignedIntRemainder();
+            result += temporary;
+            printf("testUnsignedIntRemainder: got=%d expected=1 running=%d\n", temporary, result);
+        
+            temporary = testUnsignedIntAssignment();
+            result += temporary;
+            printf("testUnsignedIntAssignment: got=%d expected=1 running=%d\n", temporary, result);
+
+            temporary = testUnsignedIntAddAssignment();
+            result += temporary;
+            printf("testUnsignedIntAddAssignment: got=%d expected=1 running=%d\n", temporary, result);
+
+            temporary = testUnsignedIntSubAssignment();
+            result += temporary;
+            printf("testUnsignedIntSubAssignment: got=%d expected=1 running=%d\n", temporary, result);
+
+            temporary = testUnsignedIntMulAssignment();
+            result += temporary;
+            printf("testUnsignedIntMulAssignment: got=%d expected=1 running=%d\n", temporary, result);
+
+            temporary = testUnsignedIntDivAssignment();
+            result += temporary;
+            printf("testUnsignedIntDivAssignment: got=%d expected=1 running=%d\n", temporary, result);
+
+            temporary = testUnsignedIntArray();
+            result += temporary;
+            printf("testUnsignedIntArray: got=%d expected=1 running=%d\n", temporary, result);
+
+            temporary = testUnsignedIntArrayArithmetic();
+            result += temporary;
+            printf("testUnsignedIntArrayArithmetic: got=%d expected=1 running=%d\n", temporary, result);
+
+            temporary = testUnsignedIntPointer();
+            result += temporary;
+            printf("testUnsignedIntPointer: got=%d expected=1 running=%d\n", temporary, result);
+
+            temporary = testUnsignedIntPointerArithmetic();
+            result += temporary;
+            printf("testUnsignedIntPointerArithmetic: got=%d expected=1 running=%d\n", temporary, result);
+
+            temporary = testUnsignedIntIncrement();
+            result += temporary;
+            printf("testUnsignedIntIncrement: got=%d expected=1 running=%d\n", temporary, result);
+
+            temporary = testUnsignedIntDecrement();
+            result += temporary;
+            printf("testUnsignedIntDecrement: got=%d expected=1 running=%d\n", temporary, result);
+
+            temporary = testUnsignedIntPreIncrement();
+            result += temporary;
+            printf("testUnsignedIntPreIncrement: got=%d expected=1 running=%d\n", temporary, result);
+
+            temporary = testUnsignedIntPreDecrement();
+            result += temporary;
+            printf("testUnsignedIntPreDecrement: got=%d expected=1 running=%d\n", temporary, result);
+
+            temporary = testUnsignedIntFunctionParameter();
+            result += temporary;
+            printf("testUnsignedIntFunctionParameter: got=%d expected=1 running=%d\n", temporary, result);
+
+            temporary = testUnsignedIntFunctionReturn();
+            result += temporary;
+            printf("testUnsignedIntFunctionReturn: got=%d expected=1 running=%d\n", temporary, result);
+
+            temporary = testUnsignedIntSignedMixed();
+            result += temporary;
+            printf("testUnsignedIntSignedMixed: got=%d expected=1 running=%d\n", temporary, result);
+
+            temporary = testUnsignedIntSignedMixedArithmetic();
+            result += temporary;
+            printf("testUnsignedIntSignedMixedArithmetic: got=%d expected=1 running=%d\n", temporary, result);
+
+            temporary = testUnsignedIntZero();
+            result += temporary;
+            printf("testUnsignedIntZero: got=%d expected=1 running=%d\n", temporary, result);
+
+            temporary = testUnsignedIntMaximum();
+            result += temporary;
+            printf("testUnsignedIntMaximum: got=%d expected=1 running=%d\n", temporary, result);
+
+            temporary = testUnsignedIntWraparound();
+            result += temporary;
+            printf("testUnsignedIntWraparound: got=%d expected=1 running=%d\n", temporary, result);
+
+            temporary = testUnsignedIntArrayPointerIncrement();
+            result += temporary;
+            printf("testUnsignedIntArrayPointerIncrement: got=%d expected=1 running=%d\n", temporary, result);
+
+            printf("FINAL: got=%d expected=18\n", result);
+        
             printf("FINAL: got=%d expected=%d difference=%d\n", result, finalExpectedResult, result - finalExpectedResult);
 
             if (result == finalExpectedResult)
