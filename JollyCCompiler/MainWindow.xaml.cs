@@ -1608,9 +1608,488 @@ namespace JollyCCompiler
 
         }
 
+        int testShortValues()
+        {
+            short a;
+            short b;
+            short c;
+            int result;
+
+            a = 10;
+            b = 20;
+            c = 30;
+
+            result = a;
+            result += b;
+            result += c;
+
+            return result;
+        }
+
+        int testShortNegative()
+        {
+            short a;
+            short b;
+            int result;
+
+            a = -100;
+            b = -50;
+
+            result = a;
+            result += b;
+
+            return result;
+        }
+
+        int testShortBoundaries()
+        {
+            short maximum;
+            short minimum;
+            int result;
+
+            maximum = 32767;
+            minimum = -32768;
+
+            result = maximum;
+            result += minimum;
+
+            return result;
+        }
+
+        int testShortTruncation()
+        {
+            short value;
+            int result;
+
+            value = 65536;
+            result = value;
+
+            return result;
+        }
+
+        int testShortWrapPositive()
+        {
+            short value;
+            int result;
+
+            value = 32767;
+            value++;
+
+            result = value;
+
+            return result;
+        }
+
+        int testShortWrapNegative()
+        {
+            short value;
+            int result;
+
+            value = -32768;
+            value--;
+
+            result = value;
+
+            return result;
+        }
+
+        int testUnsignedShortValues()
+        {
+            unsigned short a;
+            unsigned short b;
+            unsigned short c;
+            int result;
+
+            a = 100;
+            b = 200;
+            c = 300;
+
+            result = a;
+            result += b;
+            result += c;
+
+            return result;
+        }
+
+        int testUnsignedShortMaximum()
+        {
+            unsigned short value;
+            int result;
+
+            value = 65535;
+            result = value;
+
+            return result;
+        }
+
+        int testUnsignedShortTruncation()
+        {
+            unsigned short value;
+            int result;
+
+            value = 65536;
+            result = value;
+
+            return result;
+        }
+
+        int testShortCompound()
+        {
+            short value;
+
+            value = 100;
+
+            value += 50;
+            value -= 25;
+            value *= 2;
+            value /= 5;
+            value %= 7;
+
+            return value;
+        }
+
+        int testShortArray()
+        {
+            short values[5];
+            int result;
+
+            values[0] = 10;
+            values[1] = 20;
+            values[2] = 30;
+            values[3] = 40;
+            values[4] = 50;
+
+            result = values[0];
+            result += values[1];
+            result += values[2];
+            result += values[3];
+            result += values[4];
+
+            return result;
+        }
+
+        int testShortArrayCompound()
+        {
+            short values[4];
+
+            values[0] = 10;
+            values[1] = 20;
+            values[2] = 30;
+            values[3] = 40;
+
+            values[0] += 5;
+            values[1] -= 5;
+            values[2] *= 2;
+            values[3] /= 2;
+
+            return values[0] + values[1] + values[2] + values[3];
+        }
+
+        int testShortArrayIncrement()
+        {
+            short values[4];
+            int result;
+
+            values[0] = 10;
+            values[1] = 20;
+            values[2] = 30;
+            values[3] = 40;
+
+            values[0]++;
+            ++values[1];
+            values[2]--;
+            --values[3];
+
+            result = values[0];
+            result += values[1];
+            result += values[2];
+            result += values[3];
+
+            return result;
+        }
+
+        int testShortPointer()
+        {
+            short value;
+            short* pointer;
+
+            value = 123;
+            pointer = &value;
+
+            return *pointer;
+        }
+
+        int testShortPointerWrite()
+        {
+            short value;
+            short* pointer;
+
+            value = 100;
+            pointer = &value;
+
+            *pointer = 456;
+
+            return *pointer;
+        }
+
+        int testShortPointerCompound()
+        {
+            short value;
+            short* pointer;
+
+            value = 100;
+            pointer = &value;
+
+            *pointer += 50;
+            *pointer -= 25;
+
+            return *pointer;
+        }
+
+        int testShortPointerIncrement()
+        {
+            short value;
+            short* pointer;
+            int result;
+
+            value = 10;
+            pointer = &value;
+
+            result = (*pointer)++;
+            result += ++(*pointer);
+            result += (*pointer)--;
+            result += --(*pointer);
+
+            return result;
+        }
+
+        int testShortPointerArray()
+        {
+            short values[4];
+            short* pointer;
+            int result;
+
+            values[0] = 10;
+            values[1] = 20;
+            values[2] = 30;
+            values[3] = 40;
+
+            pointer = values;
+
+            result = *pointer;
+            pointer++;
+            result += *pointer;
+            pointer++;
+            result += *pointer;
+            pointer++;
+            result += *pointer;
+
+            return result;
+        }
+
+        int testShortStruct()
+        {
+            struct ShortData
+            {
+                short value;
+                short count;
+            };
+
+            struct ShortData data;
+            int result;
+
+            data.value = 100;
+            data.count = 25;
+
+            result = data.value;
+            result += data.count;
+
+            return result;
+        }
+
+        int testShortStructCompound()
+        {
+            struct ShortData
+            {
+                short value;
+                short count;
+            };
+
+            struct ShortData data;
+
+            data.value = 100;
+            data.count = 50;
+
+            data.value += 25;
+            data.count *= 2;
+
+            return data.value + data.count;
+        }
+
+        int testShortStructPointer()
+        {
+            struct ShortData
+            {
+                short value;
+                short count;
+            };
+
+            struct ShortData data;
+            struct ShortData* pointer;
+
+            data.value = 100;
+            data.count = 25;
+
+            pointer = &data;
+
+            pointer->value = 200;
+            pointer->count = 50;
+
+            return pointer->value + pointer->count;
+        }
+
+        union ShortValue
+        {
+            short number;
+            unsigned short unsignedNumber;
+        };
+
+        int testShortUnion()
+        {
+            union ShortValue value;
+
+            value.number = 1234;
+
+            return value.number;
+        }
+
+        int testUnsignedShortUnion()
+        {
+            union ShortValue value;
+
+            value.unsignedNumber = 65535;
+
+            return value.unsignedNumber;
+        }
+
+        short returnShort(short value)
+        {
+            return value;
+        }
+
+        unsigned short returnUnsignedShort(unsigned short value)
+        {
+            return value;
+        }
+
+        int testShortFunction()
+        {
+            short value;
+
+            value = 1234;
+
+            return returnShort(value);
+        }
+
+        int testUnsignedShortFunction()
+        {
+            unsigned short value;
+
+            value = 60000;
+
+            return returnUnsignedShort(value);
+        }
+
+        int testShortFunctionArithmetic()
+        {
+            short a;
+            short b;
+
+            a = 100;
+            b = 50;
+
+            return returnShort(a + b);
+        }
+
+        int testShortRelations()
+        {
+            short a;
+            short b;
+            int result;
+
+            a = -10;
+            b = 20;
+            result = 0;
+
+            if (a < b)
+            {
+                result += 1;
+            }
+
+            if (a <= b)
+            {
+                result += 2;
+            }
+
+            if (b > a)
+            {
+                result += 4;
+            }
+
+            if (b >= a)
+            {
+                result += 8;
+            }
+
+            if (a != b)
+            {
+                result += 16;
+            }
+
+            return result;
+        }
+
+        int testUnsignedShortRelations()
+        {
+            unsigned short a;
+            unsigned short b;
+            int result;
+
+            a = 100;
+            b = 200;
+            result = 0;
+
+            if (a < b)
+            {
+                result += 1;
+            }
+
+            if (a <= b)
+            {
+                result += 2;
+            }
+
+            if (b > a)
+            {
+                result += 4;
+            }
+
+            if (b >= a)
+            {
+                result += 8;
+            }
+
+            if (a != b)
+            {
+                result += 16;
+            }
+
+            return result;
+        }
+        
         int main()
         {
-            const int finalExpectedResult = 19084;    
+            const int finalExpectedResult = 215151;    
             int result;
             int temporary;
 
@@ -1925,6 +2404,117 @@ namespace JollyCCompiler
         	result += temporary;
         	printf("testPointerArithmeticRegression: got=%d expected=30 running=%d\n", temporary, result);
 
+            temporary = testShortValues();
+            result += temporary;
+            printf("testShortValues: got=%d expected=60 running=%d\n", temporary, result);
+
+            temporary = testShortNegative();
+            result += temporary;
+            printf("testShortNegative: got=%d expected=-150 running=%d\n", temporary, result);
+
+            temporary = testShortBoundaries();
+            result += temporary;
+            printf("testShortBoundaries: got=%d expected=-1 running=%d\n", temporary, result);
+
+            temporary = testShortTruncation();
+            result += temporary;
+            printf("testShortTruncation: got=%d expected=0 running=%d\n", temporary, result);
+
+            temporary = testShortWrapPositive();
+            result += temporary;
+            printf("testShortWrapPositive: got=%d expected=-32768 running=%d\n", temporary, result);
+
+            temporary = testShortWrapNegative();
+            result += temporary;
+            printf("testShortWrapNegative: got=%d expected=32767 running=%d\n", temporary, result);
+
+            temporary = testUnsignedShortValues();
+            result += temporary;
+            printf("testUnsignedShortValues: got=%d expected=600 running=%d\n", temporary, result);
+
+            temporary = testUnsignedShortMaximum();
+            result += temporary;
+            printf("testUnsignedShortMaximum: got=%d expected=65535 running=%d\n", temporary, result);
+
+            temporary = testUnsignedShortTruncation();
+            result += temporary;
+            printf("testUnsignedShortTruncation: got=%d expected=0 running=%d\n", temporary, result);
+
+            temporary = testShortCompound();
+            result += temporary;
+            printf("testShortCompound: got=%d expected=1 running=%d\n", temporary, result);
+
+            temporary = testShortArray();
+            result += temporary;
+            printf("testShortArray: got=%d expected=150 running=%d\n", temporary, result);
+
+            temporary = testShortArrayCompound();
+            result += temporary;
+            printf("testShortArrayCompound: got=%d expected=110 running=%d\n", temporary, result);
+
+            temporary = testShortArrayIncrement();
+            result += temporary;
+            printf("testShortArrayIncrement: got=%d expected=100 running=%d\n", temporary, result);
+
+            temporary = testShortPointer();
+            result += temporary;
+            printf("testShortPointer: got=%d expected=123 running=%d\n", temporary, result);
+
+            temporary = testShortPointerWrite();
+            result += temporary;
+            printf("testShortPointerWrite: got=%d expected=456 running=%d\n", temporary, result);
+
+            temporary = testShortPointerCompound();
+            result += temporary;
+            printf("testShortPointerCompound: got=%d expected=125 running=%d\n", temporary, result);
+
+            temporary = testShortPointerIncrement();
+            result += temporary;
+            printf("testShortPointerIncrement: got=%d expected=44 running=%d\n", temporary, result);
+
+            temporary = testShortPointerArray();
+            result += temporary;
+            printf("testShortPointerArray: got=%d expected=100 running=%d\n", temporary, result);
+
+            temporary = testShortStruct();
+            result += temporary;
+            printf("testShortStruct: got=%d expected=125 running=%d\n", temporary, result);
+
+            temporary = testShortStructCompound();
+            result += temporary;
+            printf("testShortStructCompound: got=%d expected=225 running=%d\n", temporary, result);
+
+            temporary = testShortStructPointer();
+            result += temporary;
+            printf("testShortStructPointer: got=%d expected=250 running=%d\n", temporary, result);
+
+            temporary = testShortUnion();
+            result += temporary;
+            printf("testShortUnion: got=%d expected=1234 running=%d\n", temporary, result);
+
+            temporary = testUnsignedShortUnion();
+            result += temporary;
+            printf("testUnsignedShortUnion: got=%d expected=65535 running=%d\n", temporary, result);
+
+            temporary = testShortFunction();
+            result += temporary;
+            printf("testShortFunction: got=%d expected=1234 running=%d\n", temporary, result);
+
+            temporary = testUnsignedShortFunction();
+            result += temporary;
+            printf("testUnsignedShortFunction: got=%d expected=60000 running=%d\n", temporary, result);
+
+            temporary = testShortFunctionArithmetic();
+            result += temporary;
+            printf("testShortFunctionArithmetic: got=%d expected=150 running=%d\n", temporary, result);
+
+            temporary = testShortRelations();
+            result += temporary;
+            printf("testShortRelations: got=%d expected=31 running=%d\n", temporary, result);
+
+            temporary = testUnsignedShortRelations();
+            result += temporary;
+            printf("testUnsignedShortRelations: got=%d expected=31 running=%d\n", temporary, result);
             printf("FINAL: got=%d expected=%d difference=%d\n", result, finalExpectedResult, result - finalExpectedResult);
 
             if (result == finalExpectedResult)
@@ -1936,7 +2526,7 @@ namespace JollyCCompiler
 
         private void New_Click(object sender, RoutedEventArgs e)
         {
-            Editor.Text = SampleSource;
+            Editor.Text = "";
             _currentFile = null;
             StatusText.Text = "New source file";
             Output.Clear();

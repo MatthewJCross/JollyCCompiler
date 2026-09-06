@@ -9,6 +9,8 @@ namespace JollyCCompiler.Compiler.Parsing
     {
         private readonly IReadOnlyList<Token> _tokens;
         private readonly List<Diagnostic> _diagnostics = new();
+        private readonly List<StructDeclarationNode> _structs = new();
+        private readonly List<UnionDeclarationNode> _unions = new();
         private int _position;
 
         public Parser(IReadOnlyList<Token> tokens) { _tokens = tokens ?? throw new ArgumentNullException(nameof(tokens)); }
@@ -18,8 +20,9 @@ namespace JollyCCompiler.Compiler.Parsing
 
         public ProgramNode ParseProgram()
         {
-            var structs = new List<StructDeclarationNode>();
-            var unions = new List<UnionDeclarationNode>();
+            _structs.Clear();
+            _unions.Clear();
+
             var functions = new List<FunctionNode>();
 
             while (Current.Kind != TokenKind.EndOfFile)
@@ -30,13 +33,13 @@ namespace JollyCCompiler.Compiler.Parsing
                 {
                     var structDeclaration = ParseStructDeclaration();
                     if (structDeclaration is not null)
-                        structs.Add(structDeclaration);
+                        _structs.Add(structDeclaration);
                 }
                 else if (IsUnionDeclaration())
                 {
                     var unionDeclaration = ParseUnionDeclaration();
                     if (unionDeclaration is not null)
-                        unions.Add(unionDeclaration);
+                        _unions.Add(unionDeclaration);
                 }
                 else
                 {
@@ -49,7 +52,7 @@ namespace JollyCCompiler.Compiler.Parsing
                     Synchronize();
             }
 
-            return new ProgramNode(structs, unions, functions);
+            return new ProgramNode(_structs, _unions, functions);
         }
 
         private bool IsStructDeclaration()
@@ -208,7 +211,11 @@ namespace JollyCCompiler.Compiler.Parsing
         {
             string? type;
 
-            if (Current.Kind == TokenKind.Int)
+            if (Current.Kind == TokenKind.Short)
+            {
+                type = AdvanceAndReturn("short");
+            }
+            else if (Current.Kind == TokenKind.Int)
             {
                 type = AdvanceAndReturn("int");
             }
@@ -228,6 +235,30 @@ namespace JollyCCompiler.Compiler.Parsing
                 { 
                     type = "long"; 
                 } 
+            }
+            else if (Current.Kind == TokenKind.Unsigned)
+            {
+                Advance();
+
+                if (Current.Kind == TokenKind.Char)
+                {
+                    Advance();
+                    type = "unsigned char";
+                }
+                else if (Current.Kind == TokenKind.Short)
+                {
+                    Advance();
+                    type = "unsigned short";
+                }
+                else if (Current.Kind == TokenKind.Int)
+                {
+                    Advance();
+                    type = "unsigned int";
+                }
+                else
+                {
+                    return ReportTypeError();
+                }
             }
             else if (Current.Kind == TokenKind.Void)
             {
@@ -277,7 +308,7 @@ namespace JollyCCompiler.Compiler.Parsing
 
         private string? ReportTypeError()
         {
-            Error("Expected type ('int', 'char' or 'void').");
+            Error("Expected a valid type.");
             return null;
         }
 
@@ -304,16 +335,51 @@ namespace JollyCCompiler.Compiler.Parsing
 
         private StatementNode? ParseStatement()
         {
-            if (Current.Kind is TokenKind.Const or TokenKind.Int or TokenKind.Char or TokenKind.Struct or TokenKind.Union) return ParseVariableDeclaration();
-            if (Current.Kind == TokenKind.For) return ParseFor();
-            if (Current.Kind == TokenKind.While) return ParseWhile();
-            if (Current.Kind == TokenKind.Do) return ParseDoWhile();
-            if (Current.Kind == TokenKind.Return) return ParseReturn();
-            if (Current.Kind == TokenKind.LeftBrace) return ParseBlock();
-            if (Current.Kind == TokenKind.If) return ParseIf();
-            if (Current.Kind == TokenKind.Break) return ParseBreak();
-            if (Current.Kind == TokenKind.Continue) return ParseContinue();
-            if (Current.Kind == TokenKind.Switch) return ParseSwitch();
+            if (IsStructDeclaration())
+            {
+                var declaration = ParseStructDeclaration();
+                if (declaration is not null)
+                    _structs.Add(declaration);
+                return null;
+            }
+
+            if (IsUnionDeclaration())
+            {
+                var declaration = ParseUnionDeclaration();
+                if (declaration is not null)
+                    _unions.Add(declaration);
+                return null;
+            }
+
+            if (Current.Kind is TokenKind.Const or TokenKind.Short or TokenKind.Int or TokenKind.Char or TokenKind.Unsigned or TokenKind.Struct or TokenKind.Union)
+                return ParseVariableDeclaration();
+
+            if (Current.Kind == TokenKind.For)
+                return ParseFor();
+
+            if (Current.Kind == TokenKind.While)
+                return ParseWhile();
+
+            if (Current.Kind == TokenKind.Do)
+                return ParseDoWhile();
+
+            if (Current.Kind == TokenKind.Return)
+                return ParseReturn();
+
+            if (Current.Kind == TokenKind.LeftBrace)
+                return ParseBlock();
+
+            if (Current.Kind == TokenKind.If)
+                return ParseIf();
+
+            if (Current.Kind == TokenKind.Break)
+                return ParseBreak();
+
+            if (Current.Kind == TokenKind.Continue)
+                return ParseContinue();
+
+            if (Current.Kind == TokenKind.Switch)
+                return ParseSwitch();
 
             if (Current.Kind == TokenKind.Semicolon)
             {
@@ -369,7 +435,7 @@ namespace JollyCCompiler.Compiler.Parsing
 
             StatementNode? initializer = null;
 
-            if (Current.Kind is TokenKind.Const or TokenKind.Int or TokenKind.Char or TokenKind.Struct or TokenKind.Union)
+            if (Current.Kind is TokenKind.Const or TokenKind.Short or TokenKind.Int or TokenKind.Char or TokenKind.Unsigned or TokenKind.Struct or TokenKind.Union)
             {
                 initializer = ParseVariableDeclaration();
             }
@@ -628,7 +694,7 @@ namespace JollyCCompiler.Compiler.Parsing
                 Advance();
                 Expect(TokenKind.LeftParen, "Expected '(' after 'sizeof'.");
 
-                if (Current.Kind is TokenKind.Int or TokenKind.Char or TokenKind.Void or TokenKind.Struct or TokenKind.Union)
+                if (Current.Kind is TokenKind.Short or TokenKind.Int or TokenKind.Char or TokenKind.Long or TokenKind.Unsigned or TokenKind.Void or TokenKind.Struct or TokenKind.Union)
                 {
                     var type = ParseType();
                     Expect(TokenKind.RightParen, "Expected ')' after sizeof type.");
@@ -721,6 +787,12 @@ namespace JollyCCompiler.Compiler.Parsing
             {
                 var token = Advance();
                 return new StringExpression(token.Text);
+            }
+
+            if (Current.Kind == TokenKind.CharLiteral)
+            {
+                var token = Advance();
+                return new IntegerExpression(token.Text.Length > 0 ? token.Text[0] : 0);
             }
 
             if (Current.Kind == TokenKind.Identifier)

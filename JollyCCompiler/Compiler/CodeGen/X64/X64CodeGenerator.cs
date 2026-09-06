@@ -1,10 +1,6 @@
 ﻿using JollyCCompiler.Compiler.Lexing;
 using JollyCCompiler.Compiler.Syntax;
-using System.Diagnostics;
-using System.Runtime.CompilerServices;
 using System.Text;
-using System.Windows;
-using System.Windows.Documents;
 
 namespace JollyCCompiler.Compiler.CodeGen.X64
 {
@@ -61,18 +57,15 @@ namespace JollyCCompiler.Compiler.CodeGen.X64
                 GenerateFunction(function, emitter, data, variables, arrays, parameters, frameSize);
             }
 
-            return new X64CodeGenerationResult(
-                emitter.GetCode(),
-                emitter.Instructions,
-                emitter.Fixups,
-                data,
-                emitter.Labels);
+            return new X64CodeGenerationResult(emitter.GetCode(), emitter.Instructions, emitter.Fixups, data, emitter.Labels);
         }
 
         private static int GetTypeSize(string type) => type switch
         {
             "char" => 1,
+            "unsigned char" => 1,
             "short" => 2,
+            "unsigned short" => 2,
             "int" => 4,
             "long" => 4,
             "long long" => 8,
@@ -83,6 +76,17 @@ namespace JollyCCompiler.Compiler.CodeGen.X64
             _ when type.StartsWith("union ", StringComparison.Ordinal) => GetUnionSize(type[6..]),
             _ => throw new NotSupportedException($"Cannot determine the size of type '{type}'.")
         };
+
+        private static bool IsUnsignedChar(string type) => string.Equals(type, "unsigned char", StringComparison.Ordinal);
+        private static bool IsUnsignedShort(string type) => string.Equals(type, "unsigned short", StringComparison.Ordinal);
+
+        private static void LoadShortFromMemory(X64Emitter emitter, string type) 
+        { 
+            if (IsUnsignedShort(type)) 
+                emitter.EmitBytes(0x0F, 0xB7, 0x00); 
+            else 
+                emitter.EmitBytes(0x0F, 0xBF, 0x00); 
+        }
 
         private static int GetStructSize(string name)
         {
@@ -213,7 +217,6 @@ namespace JollyCCompiler.Compiler.CodeGen.X64
         private static void GenerateFunction(FunctionNode function, X64Emitter emitter, List<X64DataItem> data, Dictionary<string, (int Offset, string Type, bool IsConst)> variables, Dictionary<string, (int Length, string Type)> arrays, Dictionary<string, (int Index, string Type)> parameters, int frameSize)
         {
             var functionLabel = $"$fn_{function.Name}";
-
             emitter.MarkLabel(functionLabel);
             emitter.PushRbp();
             emitter.MovRbpRsp();
@@ -223,7 +226,7 @@ namespace JollyCCompiler.Compiler.CodeGen.X64
             {
                 var offset = -(parameter.Value.Index + 1) * 8;
                 var isPointer = parameter.Value.Type.EndsWith("*", StringComparison.Ordinal);
-                var isChar = GetTypeSize(parameter.Value.Type) == 1;
+                var parameterSize = GetTypeSize(parameter.Value.Type);
 
                 switch (parameter.Value.Index)
                 {
@@ -233,15 +236,25 @@ namespace JollyCCompiler.Compiler.CodeGen.X64
                             emitter.MovRaxRcx();
                             emitter.MovRbpDisp8Rax(offset);
                         }
-                        else if (isChar)
+                        else if (parameterSize == 1)
                         {
                             emitter.MovEaxEcx();
                             emitter.MovRbpDisp32Al(offset);
                         }
-                        else
+                        else if (parameterSize == 2)
+                        {
+                            emitter.MovEaxEcx();
+                            emitter.EmitBytes(0x66, 0x89, 0x45, unchecked((byte)offset));
+                        }
+                        else if (parameterSize == 4)
                         {
                             emitter.MovEaxEcx();
                             emitter.MovRbpDisp8Eax(offset);
+                        }
+                        else
+                        {
+                            emitter.MovRaxRcx();
+                            emitter.MovRbpDisp8Rax(offset);
                         }
                         break;
 
@@ -251,15 +264,25 @@ namespace JollyCCompiler.Compiler.CodeGen.X64
                             emitter.MovRaxRdx();
                             emitter.MovRbpDisp8Rax(offset);
                         }
-                        else if (isChar)
+                        else if (parameterSize == 1)
                         {
                             emitter.MovEaxEdx();
                             emitter.MovRbpDisp32Al(offset);
                         }
-                        else
+                        else if (parameterSize == 2)
+                        {
+                            emitter.MovEaxEdx();
+                            emitter.EmitBytes(0x66, 0x89, 0x55, unchecked((byte)offset));
+                        }
+                        else if (parameterSize == 4)
                         {
                             emitter.MovEaxEdx();
                             emitter.MovRbpDisp8Eax(offset);
+                        }
+                        else
+                        {
+                            emitter.MovRaxRdx();
+                            emitter.MovRbpDisp8Rax(offset);
                         }
                         break;
 
@@ -269,15 +292,25 @@ namespace JollyCCompiler.Compiler.CodeGen.X64
                             emitter.MovRaxR8();
                             emitter.MovRbpDisp8Rax(offset);
                         }
-                        else if (isChar)
+                        else if (parameterSize == 1)
                         {
                             emitter.MovEaxR8d();
                             emitter.MovRbpDisp32Al(offset);
                         }
-                        else
+                        else if (parameterSize == 2)
+                        {
+                            emitter.MovEaxR8d();
+                            emitter.EmitBytes(0x66, 0x44, 0x89, 0x45, unchecked((byte)offset));
+                        }
+                        else if (parameterSize == 4)
                         {
                             emitter.MovEaxR8d();
                             emitter.MovRbpDisp8Eax(offset);
+                        }
+                        else
+                        {
+                            emitter.MovRaxR8();
+                            emitter.MovRbpDisp8Rax(offset);
                         }
                         break;
 
@@ -287,15 +320,25 @@ namespace JollyCCompiler.Compiler.CodeGen.X64
                             emitter.MovRaxR9();
                             emitter.MovRbpDisp8Rax(offset);
                         }
-                        else if (isChar)
+                        else if (parameterSize == 1)
                         {
                             emitter.MovEaxR9d();
                             emitter.MovRbpDisp32Al(offset);
                         }
-                        else
+                        else if (parameterSize == 2)
+                        {
+                            emitter.MovEaxR9d();
+                            emitter.EmitBytes(0x66, 0x44, 0x89, 0x4D, unchecked((byte)offset));
+                        }
+                        else if (parameterSize == 4)
                         {
                             emitter.MovEaxR9d();
                             emitter.MovRbpDisp8Eax(offset);
+                        }
+                        else
+                        {
+                            emitter.MovRaxR9();
+                            emitter.MovRbpDisp8Rax(offset);
                         }
                         break;
                 }
@@ -310,14 +353,7 @@ namespace JollyCCompiler.Compiler.CodeGen.X64
             emitter.Ret();
         }
 
-        private static void GenerateStatement(
-            StatementNode statement,
-            X64Emitter emitter,
-            List<X64DataItem> data,
-            Dictionary<string, (int Offset, string Type, bool IsConst)> variables,
-            Dictionary<string, (int Length, string Type)> arrays,
-            Dictionary<string, (int Index, string Type)> parameters,
-            int frameSize)
+        private static void GenerateStatement(StatementNode statement, X64Emitter emitter, List<X64DataItem> data, Dictionary<string, (int Offset, string Type, bool IsConst)> variables, Dictionary<string, (int Length, string Type)> arrays, Dictionary<string, (int Index, string Type)> parameters, int frameSize)
         {
             switch (statement)
             {
@@ -371,13 +407,7 @@ namespace JollyCCompiler.Compiler.CodeGen.X64
             }
         }
 
-        private static void GenerateVariableDeclaration(
-            VariableDeclarationStatement statement,
-            X64Emitter emitter,
-            List<X64DataItem> data,
-            Dictionary<string, (int Offset, string Type, bool IsConst)> variables,
-            Dictionary<string, (int Length, string Type)> arrays,
-            Dictionary<string, (int Index, string Type)> parameters)
+        private static void GenerateVariableDeclaration(VariableDeclarationStatement statement, X64Emitter emitter, List<X64DataItem> data, Dictionary<string, (int Offset, string Type, bool IsConst)> variables, Dictionary<string, (int Length, string Type)> arrays, Dictionary<string, (int Index, string Type)> parameters)
         {
             if (!variables.TryGetValue(statement.Name, out var variable))
                 throw new InvalidOperationException($"Variable '{statement.Name}' has no stack slot.");
@@ -398,6 +428,14 @@ namespace JollyCCompiler.Compiler.CodeGen.X64
                 return;
             }
 
+            if (statement.Type.StartsWith("union ", StringComparison.Ordinal))
+            {
+                if (statement.Initializer is not null)
+                    throw new NotSupportedException($"Union initializer for '{statement.Name}' is not yet supported.");
+
+                return;
+            }
+
             if (statement.Initializer is null)
             {
                 if (statement.Type.EndsWith("*", StringComparison.Ordinal))
@@ -410,12 +448,20 @@ namespace JollyCCompiler.Compiler.CodeGen.X64
                 GenerateExpression(statement.Initializer, emitter, data, variables, arrays, parameters);
             }
 
+            var typeSize = GetTypeSize(statement.Type);
+
             if (statement.Type.EndsWith("*", StringComparison.Ordinal))
                 emitter.MovRbpDisp8Rax(variable.Offset);
-            else if (GetTypeSize(statement.Type) == 1)
+            else if (typeSize == 1)
                 emitter.MovRbpDisp32Al(variable.Offset);
-            else
+            else if (typeSize == 2)
+                emitter.EmitBytes(0x66, 0x89, 0x45, unchecked((byte)variable.Offset));
+            else if (typeSize == 4)
                 emitter.MovRbpDisp32Eax(variable.Offset);
+            else if (typeSize == 8)
+                emitter.MovRbpDisp8Rax(variable.Offset);
+            else
+                throw new NotSupportedException($"Initialization of type '{statement.Type}' is not yet supported.");
         }
 
         private static void GenerateReturn(ReturnStatement statement, X64Emitter emitter, List<X64DataItem> data, Dictionary<string, (int Offset, string Type, bool IsConst)> variables, Dictionary<string, (int Length, string Type)> arrays, Dictionary<string, (int Index, string Type)> parameters, int frameSize)
@@ -622,14 +668,38 @@ namespace JollyCCompiler.Compiler.CodeGen.X64
                 {
                     emitter.MovRaxRbpDisp8(variable.Offset);
                 }
-                else if (GetTypeSize(variable.Type) == 1)
-                {
-                    emitter.MovAlRbpDisp32(variable.Offset);
-                    emitter.MovzxEaxAl();
-                }
                 else
                 {
-                    emitter.MovEaxRbpDisp32(variable.Offset);
+                    var typeSize = GetTypeSize(variable.Type);
+
+                    if (typeSize == 1)
+                    {
+                        emitter.MovAlRbpDisp32(variable.Offset);
+
+                        if (IsUnsignedChar(variable.Type))
+                            emitter.MovzxEaxAl();
+                        else
+                            emitter.EmitBytes(0x0F, 0xBE, 0xC0);
+                    }
+                    else if (typeSize == 2)
+                    {
+                        if (IsUnsignedShort(variable.Type))
+                            emitter.EmitBytes(0x0F, 0xB7, 0x45, unchecked((byte)variable.Offset));
+                        else
+                            emitter.EmitBytes(0x0F, 0xBF, 0x45, unchecked((byte)variable.Offset));
+                    }
+                    else if (typeSize == 4)
+                    {
+                        emitter.MovEaxRbpDisp32(variable.Offset);
+                    }
+                    else if (typeSize == 8)
+                    {
+                        emitter.MovRaxRbpDisp8(variable.Offset);
+                    }
+                    else
+                    {
+                        throw new NotSupportedException($"Identifier type '{variable.Type}' is not yet supported.");
+                    }
                 }
 
                 return;
@@ -638,19 +708,39 @@ namespace JollyCCompiler.Compiler.CodeGen.X64
             if (parameters.TryGetValue(expression.Name, out var parameter))
             {
                 var offset = -(parameter.Index + 1) * 8;
+                var typeSize = GetTypeSize(parameter.Type);
 
                 if (parameter.Type.EndsWith("*", StringComparison.Ordinal))
                 {
                     emitter.MovRaxRbpDisp8(offset);
                 }
-                else if (GetTypeSize(parameter.Type) == 1)
+                else if (typeSize == 1)
                 {
                     emitter.MovAlRbpDisp32(offset);
-                    emitter.MovzxEaxAl();
+
+                    if (IsUnsignedChar(parameter.Type))
+                        emitter.MovzxEaxAl();
+                    else
+                        emitter.EmitBytes(0x0F, 0xBE, 0xC0);
+                }
+                else if (typeSize == 2)
+                {
+                    if (IsUnsignedShort(parameter.Type))
+                        emitter.EmitBytes(0x0F, 0xB7, 0x45, unchecked((byte)offset));
+                    else
+                        emitter.EmitBytes(0x0F, 0xBF, 0x45, unchecked((byte)offset));
+                }
+                else if (typeSize == 4)
+                {
+                    emitter.MovEaxRbpDisp32(offset);
+                }
+                else if (typeSize == 8)
+                {
+                    emitter.MovRaxRbpDisp8(offset);
                 }
                 else
                 {
-                    emitter.MovEaxRbpDisp32(offset);
+                    throw new NotSupportedException($"Parameter type '{parameter.Type}' is not yet supported.");
                 }
 
                 return;
@@ -860,13 +950,7 @@ namespace JollyCCompiler.Compiler.CodeGen.X64
             GenerateLValueAddress(expression.Operand, emitter, data, variables, arrays, parameters);
         }
 
-        private static void GenerateDereferenceExpression(
-            DereferenceExpression expression,
-            X64Emitter emitter,
-            List<X64DataItem> data,
-            Dictionary<string, (int Offset, string Type, bool IsConst)> variables,
-            Dictionary<string, (int Length, string Type)> arrays,
-            Dictionary<string, (int Index, string Type)> parameters)
+        private static void GenerateDereferenceExpression(DereferenceExpression expression, X64Emitter emitter, List<X64DataItem> data, Dictionary<string, (int Offset, string Type, bool IsConst)> variables, Dictionary<string, (int Length, string Type)> arrays, Dictionary<string, (int Index, string Type)> parameters)
         {
             if (!TryGetPointerType(expression.Operand, variables, arrays, parameters, out var pointerType))
                 throw new InvalidOperationException("Cannot determine pointer type for dereference.");
@@ -877,7 +961,14 @@ namespace JollyCCompiler.Compiler.CodeGen.X64
             var pointeeSize = GetTypeSize(pointeeType);
 
             if (pointeeSize == 1)
-                emitter.MovzxEaxRaxMemoryByte();
+            {
+                if (pointeeType == "unsigned char")
+                    emitter.MovzxEaxRaxMemoryByte();
+                else
+                    emitter.MovsxEaxRaxMemoryByte();
+            }
+            else if (pointeeSize == 2)
+                LoadShortFromMemory(emitter, pointeeType);
             else if (pointeeSize == 4)
                 emitter.MovEaxRaxMemory();
             else if (pointeeSize == 8)
@@ -957,7 +1048,19 @@ namespace JollyCCompiler.Compiler.CodeGen.X64
             var elementSize = GetTypeSize(elementType);
 
             if (elementSize == 1)
-                emitter.MovzxEaxRaxMemoryByte();
+            {
+                if (elementType == "unsigned char")
+                    emitter.MovzxEaxRaxMemoryByte();
+                else
+                    emitter.MovsxEaxRaxMemoryByte();
+            }
+            else if (elementSize == 2)
+            {
+                if (string.Equals(elementType, "unsigned short", StringComparison.Ordinal))
+                    emitter.EmitBytes(0x0F, 0xB7, 0x00);
+                else
+                    emitter.EmitBytes(0x0F, 0xBF, 0x00);
+            }
             else if (elementSize == 4)
                 emitter.MovEaxRaxMemory();
             else if (elementSize == 8)
@@ -966,33 +1069,46 @@ namespace JollyCCompiler.Compiler.CodeGen.X64
                 throw new NotSupportedException($"Array element type '{elementType}' is not yet supported.");
         }
 
+        private static void GeneratePointerArraySubscriptExpression(ArraySubscriptExpression expression, string pointerType, X64Emitter emitter, List<X64DataItem> data, Dictionary<string, (int Offset, string Type, bool IsConst)> variables, Dictionary<string, (int Length, string Type)> arrays, Dictionary<string, (int Index, string Type)> parameters)
+        {
+            var elementType = pointerType[..^1];
+            var elementSize = GetTypeSize(elementType);
 
+            GenerateExpression(expression.Array, emitter, data, variables, arrays, parameters);
+            emitter.PushRax();
 
-        private static void GeneratePointerArraySubscriptExpression(ArraySubscriptExpression expression, string pointerType, X64Emitter emitter, List<X64DataItem> data, Dictionary<string, (int Offset, string Type, bool IsConst)> variables, Dictionary<string, (int Length, string Type)> arrays, Dictionary<string, (int Index, string Type)> parameters) 
-        { 
-            var elementType = pointerType[..^1]; 
-            var elementSize = GetTypeSize(elementType); 
-            GenerateExpression(expression.Array, emitter, data, variables, arrays, parameters); 
-            emitter.PushRax(); 
-            GenerateExpression(expression.Index, emitter, data, variables, arrays, parameters); 
-            if (elementSize != 1) emitter.ImulEaxImm8((byte)elementSize); 
-            emitter.MovRcxRax(); 
-            emitter.PopRax(); 
-            emitter.AddRaxRcx(); 
-            if (elementSize == 1) 
-                emitter.MovzxEaxRaxMemoryByte(); 
-            else if (elementSize == 4) emitter.MovEaxRaxMemory(); 
-            else if (elementSize == 8) emitter.MovRaxFromMemory(); 
-            else throw new NotSupportedException($"Array element type '{elementType}' is not yet supported."); 
+            GenerateExpression(expression.Index, emitter, data, variables, arrays, parameters);
+
+            if (elementSize != 1)
+                emitter.ImulEaxImm8((byte)elementSize);
+
+            emitter.MovRcxRax();
+            emitter.PopRax();
+            emitter.AddRaxRcx();
+
+            if (elementSize == 1)
+            {
+                if (elementType == "unsigned char")
+                    emitter.MovzxEaxRaxMemoryByte();
+                else
+                    emitter.MovsxEaxRaxMemoryByte();
+            }
+            else if (elementSize == 2)
+            {
+                if (string.Equals(elementType, "unsigned short", StringComparison.Ordinal))
+                    emitter.EmitBytes(0x0F, 0xB7, 0x00);
+                else
+                    emitter.EmitBytes(0x0F, 0xBF, 0x00);
+            }
+            else if (elementSize == 4)
+                emitter.MovEaxRaxMemory();
+            else if (elementSize == 8)
+                emitter.MovRaxFromMemory();
+            else
+                throw new NotSupportedException($"Array element type '{elementType}' is not yet supported.");
         }
 
-        private static void GenerateAssignmentExpression(
-            AssignmentExpression expression,
-            X64Emitter emitter,
-            List<X64DataItem> data,
-            Dictionary<string, (int Offset, string Type, bool IsConst)> variables,
-            Dictionary<string, (int Length, string Type)> arrays,
-            Dictionary<string, (int Index, string Type)> parameters)
+        private static void GenerateAssignmentExpression(AssignmentExpression expression, X64Emitter emitter, List<X64DataItem> data, Dictionary<string, (int Offset, string Type, bool IsConst)> variables, Dictionary<string, (int Length, string Type)> arrays, Dictionary<string, (int Index, string Type)> parameters)
         {
             switch (expression.Target)
             {
@@ -1040,6 +1156,11 @@ namespace JollyCCompiler.Compiler.CodeGen.X64
                     emitter.EmitBytes(0x88, 0x10);
                     emitter.MovRaxRdx();
                 }
+                else if (pointeeSize == 2)
+                {
+                    emitter.EmitBytes(0x66, 0x89, 0x10);
+                    emitter.MovRaxRdx();
+                }
                 else if (pointeeSize == 4)
                 {
                     emitter.EmitBytes(0x89, 0x10);
@@ -1057,21 +1178,39 @@ namespace JollyCCompiler.Compiler.CodeGen.X64
                 return;
             }
 
-            if (operatorKind is not TokenKind.PlusEquals && operatorKind is not TokenKind.MinusEquals && operatorKind is not TokenKind.StarEquals && operatorKind is not TokenKind.SlashEquals && operatorKind is not TokenKind.PercentEquals)
+            if (operatorKind is not TokenKind.PlusEquals &&
+                operatorKind is not TokenKind.MinusEquals &&
+                operatorKind is not TokenKind.StarEquals &&
+                operatorKind is not TokenKind.SlashEquals &&
+                operatorKind is not TokenKind.PercentEquals)
             {
                 throw new NotSupportedException($"Assignment operator '{operatorKind}' through a pointer is not supported.");
             }
 
-            if (pointeeSize != 1 && pointeeSize != 4)
+            if (pointeeSize != 1 && pointeeSize != 2 && pointeeSize != 4)
                 throw new NotSupportedException($"Compound assignment through pointer type '{pointerType}' is not yet supported.");
 
             GenerateExpression(target.Operand, emitter, data, variables, arrays, parameters);
             emitter.PushRax();
 
             if (pointeeSize == 1)
-                emitter.MovzxEaxRaxMemoryByte();
+            {
+                if (IsUnsignedChar(pointeeType))
+                    emitter.MovzxEaxRaxMemoryByte();
+                else
+                    emitter.MovsxEaxRaxMemoryByte();
+            }
+            else if (pointeeSize == 2)
+            {
+                if (IsUnsignedShort(pointeeType))
+                    emitter.EmitBytes(0x0F, 0xB7, 0x00);
+                else
+                    emitter.EmitBytes(0x0F, 0xBF, 0x00);
+            }
             else
+            {
                 emitter.MovEaxRaxMemory();
+            }
 
             emitter.PushRax();
 
@@ -1081,17 +1220,11 @@ namespace JollyCCompiler.Compiler.CodeGen.X64
             emitter.PopRax();
 
             if (operatorKind == TokenKind.PlusEquals)
-            {
                 emitter.AddEaxEcx();
-            }
             else if (operatorKind == TokenKind.MinusEquals)
-            {
                 emitter.SubEaxEcx();
-            }
             else if (operatorKind == TokenKind.StarEquals)
-            {
                 emitter.ImulEaxEcx();
-            }
             else
             {
                 emitter.Cdq();
@@ -1106,11 +1239,37 @@ namespace JollyCCompiler.Compiler.CodeGen.X64
 
             if (pointeeSize == 1)
                 emitter.EmitBytes(0x88, 0x08);
+            else if (pointeeSize == 2)
+                emitter.EmitBytes(0x66, 0x89, 0x08);
             else
                 emitter.EmitBytes(0x89, 0x08);
 
             emitter.MovRaxRcx();
             emitter.AddRsp(8);
+
+            if (pointeeSize == 1)
+                NormalizeIntegerResult(emitter, pointeeType);
+            else if (pointeeSize == 2)
+                NormalizeIntegerResult(emitter, pointeeType);
+        }
+
+        private static void NormalizeIntegerResult(X64Emitter emitter, string type) 
+        {
+            if (type == "char") 
+            { 
+                emitter.EmitBytes(0x0F, 0xBE, 0xC0); 
+            } 
+            else if (type == "unsigned char") 
+            { 
+                emitter.MovzxEaxAl();
+            } 
+            else if (type == "short")
+            { 
+                emitter.EmitBytes(0x0F, 0xBF, 0xC0); 
+            }
+            else if (type == "unsigned short") 
+            { emitter.EmitBytes(0x0F, 0xB7, 0xC0);
+            } 
         }
 
         private static void GenerateIdentifierAssignment(IdentifierExpression target, TokenKind operatorKind, ExpressionNode value, X64Emitter emitter, List<X64DataItem> data, Dictionary<string, (int Offset, string Type, bool IsConst)> variables, Dictionary<string, (int Length, string Type)> arrays, Dictionary<string, (int Index, string Type)> parameters)
@@ -1177,6 +1336,11 @@ namespace JollyCCompiler.Compiler.CodeGen.X64
 
                 if (typeSize == 1)
                     emitter.MovRbpDisp32Al(offset);
+                else if (typeSize == 2)
+                {
+                    emitter.MovRbpDisp16Ax(offset);
+                    NormalizeIntegerResult(emitter, type);
+                }
                 else if (typeSize == 4)
                     emitter.MovRbpDisp32Eax(offset);
                 else if (typeSize == 8)
@@ -1192,6 +1356,13 @@ namespace JollyCCompiler.Compiler.CodeGen.X64
                 emitter.MovAlRbpDisp32(offset);
                 emitter.MovzxEaxAl();
             }
+            else if (typeSize == 2)
+            {
+                if (IsUnsignedShort(type))
+                    emitter.EmitBytes(0x0F, 0xB7, 0x45, unchecked((byte)offset));
+                else
+                    emitter.MovsxEaxRbpDisp16(offset);
+            }
             else if (typeSize == 4)
                 emitter.MovEaxRbpDisp32(offset);
             else
@@ -1205,9 +1376,12 @@ namespace JollyCCompiler.Compiler.CodeGen.X64
             emitter.PopRax();
 
             GenerateCompoundAssignmentOperation(operatorKind, emitter);
+            NormalizeIntegerResult(emitter, type);
 
             if (typeSize == 1)
                 emitter.MovRbpDisp32Al(offset);
+            else if (typeSize == 2) 
+                emitter.MovRbpDisp16Ax(offset);
             else
                 emitter.MovRbpDisp32Eax(offset);
         }
@@ -1230,6 +1404,11 @@ namespace JollyCCompiler.Compiler.CodeGen.X64
 
                 if (elementSize == 1)
                     emitter.EmitBytes(0x88, 0x01);
+                else if (elementSize == 2)
+                {
+                    emitter.EmitBytes(0x66, 0x89, 0x01);
+                    NormalizeIntegerResult(emitter, elementType);
+                }
                 else if (elementSize == 4)
                     emitter.EmitBytes(0x89, 0x01);
                 else if (elementSize == 8)
@@ -1244,11 +1423,18 @@ namespace JollyCCompiler.Compiler.CodeGen.X64
                 return;
             }
 
-            if (elementSize != 1 && elementSize != 4)
+            if (elementSize != 1 && elementSize != 2 && elementSize != 4)
                 throw new NotSupportedException($"Compound assignment on array element type '{elementType}' is not yet supported.");
 
             if (elementSize == 1)
                 emitter.MovzxEaxRaxMemoryByte();
+            else if (elementSize == 2)
+            {
+                if (string.Equals(elementType, "unsigned short", StringComparison.Ordinal))
+                    emitter.EmitBytes(0x0F, 0xB7, 0x00);
+                else
+                    emitter.MovsxEaxRaxMemoryWord();
+            }
             else
                 emitter.MovEaxRaxMemory();
 
@@ -1261,19 +1447,29 @@ namespace JollyCCompiler.Compiler.CodeGen.X64
 
             GenerateCompoundAssignmentOperation(operatorKind, emitter);
 
+            if (elementSize == 1)
+                emitter.MovzxEaxAl();
+            else if (elementSize == 2)
+            {
+                if (IsUnsignedShort(elementType))
+                    emitter.EmitBytes(0x0F, 0xB7, 0xC0);
+                else
+                    emitter.EmitBytes(0x0F, 0xBF, 0xC0);
+            }
+
             emitter.MovEcxEax();
             emitter.MovRaxRspDisp32(0);
             emitter.AddRsp(8);
 
             if (elementSize == 1)
                 emitter.EmitBytes(0x88, 0x08);
+            else if (elementSize == 2)
+                emitter.EmitBytes(0x66, 0x89, 0x08);
             else
                 emitter.EmitBytes(0x89, 0x08);
         }
 
-        private static void GenerateCompoundAssignmentOperation(
-            TokenKind operatorKind,
-            X64Emitter emitter)
+        private static void GenerateCompoundAssignmentOperation(TokenKind operatorKind, X64Emitter emitter)
         {
             switch (operatorKind)
             {
@@ -1460,13 +1656,7 @@ namespace JollyCCompiler.Compiler.CodeGen.X64
             emitter.AddRsp(totalBytes);
         }
 
-        private static void GeneratePrintfCall(
-            CallExpression call,
-            X64Emitter emitter,
-            List<X64DataItem> data,
-            Dictionary<string, (int Offset, string Type, bool IsConst)> variables,
-            Dictionary<string, (int Length, string Type)> arrays,
-            Dictionary<string, (int Index, string Type)> parameters)
+        private static void GeneratePrintfCall(CallExpression call, X64Emitter emitter, List<X64DataItem> data, Dictionary<string, (int Offset, string Type, bool IsConst)> variables, Dictionary<string, (int Length, string Type)> arrays, Dictionary<string, (int Index, string Type)> parameters)
         {
             if (call.Arguments.Count == 0)
                 throw new NotSupportedException("printf requires a format string.");
@@ -1554,9 +1744,7 @@ namespace JollyCCompiler.Compiler.CodeGen.X64
             emitter.AddRsp(totalBytes);
         }
 
-        private static bool IsPointerExpression(
-            ExpressionNode expression,
-            Dictionary<string, (int Index, string Type)> parameters)
+        private static bool IsPointerExpression(ExpressionNode expression, Dictionary<string, (int Index, string Type)> parameters)
         {
             if (expression is IdentifierExpression identifier &&
                 parameters.TryGetValue(identifier.Name, out var parameter))
@@ -1570,13 +1758,7 @@ namespace JollyCCompiler.Compiler.CodeGen.X64
             return false;
         }
 
-        private static void GenerateComparison(
-            BinaryExpression expression,
-            X64Emitter emitter,
-            List<X64DataItem> data,
-            Dictionary<string, (int Offset, string Type, bool IsConst)> variables,
-            Dictionary<string, (int Length, string Type)> arrays,
-            Dictionary<string, (int Index, string Type)> parameters)
+        private static void GenerateComparison(BinaryExpression expression, X64Emitter emitter, List<X64DataItem> data, Dictionary<string, (int Offset, string Type, bool IsConst)> variables, Dictionary<string, (int Length, string Type)> arrays, Dictionary<string, (int Index, string Type)> parameters)
         {
             GenerateExpression(expression.Left, emitter, data, variables, arrays, parameters);
             emitter.PushRax();
@@ -1629,13 +1811,7 @@ namespace JollyCCompiler.Compiler.CodeGen.X64
             emitter.MarkLabel(endLabel);
         }
 
-        private static void GenerateLogicalAnd(
-            BinaryExpression expression,
-            X64Emitter emitter,
-            List<X64DataItem> data,
-            Dictionary<string, (int Offset, string Type, bool IsConst)> variables,
-            Dictionary<string, (int Length, string Type)> arrays,
-            Dictionary<string, (int Index, string Type)> parameters)
+        private static void GenerateLogicalAnd(BinaryExpression expression, X64Emitter emitter, List<X64DataItem> data, Dictionary<string, (int Offset, string Type, bool IsConst)> variables, Dictionary<string, (int Length, string Type)> arrays, Dictionary<string, (int Index, string Type)> parameters)
         {
             var falseLabel = emitter.CreateLabel("and_false");
             var endLabel = emitter.CreateLabel("and_end");
@@ -1657,13 +1833,7 @@ namespace JollyCCompiler.Compiler.CodeGen.X64
             emitter.MarkLabel(endLabel);
         }
 
-        private static void GenerateLogicalOr(
-            BinaryExpression expression,
-            X64Emitter emitter,
-            List<X64DataItem> data,
-            Dictionary<string, (int Offset, string Type, bool IsConst)> variables,
-            Dictionary<string, (int Length, string Type)> arrays,
-            Dictionary<string, (int Index, string Type)> parameters)
+        private static void GenerateLogicalOr(BinaryExpression expression, X64Emitter emitter, List<X64DataItem> data, Dictionary<string, (int Offset, string Type, bool IsConst)> variables, Dictionary<string, (int Length, string Type)> arrays, Dictionary<string, (int Index, string Type)> parameters)
         {
             var trueLabel = emitter.CreateLabel("or_true");
             var endLabel = emitter.CreateLabel("or_end");
@@ -1685,13 +1855,7 @@ namespace JollyCCompiler.Compiler.CodeGen.X64
             emitter.MarkLabel(endLabel);
         }
 
-        private static void GenerateUnaryExpression(
-            UnaryExpression expression,
-            X64Emitter emitter,
-            List<X64DataItem> data,
-            Dictionary<string, (int Offset, string Type, bool IsConst)> variables,
-            Dictionary<string, (int Length, string Type)> arrays,
-            Dictionary<string, (int Index, string Type)> parameters)
+        private static void GenerateUnaryExpression(UnaryExpression expression, X64Emitter emitter, List<X64DataItem> data, Dictionary<string, (int Offset, string Type, bool IsConst)> variables, Dictionary<string, (int Length, string Type)> arrays, Dictionary<string, (int Index, string Type)> parameters)
         {
             if (expression.Operator is TokenKind.PlusPlus or TokenKind.MinusMinus)
             {
@@ -1737,11 +1901,10 @@ namespace JollyCCompiler.Compiler.CodeGen.X64
 
                 if (isConst)
                     throw new InvalidOperationException($"Cannot modify const variable '{identifier.Name}'.");
-                
+
                 if (type.EndsWith("*", StringComparison.Ordinal))
                 {
                     var elementSize = GetPointeeSize(type);
-
                     emitter.MovRaxRbpDisp8(offset);
 
                     if (expression.IsPostfix)
@@ -1765,16 +1928,33 @@ namespace JollyCCompiler.Compiler.CodeGen.X64
                 var typeSize = GetTypeSize(type);
 
                 if (typeSize == 1)
+                {
                     emitter.MovAlRbpDisp32(offset);
-                else if (typeSize == 4)
-                    emitter.MovEaxRbpDisp32(offset);
-                else if (typeSize == 8)
-                    emitter.MovRaxRbpDisp8(offset);
-                else
-                    throw new NotSupportedException($"Increment/decrement on type '{type}' is not yet supported.");
 
-                if (typeSize == 1)
-                    emitter.MovzxEaxAl();
+                    if (IsUnsignedChar(type))
+                        emitter.MovzxEaxAl();
+                    else
+                        emitter.EmitBytes(0x0F, 0xBE, 0xC0);
+                }
+                else if (typeSize == 2)
+                {
+                    if (IsUnsignedShort(type))
+                        emitter.EmitBytes(0x0F, 0xB7, 0x45, unchecked((byte)offset));
+                    else
+                        emitter.EmitBytes(0x0F, 0xBF, 0x45, unchecked((byte)offset));
+                }
+                else if (typeSize == 4)
+                {
+                    emitter.MovEaxRbpDisp32(offset);
+                }
+                else if (typeSize == 8)
+                {
+                    emitter.MovRaxRbpDisp8(offset);
+                }
+                else
+                {
+                    throw new NotSupportedException($"Increment/decrement on type '{type}' is not yet supported.");
+                }
 
                 if (expression.IsPostfix)
                     emitter.PushRax();
@@ -1797,11 +1977,27 @@ namespace JollyCCompiler.Compiler.CodeGen.X64
                 }
 
                 if (typeSize == 1)
+                {
                     emitter.MovRbpDisp32Al(offset);
+
+                    if (!expression.IsPostfix)
+                        NormalizeIntegerResult(emitter, type);
+                }
+                else if (typeSize == 2)
+                {
+                    emitter.EmitBytes(0x66, 0x89, 0x45, unchecked((byte)offset));
+
+                    if (!expression.IsPostfix)
+                        NormalizeIntegerResult(emitter, type);
+                }
                 else if (typeSize == 4)
+                {
                     emitter.MovRbpDisp32Eax(offset);
-                else
+                }
+                else if (typeSize == 8)
+                {
                     emitter.MovRbpDisp8Rax(offset);
+                }
 
                 if (expression.IsPostfix)
                     emitter.PopRax();
@@ -1823,25 +2019,36 @@ namespace JollyCCompiler.Compiler.CodeGen.X64
                 var pointeeType = pointerType[..^1];
                 var pointeeSize = GetTypeSize(pointeeType);
 
-                if (pointeeSize != 1 && pointeeSize != 4 && pointeeSize != 8)
+                if (pointeeSize != 1 && pointeeSize != 2 && pointeeSize != 4 && pointeeSize != 8)
                     throw new NotSupportedException($"Increment/decrement through pointer type '{pointerType}' is not yet supported.");
 
                 GenerateExpression(dereference.Operand, emitter, data, variables, arrays, parameters);
                 emitter.PushRax();
 
                 if (pointeeSize == 1)
+                {
                     emitter.MovzxEaxRaxMemoryByte();
+                }
+                else if (pointeeSize == 2)
+                {
+                    LoadShortFromMemory(emitter, pointeeType);
+                }
                 else if (pointeeSize == 4)
+                {
                     emitter.MovEaxRaxMemory();
+                }
                 else
+                {
                     emitter.MovRaxFromMemory();
+                }
 
                 if (expression.IsPostfix)
                     emitter.PushRax();
 
+                emitter.MovEcx(1);
+
                 if (pointeeSize == 8)
                 {
-                    emitter.MovEcx((int)GetPointeeSize(pointerType));
                     if (expression.Operator == TokenKind.PlusPlus)
                         emitter.AddRaxRcx();
                     else
@@ -1849,35 +2056,39 @@ namespace JollyCCompiler.Compiler.CodeGen.X64
                 }
                 else
                 {
-                    emitter.MovEcx(1);
                     if (expression.Operator == TokenKind.PlusPlus)
                         emitter.AddEaxEcx();
                     else
                         emitter.SubEaxEcx();
                 }
 
+                NormalizeIntegerResult(emitter, pointeeType);
+                emitter.MovRcxRax();
+
                 if (expression.IsPostfix)
                 {
-                    emitter.MovRcxRax();
                     emitter.MovRaxRspDisp32(8);
 
                     if (pointeeSize == 1)
                         emitter.EmitBytes(0x88, 0x08);
+                    else if (pointeeSize == 2)
+                        emitter.EmitBytes(0x66, 0x89, 0x08);
                     else if (pointeeSize == 4)
                         emitter.EmitBytes(0x89, 0x08);
                     else
                         emitter.EmitBytes(0x48, 0x89, 0x08);
 
-                    emitter.PopRax();
-                    emitter.AddRsp(8);
+                    emitter.MovRaxRspDisp32(0);
+                    emitter.AddRsp(16);
                 }
                 else
                 {
-                    emitter.MovRcxRax();
                     emitter.PopRax();
 
                     if (pointeeSize == 1)
                         emitter.EmitBytes(0x88, 0x08);
+                    else if (pointeeSize == 2)
+                        emitter.EmitBytes(0x66, 0x89, 0x08);
                     else if (pointeeSize == 4)
                         emitter.EmitBytes(0x89, 0x08);
                     else
@@ -1898,27 +2109,111 @@ namespace JollyCCompiler.Compiler.CodeGen.X64
             throw new NotSupportedException($"Increment/decrement operand AST: {expression.Operand}");
         }
 
-        private static void GenerateMemberIncrementDecrement(
-            MemberAccessExpression target,
-            UnaryExpression expression,
-            X64Emitter emitter,
-            List<X64DataItem> data,
-            Dictionary<string, (int Offset, string Type, bool IsConst)> variables,
-            Dictionary<string, (int Length, string Type)> arrays,
-            Dictionary<string, (int Index, string Type)> parameters)
+        private static void GenerateArrayIncrementDecrement(ArraySubscriptExpression subscript, UnaryExpression expression, X64Emitter emitter, List<X64DataItem> data, Dictionary<string, (int Offset, string Type, bool IsConst)> variables, Dictionary<string, (int Length, string Type)> arrays, Dictionary<string, (int Index, string Type)> parameters) 
+        { 
+            if (!TryGetExpressionType(subscript, variables, arrays, parameters, out var elementType)) 
+                throw new InvalidOperationException("Cannot determine array element type."); 
+            
+            var elementSize = GetTypeSize(elementType); 
+            if (elementSize != 1 && elementSize != 2 && elementSize != 4) 
+                throw new NotSupportedException($"Increment/decrement on array element type '{elementType}' is not yet supported."); 
+            
+            GenerateArraySubscriptAddress(subscript, emitter, data, variables, arrays, parameters); 
+            emitter.PushRax();
+            if (elementSize == 1)
+            {
+                if (elementType == "unsigned char")
+                    emitter.MovzxEaxRaxMemoryByte();
+                else
+                    emitter.MovsxEaxRaxMemoryByte();
+            }
+            else if (elementSize == 2) 
+            { 
+                if (IsUnsignedShort(elementType)) 
+                    emitter.EmitBytes(0x0F, 0xB7, 0x00); 
+                else 
+                    emitter.EmitBytes(0x0F, 0xBF, 0x00); 
+            } 
+            else 
+                emitter.MovEaxRaxMemory(); 
+            
+            if (expression.IsPostfix) 
+                emitter.PushRax(); 
+
+            emitter.MovEcx(1); 
+            
+            if (expression.Operator == TokenKind.PlusPlus) 
+                emitter.AddEaxEcx(); 
+            else 
+                emitter.SubEaxEcx();
+
+            if (elementSize == 1)
+                NormalizeIntegerResult(emitter, elementType);
+            else if (elementSize == 2) 
+            { 
+                if (IsUnsignedShort(elementType)) 
+                    emitter.EmitBytes(0x0F, 0xB7, 0xC0); 
+                else 
+                    emitter.EmitBytes(0x0F, 0xBF, 0xC0); 
+            }
+
+            if (expression.IsPostfix)
+            {
+                emitter.MovRcxRax();
+
+                emitter.MovRaxRspDisp32(8);
+
+                if (elementSize == 1)
+                    emitter.EmitBytes(0x88, 0x08);
+                else if (elementSize == 2)
+                    emitter.EmitBytes(0x66, 0x89, 0x08);
+                else
+                    emitter.EmitBytes(0x89, 0x08);
+
+                emitter.MovRaxRspDisp32(0);
+                emitter.AddRsp(16);
+            }
+            else
+            {
+                emitter.MovRcxRspDisp32(0);
+
+                if (elementSize == 1)
+                    emitter.EmitBytes(0x88, 0x01);
+                else if (elementSize == 2)
+                    emitter.EmitBytes(0x66, 0x89, 0x01);
+                else
+                    emitter.EmitBytes(0x89, 0x01);
+
+                emitter.AddRsp(8);
+            }
+        }
+
+        private static void GenerateMemberIncrementDecrement(MemberAccessExpression target, UnaryExpression expression, X64Emitter emitter, List<X64DataItem> data, Dictionary<string, (int Offset, string Type, bool IsConst)> variables, Dictionary<string, (int Length, string Type)> arrays, Dictionary<string, (int Index, string Type)> parameters)
         {
             var member = GetMemberInfo(target, variables, arrays, parameters);
             var memberType = member.Type;
             var memberSize = GetTypeSize(memberType);
 
-            if (memberSize != 1 && memberSize != 4 && memberSize != 8)
+            if (memberSize != 1 && memberSize != 2 && memberSize != 4 && memberSize != 8)
                 throw new NotSupportedException($"Increment/decrement on struct member type '{memberType}' is not yet supported.");
 
             GenerateLValueAddress(target, emitter, data, variables, arrays, parameters);
             emitter.PushRax();
 
             if (memberSize == 1)
-                emitter.MovzxEaxRaxMemoryByte();
+            {
+                if (memberType == "unsigned char")
+                    emitter.MovzxEaxRaxMemoryByte();
+                else
+                    emitter.MovsxEaxRaxMemoryByte();
+            }
+            else if (memberSize == 2)
+            {
+                if (IsUnsignedShort(memberType))
+                    emitter.EmitBytes(0x0F, 0xB7, 0x00);
+                else
+                    emitter.MovsxEaxRaxMemoryWord();
+            }
             else if (memberSize == 4)
                 emitter.MovEaxRaxMemory();
             else
@@ -1965,6 +2260,8 @@ namespace JollyCCompiler.Compiler.CodeGen.X64
 
                 if (memberSize == 1)
                     emitter.EmitBytes(0x88, 0x08);
+                else if (memberSize == 2)
+                    emitter.EmitBytes(0x66, 0x89, 0x08);
                 else if (memberSize == 4)
                     emitter.EmitBytes(0x89, 0x08);
                 else
@@ -1979,6 +2276,8 @@ namespace JollyCCompiler.Compiler.CodeGen.X64
 
                 if (memberSize == 1)
                     emitter.EmitBytes(0x88, 0x08);
+                else if (memberSize == 2)
+                    emitter.EmitBytes(0x66, 0x89, 0x08);
                 else if (memberSize == 4)
                     emitter.EmitBytes(0x89, 0x08);
                 else
@@ -1988,74 +2287,7 @@ namespace JollyCCompiler.Compiler.CodeGen.X64
             }
         }
 
-        private static void GenerateArrayIncrementDecrement(
-            ArraySubscriptExpression subscript,
-            UnaryExpression expression,
-            X64Emitter emitter,
-            List<X64DataItem> data,
-            Dictionary<string, (int Offset, string Type, bool IsConst)> variables,
-            Dictionary<string, (int Length, string Type)> arrays,
-            Dictionary<string, (int Index, string Type)> parameters)
-        {
-            if (!TryGetExpressionType(subscript, variables, arrays, parameters, out var elementType))
-                throw new InvalidOperationException("Cannot determine array element type.");
-
-            var elementSize = GetTypeSize(elementType);
-
-            if (elementSize != 1 && elementSize != 4)
-                throw new NotSupportedException($"Increment/decrement on array element type '{elementType}' is not yet supported.");
-
-            GenerateArraySubscriptAddress(subscript, emitter, data, variables, arrays, parameters);
-            emitter.PushRax();
-
-            if (elementSize == 1)
-                emitter.MovzxEaxRaxMemoryByte();
-            else
-                emitter.MovEaxRaxMemory();
-
-            if (expression.IsPostfix)
-                emitter.PushRax();
-
-            emitter.MovEcx(1);
-
-            if (expression.Operator == TokenKind.PlusPlus)
-                emitter.AddEaxEcx();
-            else
-                emitter.SubEaxEcx();
-
-            if (expression.IsPostfix)
-            {
-                emitter.EmitBytes(0x48, 0x8B, 0x4C, 0x24, 0x08);
-
-                if (elementSize == 1)
-                    emitter.EmitBytes(0x88, 0x01);
-                else
-                    emitter.EmitBytes(0x89, 0x01);
-
-                emitter.PopRax();
-                emitter.AddRsp(8);
-            }
-            else
-            {
-                emitter.EmitBytes(0x48, 0x8B, 0x0C, 0x24);
-
-                if (elementSize == 1)
-                    emitter.EmitBytes(0x88, 0x01);
-                else
-                    emitter.EmitBytes(0x89, 0x01);
-
-                emitter.AddRsp(8);
-            }
-        }
-
-        private static void GenerateIfStatement(
-            IfStatement statement,
-            X64Emitter emitter,
-            List<X64DataItem> data,
-            Dictionary<string, (int Offset, string Type, bool IsConst)> variables,
-            Dictionary<string, (int Length, string Type)> arrays,
-            Dictionary<string, (int Index, string Type)> parameters,
-            int frameSize)
+        private static void GenerateIfStatement(IfStatement statement, X64Emitter emitter, List<X64DataItem> data, Dictionary<string, (int Offset, string Type, bool IsConst)> variables, Dictionary<string, (int Length, string Type)> arrays, Dictionary<string, (int Index, string Type)> parameters, int frameSize)
         {
             var elseLabel = emitter.CreateLabel("if_else");
             var endLabel = emitter.CreateLabel("if_end");
@@ -2356,6 +2588,15 @@ namespace JollyCCompiler.Compiler.CodeGen.X64
                     return;
                 }
 
+                if (returnedMemberSize == 2)
+                {
+                    if (IsUnsignedShort(returnedMember.Type))
+                        emitter.EmitBytes(0x0F, 0xB7, 0xC0);
+                    else
+                        emitter.EmitBytes(0x0F, 0xBF, 0xC0);
+                    return;
+                }
+
                 if (returnedMemberSize == 4)
                 {
                     return;
@@ -2375,7 +2616,19 @@ namespace JollyCCompiler.Compiler.CodeGen.X64
             var memberSize = GetTypeSize(member.Type);
 
             if (memberSize == 1)
-                emitter.MovzxEaxRaxMemoryByte();
+            {
+                if (member.Type == "unsigned char")
+                    emitter.MovzxEaxRaxMemoryByte();
+                else
+                    emitter.MovsxEaxRaxMemoryByte();
+            }
+            else if (memberSize == 2)
+            {
+                if (IsUnsignedShort(member.Type))
+                    emitter.EmitBytes(0x0F, 0xB7, 0x00);
+                else
+                    emitter.EmitBytes(0x0F, 0xBF, 0x00);
+            }
             else if (memberSize == 4)
                 emitter.EmitBytes(0x8B, 0x00);
             else if (memberSize == 8)
@@ -2406,7 +2659,7 @@ namespace JollyCCompiler.Compiler.CodeGen.X64
                 return;
             }
 
-            if (memberSize != 1 && memberSize != 4 && memberSize != 8)
+            if (memberSize != 1 && memberSize != 2 && memberSize != 4 && memberSize != 8)
                 throw new NotSupportedException($"Struct member type '{member.Type}' is not yet supported for generated stores.");
 
             if (operatorKind == TokenKind.Equals)
@@ -2421,6 +2674,11 @@ namespace JollyCCompiler.Compiler.CodeGen.X64
 
                 if (memberSize == 1)
                     emitter.EmitBytes(0x88, 0x08);
+                else if (memberSize == 2)
+                {
+                    emitter.MovRaxMemory16Cx();
+                    NormalizeIntegerResult(emitter, member.Type);
+                }
                 else if (memberSize == 4)
                     emitter.EmitBytes(0x89, 0x08);
                 else
@@ -2429,7 +2687,7 @@ namespace JollyCCompiler.Compiler.CodeGen.X64
                 return;
             }
 
-            if (memberSize != 1 && memberSize != 4)
+            if (memberSize != 1 && memberSize != 2 && memberSize != 4)
                 throw new NotSupportedException($"Compound assignment on struct member type '{member.Type}' is not yet supported.");
 
             GenerateLValueAddress(target, emitter, data, variables, arrays, parameters);
@@ -2437,6 +2695,13 @@ namespace JollyCCompiler.Compiler.CodeGen.X64
 
             if (memberSize == 1)
                 emitter.MovzxEaxRaxMemoryByte();
+            else if (memberSize == 2)
+            {
+                if (IsUnsignedShort(member.Type))
+                    emitter.EmitBytes(0x0F, 0xB7, 0x00);
+                else
+                    emitter.MovsxEaxRaxMemoryWord();
+            }
             else
                 emitter.MovEaxRaxMemory();
 
@@ -2455,6 +2720,8 @@ namespace JollyCCompiler.Compiler.CodeGen.X64
 
             if (memberSize == 1)
                 emitter.EmitBytes(0x88, 0x08);
+            else if (memberSize == 2)
+                emitter.MovRaxMemory16Cx();
             else
                 emitter.EmitBytes(0x89, 0x08);
         }

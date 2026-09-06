@@ -63,6 +63,12 @@ public sealed class Lexer
                 continue;
             }
 
+            if (Current == '\'')
+            {
+                tokens.Add(ReadCharacter());
+                continue;
+            }
+
             var text = Current.ToString();
 
             TokenKind? kind = Current switch
@@ -217,7 +223,9 @@ public sealed class Lexer
         {
             "int" => TokenKind.Int,
             "char" => TokenKind.Char,
+            "short" => TokenKind.Short,
             "long" => TokenKind.Long,
+            "unsigned" => TokenKind.Unsigned,
             "void" => TokenKind.Void,
             "struct" => TokenKind.Struct,
             "union" => TokenKind.Union,
@@ -329,6 +337,67 @@ public sealed class Lexer
         }
 
         return new Token(TokenKind.StringLiteral, builder.ToString(), line, column);
+    }
+
+    private Token ReadCharacter()
+    {
+        var line = _line;
+        var column = _column;
+        Advance();
+
+        if (AtEnd || Current == '\n')
+        {
+            _diagnostics.Add(new Diagnostic(DiagnosticSeverity.Error, "Unterminated character literal.", line, column));
+            return new Token(TokenKind.CharLiteral, string.Empty, line, column);
+        }
+
+        char value;
+
+        if (Current == '\\')
+        {
+            Advance();
+
+            if (AtEnd)
+            {
+                _diagnostics.Add(new Diagnostic(DiagnosticSeverity.Error, "Unterminated character literal.", line, column));
+                return new Token(TokenKind.CharLiteral, string.Empty, line, column);
+            }
+
+            value = Current switch
+            {
+                'n' => '\n',
+                'r' => '\r',
+                't' => '\t',
+                '\\' => '\\',
+                '\'' => '\'',
+                '"' => '"',
+                '0' => '\0',
+                _ => Current
+            };
+
+            Advance();
+        }
+        else
+        {
+            value = Current;
+            Advance();
+        }
+
+        if (Current != '\'')
+        {
+            _diagnostics.Add(new Diagnostic(DiagnosticSeverity.Error, "Character literal must contain exactly one character.", line, column));
+
+            while (!AtEnd && Current != '\'' && Current != '\n')
+                Advance();
+
+            if (!AtEnd && Current == '\'')
+                Advance();
+
+            return new Token(TokenKind.CharLiteral, value.ToString(), line, column);
+        }
+
+        Advance();
+        return new Token(TokenKind.CharLiteral, value.ToString(), line, column);
     }
 
     private void SkipLineComment()

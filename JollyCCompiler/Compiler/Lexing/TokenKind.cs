@@ -7,10 +7,13 @@
         Identifier,
         IntegerLiteral,
         StringLiteral,
+        CharLiteral,
 
         Int,
         Char,
+        Short,
         Long,
+        Unsigned,
         Void,
         Return,
         If,
