@@ -1,11 +1,7 @@
-﻿using System;
-using System.Buffers.Binary;
-using System.Collections.Generic;
+﻿using System.Buffers.Binary;
 
 namespace JollyCCompiler.Compiler.CodeGen.X64
 {
-    using System.Buffers.Binary;
-
     public sealed class X64Emitter
     {
         private readonly List<byte> _code = new();
@@ -74,6 +70,42 @@ namespace JollyCCompiler.Compiler.CodeGen.X64
 
             _code.AddRange(bytes);
             _instructions.Add(new X64Instruction(offset, bytes, "add eax, ecx"));
+        }
+
+        public void MovdXmm2Eax()
+        {
+            var offset = Offset;
+            var bytes = new byte[] { 0x66, 0x0F, 0x6E, 0xD0 };
+
+            _code.AddRange(bytes);
+            _instructions.Add(new X64Instruction(offset, bytes, "movd xmm2, eax"));
+        }
+
+        public void MovdXmm3Eax()
+        {
+            var offset = Offset;
+            var bytes = new byte[] { 0x66, 0x0F, 0x6E, 0xD8 };
+
+            _code.AddRange(bytes);
+            _instructions.Add(new X64Instruction(offset, bytes, "movd xmm3, eax"));
+        }
+
+        public void MovqXmm2Rax()
+        {
+            var offset = Offset;
+            var bytes = new byte[] { 0x66, 0x48, 0x0F, 0x6E, 0xD0 };
+
+            _code.AddRange(bytes);
+            _instructions.Add(new X64Instruction(offset, bytes, "movq xmm2, rax"));
+        }
+
+        public void MovqXmm3Rax()
+        {
+            var offset = Offset;
+            var bytes = new byte[] { 0x66, 0x48, 0x0F, 0x6E, 0xD8 };
+
+            _code.AddRange(bytes);
+            _instructions.Add(new X64Instruction(offset, bytes, "movq xmm3, rax"));
         }
 
         public void SubEaxEcx()
@@ -226,6 +258,38 @@ namespace JollyCCompiler.Compiler.CodeGen.X64
 
             _code.AddRange(bytes32);
             _instructions.Add(new X64Instruction(offset, bytes32, $"add rsp, {value}"));
+        }
+
+        public void MovEax(uint value)
+        {
+            var offset = Offset;
+            var bytes = new byte[]
+            {
+        0xB8,
+        (byte)value,
+        (byte)(value >> 8),
+        (byte)(value >> 16),
+        (byte)(value >> 24)
+            };
+
+            _code.AddRange(bytes);
+            _instructions.Add(new X64Instruction(offset, bytes, $"mov eax, {value}"));
+        }
+
+        public void CmpEaxImm32(uint value)
+        {
+            var offset = Offset;
+            var bytes = new byte[]
+            {
+        0x3D,
+        (byte)value,
+        (byte)(value >> 8),
+        (byte)(value >> 16),
+        (byte)(value >> 24)
+            };
+
+            _code.AddRange(bytes);
+            _instructions.Add(new X64Instruction(offset, bytes, $"cmp eax, {value}"));
         }
 
         public void MovEdxEax()
@@ -801,21 +865,63 @@ namespace JollyCCompiler.Compiler.CodeGen.X64
             var offset = Offset;
             var bytes = new byte[]
             {
-            0x48,
-            0x8B,
-            0x84,
-            0x24,
-            (byte)displacement,
-            (byte)(displacement >> 8),
-            (byte)(displacement >> 16),
-            (byte)(displacement >> 24)
+                0x48,
+                0x8B,
+                0x84,
+                0x24,
+                (byte)displacement,
+                (byte)(displacement >> 8),
+                (byte)(displacement >> 16),
+                (byte)(displacement >> 24)
             };
 
             _code.AddRange(bytes);
-            _instructions.Add(new X64Instruction(
-                offset,
-                bytes,
-                $"mov rax, [rsp+{displacement}]"));
+            _instructions.Add(new X64Instruction(offset, bytes, $"mov rax, [rsp+{displacement}]"));
+        }
+
+        public void MovRcxRax()
+        {
+            var offset = Offset;
+            var bytes = new byte[] { 0x48, 0x89, 0xC1 };
+
+            _code.AddRange(bytes);
+            _instructions.Add(new X64Instruction(offset, bytes, "mov rcx, rax"));
+        }
+
+        public void MovRcxMemoryXmm0Float()
+        {
+            var offset = Offset;
+            var bytes = new byte[] { 0xF3, 0x0F, 0x11, 0x01 };
+
+            _code.AddRange(bytes);
+            _instructions.Add(new X64Instruction(offset, bytes, "movss [rcx], xmm0"));
+        }
+
+        public void MovRcxMemoryXmm0Double()
+        {
+            var offset = Offset;
+            var bytes = new byte[] { 0xF2, 0x0F, 0x11, 0x01 };
+
+            _code.AddRange(bytes);
+            _instructions.Add(new X64Instruction(offset, bytes, "movsd [rcx], xmm0"));
+        }
+
+        public void MovssXmm0RcxMemory()
+        {
+            var offset = Offset;
+            var bytes = new byte[] { 0xF3, 0x0F, 0x10, 0x01 };
+
+            _code.AddRange(bytes);
+            _instructions.Add(new X64Instruction(offset, bytes, "movss xmm0, [rcx]"));
+        }
+
+        public void MovsdXmm0RcxMemory()
+        {
+            var offset = Offset;
+            var bytes = new byte[] { 0xF2, 0x0F, 0x10, 0x01 };
+
+            _code.AddRange(bytes);
+            _instructions.Add(new X64Instruction(offset, bytes, "movsd xmm0, [rcx]"));
         }
 
         public void MovRspDisp32Rax(int displacement)
@@ -823,21 +929,18 @@ namespace JollyCCompiler.Compiler.CodeGen.X64
             var offset = Offset;
             var bytes = new byte[]
             {
-            0x48,
-            0x89,
-            0x84,
-            0x24,
-            (byte)displacement,
-            (byte)(displacement >> 8),
-            (byte)(displacement >> 16),
-            (byte)(displacement >> 24)
+                0x48,
+                0x89,
+                0x84,
+                0x24,
+                (byte)displacement,
+                (byte)(displacement >> 8),
+                (byte)(displacement >> 16),
+                (byte)(displacement >> 24)
             };
 
             _code.AddRange(bytes);
-            _instructions.Add(new X64Instruction(
-                offset,
-                bytes,
-                $"mov [rsp+{displacement}], rax"));
+            _instructions.Add(new X64Instruction(offset, bytes, $"mov [rsp+{displacement}], rax"));
         }
 
         public void MovRcxRspDisp32(int displacement)
@@ -1063,15 +1166,6 @@ namespace JollyCCompiler.Compiler.CodeGen.X64
             _instructions.Add(new X64Instruction(offset, bytes, "sub rax, rcx"));
         }
 
-        public void MovRcxRax()
-        {
-            var offset = Offset;
-            var bytes = new byte[] { 0x48, 0x89, 0xC1 };
-
-            _code.AddRange(bytes);
-            _instructions.Add(new X64Instruction(offset, bytes, "mov rcx, rax"));
-        }
-
         public void ImulEaxImm8(byte value)
         {
             var offset = Offset;
@@ -1088,6 +1182,24 @@ namespace JollyCCompiler.Compiler.CodeGen.X64
 
             _code.AddRange(bytes);
             _instructions.Add(new X64Instruction(offset, bytes, "imul rax, rcx"));
+        }
+
+        public void MovdXmm1Eax()
+        {
+            var offset = Offset;
+            var bytes = new byte[] { 0x66, 0x0F, 0x6E, 0xC8 };
+
+            _code.AddRange(bytes);
+            _instructions.Add(new X64Instruction(offset, bytes, "movd xmm1, eax"));
+        }
+
+        public void MovqXmm1Rax()
+        {
+            var offset = Offset;
+            var bytes = new byte[] { 0x66, 0x48, 0x0F, 0x6E, 0xC8 };
+
+            _code.AddRange(bytes);
+            _instructions.Add(new X64Instruction(offset, bytes, "movq xmm1, rax"));
         }
 
         public void Cqo()
@@ -1409,6 +1521,332 @@ namespace JollyCCompiler.Compiler.CodeGen.X64
             _instructions.Add(new X64Instruction(offset, bytes, "cwde"));
         }
 
+        public void MovdXmm0Eax()
+        {
+            var offset = Offset;
+            var bytes = new byte[]
+            {
+        0x66,
+        0x0F,
+        0x6E,
+        0xC0
+            };
+
+            _code.AddRange(bytes);
+            _instructions.Add(new X64Instruction(offset, bytes, "movd xmm0, eax"));
+        }
+
+        public void MovqXmm0Rax()
+        {
+            var offset = Offset;
+            var bytes = new byte[]
+            {
+        0x66,
+        0x48,
+        0x0F,
+        0x6E,
+        0xC0
+            };
+
+            _code.AddRange(bytes);
+            _instructions.Add(new X64Instruction(offset, bytes, "movq xmm0, rax"));
+        }
+
+        public void MovdEaxXmm0()
+        {
+            var offset = Offset;
+            var bytes = new byte[]
+            {
+                0x66,
+                0x0F,
+                0x7E,
+                0xC0
+            };
+
+            _code.AddRange(bytes);
+            _instructions.Add(new X64Instruction(offset, bytes, "movd eax, xmm0"));
+        }
+
+        public void MovqRaxXmm0()
+        {
+            var offset = Offset;
+            var bytes = new byte[]
+            {
+                0x66,
+                0x48,
+                0x0F,
+                0x7E,
+                0xC0
+            };
+
+            _code.AddRange(bytes);
+            _instructions.Add(new X64Instruction(offset, bytes, "movq rax, xmm0"));
+        }
+
+        public void Cvttss2siEaxXmm0()
+        {
+            var offset = Offset;
+            var bytes = new byte[]
+            {
+                0xF3,
+                0x0F,
+                0x2C,
+                0xC0
+            };
+
+            _code.AddRange(bytes);
+            _instructions.Add(new X64Instruction(offset, bytes, "cvttss2si eax, xmm0"));
+        }
+
+        public void Cvttsd2siEaxXmm0()
+        {
+            var offset = Offset;
+            var bytes = new byte[]
+            {
+                0xF2,
+                0x0F,
+                0x2C,
+                0xC0
+            };
+
+            _code.AddRange(bytes);
+            _instructions.Add(new X64Instruction(offset, bytes, "cvttsd2si eax, xmm0"));
+        }
+
+        public void Cvtsi2ssXmm0Eax()
+        {
+            var offset = Offset;
+            var bytes = new byte[]
+            {
+                0xF3,
+                0x0F,
+                0x2A,
+                0xC0
+            };
+
+            _code.AddRange(bytes);
+            _instructions.Add(new X64Instruction(offset, bytes, "cvtsi2ss xmm0, eax"));
+        }
+
+        public void Cvtsi2sdXmm0Eax()
+        {
+            var offset = Offset;
+            var bytes = new byte[]
+            {
+                0xF2,
+                0x0F,
+                0x2A,
+                0xC0
+            };
+
+            _code.AddRange(bytes);
+            _instructions.Add(new X64Instruction(offset, bytes, "cvtsi2sd xmm0, eax"));
+        }
+
+        public void Cvtsi2ssXmm0Rax()
+        {
+            var offset = Offset;
+            var bytes = new byte[]
+            {
+                0xF3,
+                0x48,
+                0x0F,
+                0x2A,
+                0xC0
+            };
+
+            _code.AddRange(bytes);
+            _instructions.Add(new X64Instruction(offset, bytes, "cvtsi2ss xmm0, rax"));
+        }
+
+        public void Cvtsi2sdXmm0Rax()
+        {
+            var offset = Offset;
+            var bytes = new byte[]
+            {
+                0xF2,
+                0x48,
+                0x0F,
+                0x2A,
+                0xC0
+            };
+
+            _code.AddRange(bytes);
+            _instructions.Add(new X64Instruction(offset, bytes, "cvtsi2sd xmm0, rax"));
+        }
+
+        public void Cvtss2sdXmm0Xmm0()
+        {
+            var offset = Offset;
+            var bytes = new byte[] { 0xF3, 0x0F, 0x5A, 0xC0 };
+            _code.AddRange(bytes);
+            _instructions.Add(new X64Instruction(offset, bytes, "cvtss2sd xmm0, xmm0"));
+        }
+
+        public void Cvtsd2ssXmm0Xmm0()
+        {
+            var offset = Offset;
+            var bytes = new byte[] { 0xF2, 0x0F, 0x5A, 0xC0 };
+            _code.AddRange(bytes);
+            _instructions.Add(new X64Instruction(offset, bytes, "cvtsd2ss xmm0, xmm0"));
+        }
+
+        public void MovssXmm1Xmm0()
+        {
+            var offset = Offset;
+            var bytes = new byte[] { 0xF3, 0x0F, 0x10, 0xC8 };
+            _code.AddRange(bytes);
+            _instructions.Add(new X64Instruction(offset, bytes, "movss xmm1, xmm0"));
+        }
+
+        public void MovsdXmm1Xmm0()
+        {
+            var offset = Offset;
+            var bytes = new byte[] { 0xF2, 0x0F, 0x10, 0xC8 };
+            _code.AddRange(bytes);
+            _instructions.Add(new X64Instruction(offset, bytes, "movsd xmm1, xmm0"));
+        }
+
+        public void UcomissXmm0Xmm1()
+        {
+            var offset = Offset;
+            var bytes = new byte[] { 0x0F, 0x2E, 0xC1 };
+            _code.AddRange(bytes);
+            _instructions.Add(new X64Instruction(offset, bytes, "ucomiss xmm0, xmm1"));
+        }
+
+        public void UcomisdXmm0Xmm1()
+        {
+            var offset = Offset;
+            var bytes = new byte[] { 0x66, 0x0F, 0x2E, 0xC1 };
+            _code.AddRange(bytes);
+            _instructions.Add(new X64Instruction(offset, bytes, "ucomisd xmm0, xmm1"));
+        }
+
+        public void Jp(string label)
+        {
+            var offset = Offset;
+            var bytes = new byte[] { 0x0F, 0x8A, 0x00, 0x00, 0x00, 0x00 };
+
+            _code.AddRange(bytes);
+            _fixups.Add(new X64Fixup(offset + 2, X64FixupKind.Relative32, label));
+            _instructions.Add(new X64Instruction(offset, bytes, $"jp {label}"));
+        }
+
+        public void Jnp(string label)
+        {
+            var offset = Offset;
+            var bytes = new byte[] { 0x0F, 0x8B, 0x00, 0x00, 0x00, 0x00 };
+
+            _code.AddRange(bytes);
+            _fixups.Add(new X64Fixup(offset + 2, X64FixupKind.Relative32, label));
+            _instructions.Add(new X64Instruction(offset, bytes, $"jnp {label}"));
+        }
+
+        public void SubssXmm1Xmm0()
+        {
+            var offset = Offset;
+            var bytes = new byte[] { 0xF3, 0x0F, 0x5C, 0xC8 };
+            _code.AddRange(bytes);
+            _instructions.Add(new X64Instruction(offset, bytes, "subss xmm1, xmm0"));
+        }
+
+        public void DivssXmm1Xmm0()
+        {
+            var offset = Offset;
+            var bytes = new byte[] { 0xF3, 0x0F, 0x5E, 0xC8 };
+            _code.AddRange(bytes);
+            _instructions.Add(new X64Instruction(offset, bytes, "divss xmm1, xmm0"));
+        }
+
+        public void SubsdXmm1Xmm0()
+        {
+            var offset = Offset;
+            var bytes = new byte[] { 0xF2, 0x0F, 0x5C, 0xC8 };
+            _code.AddRange(bytes);
+            _instructions.Add(new X64Instruction(offset, bytes, "subsd xmm1, xmm0"));
+        }
+
+        public void DivsdXmm1Xmm0()
+        {
+            var offset = Offset;
+            var bytes = new byte[] { 0xF2, 0x0F, 0x5E, 0xC8 };
+            _code.AddRange(bytes);
+            _instructions.Add(new X64Instruction(offset, bytes, "divsd xmm1, xmm0"));
+        }
+
+        public void AddssXmm1Xmm0()
+        {
+            var offset = Offset;
+            var bytes = new byte[] { 0xF3, 0x0F, 0x58, 0xC8 };
+
+            _code.AddRange(bytes);
+            _instructions.Add(new X64Instruction(offset, bytes, "addss xmm1, xmm0"));
+        }
+
+        public void MovssXmm0RaxMemory()
+        {
+            var offset = Offset;
+            var bytes = new byte[] { 0xF3, 0x0F, 0x10, 0x00 };
+
+            _code.AddRange(bytes);
+            _instructions.Add(new X64Instruction(offset, bytes, "movss xmm0, [rax]"));
+        }
+
+        public void MovsdXmm0RaxMemory()
+        {
+            var offset = Offset;
+            var bytes = new byte[] { 0xF2, 0x0F, 0x10, 0x00 };
+
+            _code.AddRange(bytes);
+            _instructions.Add(new X64Instruction(offset, bytes, "movsd xmm0, [rax]"));
+        }
+
+        public void MulssXmm1Xmm0()
+        {
+            var offset = Offset;
+            var bytes = new byte[] { 0xF3, 0x0F, 0x59, 0xC8 };
+
+            _code.AddRange(bytes);
+            _instructions.Add(new X64Instruction(offset, bytes, "mulss xmm1, xmm0"));
+        }
+
+        public void MovRaxMemoryXmm0Float()
+        {
+            var offset = Offset;
+            var bytes = new byte[] { 0xF3, 0x0F, 0x11, 0x00 };
+
+            _code.AddRange(bytes);
+            _instructions.Add(new X64Instruction(offset, bytes, "movss [rax], xmm0"));
+        }
+
+        public void MovRaxMemoryXmm0Double()
+        {
+            var offset = Offset;
+            var bytes = new byte[] { 0xF2, 0x0F, 0x11, 0x00 };
+
+            _code.AddRange(bytes);
+            _instructions.Add(new X64Instruction(offset, bytes, "movsd [rax], xmm0"));
+        }
+
+        public void AddsdXmm1Xmm0()
+        {
+            var offset = Offset;
+            var bytes = new byte[] { 0xF2, 0x0F, 0x58, 0xC8 };
+
+            _code.AddRange(bytes);
+            _instructions.Add(new X64Instruction(offset, bytes, "addsd xmm1, xmm0"));
+        }
+
+        public void MulsdXmm1Xmm0()
+        {
+            var offset = Offset;
+            var bytes = new byte[] { 0xF2, 0x0F, 0x59, 0xC8 };
+
+            _code.AddRange(bytes);
+            _instructions.Add(new X64Instruction(offset, bytes, "mulsd xmm1, xmm0"));
+        }
+
         // ------------------------------------------------------------
         // argument passing
         // ------------------------------------------------------------
@@ -1531,11 +1969,627 @@ namespace JollyCCompiler.Compiler.CodeGen.X64
 
         private static string FormatOffset(int displacement)
         {
-            return displacement < 0
-                ? displacement.ToString()
-                : $"+{displacement}";
+            return displacement < 0 ? displacement.ToString() : $"+{displacement}";
+        }
+
+        // ------------------------------------------------------------
+        // float / double XMM support
+        // ------------------------------------------------------------
+
+        public void MovssXmm0RbpDisp8(int displacement)
+        {
+            if (displacement < -128 || displacement > 127)
+            {
+                MovssXmm0RbpDisp32(displacement);
+                return;
+            }
+
+            var offset = Offset;
+            var bytes = new byte[]
+            {
+        0xF3,
+        0x0F,
+        0x10,
+        0x45,
+        unchecked((byte)displacement)
+            };
+
+            _code.AddRange(bytes);
+            _instructions.Add(new X64Instruction(
+                offset,
+                bytes,
+                $"movss xmm0, [rbp{FormatOffset(displacement)}]"));
+        }
+
+        public void MovssXmm0RbpDisp32(int displacement)
+        {
+            var offset = Offset;
+            var bytes = new byte[]
+            {
+        0xF3,
+        0x0F,
+        0x10,
+        0x85,
+        (byte)displacement,
+        (byte)(displacement >> 8),
+        (byte)(displacement >> 16),
+        (byte)(displacement >> 24)
+            };
+
+            _code.AddRange(bytes);
+            _instructions.Add(new X64Instruction(
+                offset,
+                bytes,
+                $"movss xmm0, [rbp{(displacement >= 0 ? "+" : "")}{displacement}]"));
+        }
+
+        public void MovRbpDisp8Xmm0(int displacement)
+        {
+            if (displacement < -128 || displacement > 127)
+            {
+                MovRbpDisp32Xmm0(displacement);
+                return;
+            }
+
+            var offset = Offset;
+            var bytes = new byte[]
+            {
+        0xF3,
+        0x0F,
+        0x11,
+        0x45,
+        unchecked((byte)displacement)
+            };
+
+            _code.AddRange(bytes);
+            _instructions.Add(new X64Instruction(
+                offset,
+                bytes,
+                $"movss [rbp{FormatOffset(displacement)}], xmm0"));
+        }
+
+        public void MovRbpDisp32Xmm0(int displacement)
+        {
+            var offset = Offset;
+            var bytes = new byte[]
+            {
+        0xF3,
+        0x0F,
+        0x11,
+        0x85,
+        (byte)displacement,
+        (byte)(displacement >> 8),
+        (byte)(displacement >> 16),
+        (byte)(displacement >> 24)
+            };
+
+            _code.AddRange(bytes);
+            _instructions.Add(new X64Instruction(
+                offset,
+                bytes,
+                $"movss [rbp{(displacement >= 0 ? "+" : "")}{displacement}], xmm0"));
+        }
+
+        public void MovsdXmm0RbpDisp8(int displacement)
+        {
+            if (displacement < -128 || displacement > 127)
+            {
+                MovsdXmm0RbpDisp32(displacement);
+                return;
+            }
+
+            var offset = Offset;
+            var bytes = new byte[]
+            {
+        0xF2,
+        0x0F,
+        0x10,
+        0x45,
+        unchecked((byte)displacement)
+            };
+
+            _code.AddRange(bytes);
+            _instructions.Add(new X64Instruction(
+                offset,
+                bytes,
+                $"movsd xmm0, [rbp{FormatOffset(displacement)}]"));
+        }
+
+        public void MovsdXmm0RbpDisp32(int displacement)
+        {
+            var offset = Offset;
+            var bytes = new byte[]
+            {
+        0xF2,
+        0x0F,
+        0x10,
+        0x85,
+        (byte)displacement,
+        (byte)(displacement >> 8),
+        (byte)(displacement >> 16),
+        (byte)(displacement >> 24)
+            };
+
+            _code.AddRange(bytes);
+            _instructions.Add(new X64Instruction(
+                offset,
+                bytes,
+                $"movsd xmm0, [rbp{(displacement >= 0 ? "+" : "")}{displacement}]"));
+        }
+
+        public void MovRbpDisp8Xmm0Double(int displacement)
+        {
+            if (displacement < -128 || displacement > 127)
+            {
+                MovRbpDisp32Xmm0Double(displacement);
+                return;
+            }
+
+            var offset = Offset;
+            var bytes = new byte[]
+            {
+        0xF2,
+        0x0F,
+        0x11,
+        0x45,
+        unchecked((byte)displacement)
+            };
+
+            _code.AddRange(bytes);
+            _instructions.Add(new X64Instruction(
+                offset,
+                bytes,
+                $"movsd [rbp{FormatOffset(displacement)}], xmm0"));
+        }
+
+        public void MovRbpDisp32Xmm0Double(int displacement)
+        {
+            var offset = Offset;
+            var bytes = new byte[]
+            {
+        0xF2,
+        0x0F,
+        0x11,
+        0x85,
+        (byte)displacement,
+        (byte)(displacement >> 8),
+        (byte)(displacement >> 16),
+        (byte)(displacement >> 24)
+            };
+
+            _code.AddRange(bytes);
+            _instructions.Add(new X64Instruction(
+                offset,
+                bytes,
+                $"movsd [rbp{(displacement >= 0 ? "+" : "")}{displacement}], xmm0"));
+        }
+
+        public void MovRbpDisp8Xmm1(int displacement)
+        {
+            if (displacement < -128 || displacement > 127)
+            {
+                MovRbpDisp32Xmm1(displacement);
+                return;
+            }
+
+            var offset = Offset;
+            var bytes = new byte[]
+            {
+        0xF3,
+        0x0F,
+        0x11,
+        0x4D,
+        unchecked((byte)displacement)
+            };
+
+            _code.AddRange(bytes);
+            _instructions.Add(new X64Instruction(
+                offset,
+                bytes,
+                $"movss [rbp{FormatOffset(displacement)}], xmm1"));
+        }
+
+        public void MovRbpDisp32Xmm1(int displacement)
+        {
+            var offset = Offset;
+            var bytes = new byte[]
+            {
+        0xF3,
+        0x0F,
+        0x11,
+        0x8D,
+        (byte)displacement,
+        (byte)(displacement >> 8),
+        (byte)(displacement >> 16),
+        (byte)(displacement >> 24)
+            };
+
+            _code.AddRange(bytes);
+            _instructions.Add(new X64Instruction(
+                offset,
+                bytes,
+                $"movss [rbp{(displacement >= 0 ? "+" : "")}{displacement}], xmm1"));
+        }
+
+        public void MovRbpDisp8Xmm2(int displacement)
+        {
+            if (displacement < -128 || displacement > 127)
+            {
+                MovRbpDisp32Xmm2(displacement);
+                return;
+            }
+
+            var offset = Offset;
+            var bytes = new byte[]
+            {
+        0xF3,
+        0x0F,
+        0x11,
+        0x55,
+        unchecked((byte)displacement)
+            };
+
+            _code.AddRange(bytes);
+            _instructions.Add(new X64Instruction(
+                offset,
+                bytes,
+                $"movss [rbp{FormatOffset(displacement)}], xmm2"));
+        }
+
+        public void MovRbpDisp32Xmm2(int displacement)
+        {
+            var offset = Offset;
+            var bytes = new byte[]
+            {
+        0xF3,
+        0x0F,
+        0x11,
+        0x95,
+        (byte)displacement,
+        (byte)(displacement >> 8),
+        (byte)(displacement >> 16),
+        (byte)(displacement >> 24)
+            };
+
+            _code.AddRange(bytes);
+            _instructions.Add(new X64Instruction(
+                offset,
+                bytes,
+                $"movss [rbp{(displacement >= 0 ? "+" : "")}{displacement}], xmm2"));
+        }
+
+        public void MovRbpDisp8Xmm3(int displacement)
+        {
+            if (displacement < -128 || displacement > 127)
+            {
+                MovRbpDisp32Xmm3(displacement);
+                return;
+            }
+
+            var offset = Offset;
+            var bytes = new byte[]
+            {
+        0xF3,
+        0x0F,
+        0x11,
+        0x5D,
+        unchecked((byte)displacement)
+            };
+
+            _code.AddRange(bytes);
+            _instructions.Add(new X64Instruction(
+                offset,
+                bytes,
+                $"movss [rbp{FormatOffset(displacement)}], xmm3"));
+        }
+
+        public void MovRbpDisp32Xmm3(int displacement)
+        {
+            var offset = Offset;
+            var bytes = new byte[]
+            {
+        0xF3,
+        0x0F,
+        0x11,
+        0x9D,
+        (byte)displacement,
+        (byte)(displacement >> 8),
+        (byte)(displacement >> 16),
+        (byte)(displacement >> 24)
+            };
+
+            _code.AddRange(bytes);
+            _instructions.Add(new X64Instruction(
+                offset,
+                bytes,
+                $"movss [rbp{(displacement >= 0 ? "+" : "")}{displacement}], xmm3"));
+        }
+
+        public void MovRbpDisp8Xmm1Double(int displacement)
+        {
+            if (displacement < -128 || displacement > 127)
+            {
+                MovRbpDisp32Xmm1Double(displacement);
+                return;
+            }
+
+            var offset = Offset;
+            var bytes = new byte[]
+            {
+        0xF2,
+        0x0F,
+        0x11,
+        0x4D,
+        unchecked((byte)displacement)
+            };
+
+            _code.AddRange(bytes);
+            _instructions.Add(new X64Instruction(
+                offset,
+                bytes,
+                $"movsd [rbp{FormatOffset(displacement)}], xmm1"));
+        }
+
+        public void MovRbpDisp32Xmm1Double(int displacement)
+        {
+            var offset = Offset;
+            var bytes = new byte[]
+            {
+        0xF2,
+        0x0F,
+        0x11,
+        0x8D,
+        (byte)displacement,
+        (byte)(displacement >> 8),
+        (byte)(displacement >> 16),
+        (byte)(displacement >> 24)
+            };
+
+            _code.AddRange(bytes);
+            _instructions.Add(new X64Instruction(
+                offset,
+                bytes,
+                $"movsd [rbp{(displacement >= 0 ? "+" : "")}{displacement}], xmm1"));
+        }
+
+        public void MovRbpDisp8Xmm2Double(int displacement)
+        {
+            if (displacement < -128 || displacement > 127)
+            {
+                MovRbpDisp32Xmm2Double(displacement);
+                return;
+            }
+
+            var offset = Offset;
+            var bytes = new byte[]
+            {
+        0xF2,
+        0x0F,
+        0x11,
+        0x55,
+        unchecked((byte)displacement)
+            };
+
+            _code.AddRange(bytes);
+            _instructions.Add(new X64Instruction(
+                offset,
+                bytes,
+                $"movsd [rbp{FormatOffset(displacement)}], xmm2"));
+        }
+
+        public void MovRbpDisp32Xmm2Double(int displacement)
+        {
+            var offset = Offset;
+            var bytes = new byte[]
+            {
+        0xF2,
+        0x0F,
+        0x11,
+        0x95,
+        (byte)displacement,
+        (byte)(displacement >> 8),
+        (byte)(displacement >> 16),
+        (byte)(displacement >> 24)
+            };
+
+            _code.AddRange(bytes);
+            _instructions.Add(new X64Instruction(
+                offset,
+                bytes,
+                $"movsd [rbp{(displacement >= 0 ? "+" : "")}{displacement}], xmm2"));
+        }
+
+        public void MovRbpDisp8Xmm3Double(int displacement)
+        {
+            if (displacement < -128 || displacement > 127)
+            {
+                MovRbpDisp32Xmm3Double(displacement);
+                return;
+            }
+
+            var offset = Offset;
+            var bytes = new byte[]
+            {
+        0xF2,
+        0x0F,
+        0x11,
+        0x5D,
+        unchecked((byte)displacement)
+            };
+
+            _code.AddRange(bytes);
+            _instructions.Add(new X64Instruction(
+                offset,
+                bytes,
+                $"movsd [rbp{FormatOffset(displacement)}], xmm3"));
+        }
+
+        public void MovRbpDisp32Xmm3Double(int displacement)
+        {
+            var offset = Offset;
+            var bytes = new byte[]
+            {
+        0xF2,
+        0x0F,
+        0x11,
+        0x9D,
+        (byte)displacement,
+        (byte)(displacement >> 8),
+        (byte)(displacement >> 16),
+        (byte)(displacement >> 24)
+            };
+
+            _code.AddRange(bytes);
+            _instructions.Add(new X64Instruction(
+                offset,
+                bytes,
+                $"movsd [rbp{(displacement >= 0 ? "+" : "")}{displacement}], xmm3"));
+        }
+
+        public void MovssXmm2Xmm0()
+        {
+            var offset = Offset;
+            var bytes = new byte[] { 0xF3, 0x0F, 0x10, 0xD0 };
+
+            _code.AddRange(bytes);
+            _instructions.Add(new X64Instruction(offset, bytes, "movss xmm2, xmm0"));
+        }
+
+        public void MovssXmm3Xmm0()
+        {
+            var offset = Offset;
+            var bytes = new byte[] { 0xF3, 0x0F, 0x10, 0xD8 };
+
+            _code.AddRange(bytes);
+            _instructions.Add(new X64Instruction(offset, bytes, "movss xmm3, xmm0"));
+        }
+
+        public void MovsdXmm2Xmm0()
+        {
+            var offset = Offset;
+            var bytes = new byte[] { 0xF2, 0x0F, 0x10, 0xD0 };
+
+            _code.AddRange(bytes);
+            _instructions.Add(new X64Instruction(offset, bytes, "movsd xmm2, xmm0"));
+        }
+
+        public void MovsdXmm3Xmm0()
+        {
+            var offset = Offset;
+            var bytes = new byte[] { 0xF2, 0x0F, 0x10, 0xD8 };
+
+            _code.AddRange(bytes);
+            _instructions.Add(new X64Instruction(offset, bytes, "movsd xmm3, xmm0"));
+        }
+
+        public void MovssXmm0Xmm1()
+        {
+            var offset = Offset;
+            var bytes = new byte[]
+            {
+        0xF3,
+        0x0F,
+        0x10,
+        0xC1
+            };
+
+            _code.AddRange(bytes);
+            _instructions.Add(new X64Instruction(
+                offset,
+                bytes,
+                "movss xmm0, xmm1"));
+        }
+
+        public void MovsdXmm0Xmm1()
+        {
+            var offset = Offset;
+            var bytes = new byte[]
+            {
+        0xF2,
+        0x0F,
+        0x10,
+        0xC1
+            };
+
+            _code.AddRange(bytes);
+            _instructions.Add(new X64Instruction(
+                offset,
+                bytes,
+                "movsd xmm0, xmm1"));
+        }
+
+
+        public void AddssXmm0Xmm1()
+        {
+            var offset = Offset;
+            var bytes = new byte[] { 0xF3, 0x0F, 0x58, 0xC1 };
+
+            _code.AddRange(bytes);
+            _instructions.Add(new X64Instruction(offset, bytes, "addss xmm0, xmm1"));
+        }
+
+        public void SubssXmm0Xmm1()
+        {
+            var offset = Offset;
+            var bytes = new byte[] { 0xF3, 0x0F, 0x5C, 0xC1 };
+
+            _code.AddRange(bytes);
+            _instructions.Add(new X64Instruction(offset, bytes, "subss xmm0, xmm1"));
+        }
+
+        public void MulssXmm0Xmm1()
+        {
+            var offset = Offset;
+            var bytes = new byte[] { 0xF3, 0x0F, 0x59, 0xC1 };
+
+            _code.AddRange(bytes);
+            _instructions.Add(new X64Instruction(offset, bytes, "mulss xmm0, xmm1"));
+        }
+
+        public void DivssXmm0Xmm1()
+        {
+            var offset = Offset;
+            var bytes = new byte[] { 0xF3, 0x0F, 0x5E, 0xC1 };
+
+            _code.AddRange(bytes);
+            _instructions.Add(new X64Instruction(offset, bytes, "divss xmm0, xmm1"));
+        }
+
+        public void AddsdXmm0Xmm1()
+        {
+            var offset = Offset;
+            var bytes = new byte[] { 0xF2, 0x0F, 0x58, 0xC1 };
+
+            _code.AddRange(bytes);
+            _instructions.Add(new X64Instruction(offset, bytes, "addsd xmm0, xmm1"));
+        }
+
+        public void SubsdXmm0Xmm1()
+        {
+            var offset = Offset;
+            var bytes = new byte[] { 0xF2, 0x0F, 0x5C, 0xC1 };
+
+            _code.AddRange(bytes);
+            _instructions.Add(new X64Instruction(offset, bytes, "subsd xmm0, xmm1"));
+        }
+
+        public void MulsdXmm0Xmm1()
+        {
+            var offset = Offset;
+            var bytes = new byte[] { 0xF2, 0x0F, 0x59, 0xC1 };
+
+            _code.AddRange(bytes);
+            _instructions.Add(new X64Instruction(offset, bytes, "mulsd xmm0, xmm1"));
+        }
+
+        public void DivsdXmm0Xmm1()
+        {
+            var offset = Offset;
+            var bytes = new byte[] { 0xF2, 0x0F, 0x5E, 0xC1 };
+
+            _code.AddRange(bytes);
+            _instructions.Add(new X64Instruction(offset, bytes, "divsd xmm0, xmm1"));
         }
     }
 }
-
 

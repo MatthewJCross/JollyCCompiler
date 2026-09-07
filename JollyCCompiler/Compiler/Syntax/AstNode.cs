@@ -14,6 +14,7 @@ namespace JollyCCompiler.Compiler.Syntax
     public sealed record ForStatement(StatementNode? Initializer, ExpressionNode? Condition, ExpressionNode? Increment, StatementNode Body) : StatementNode;
     public abstract record ExpressionNode : AstNode;
     public sealed record IntegerExpression(long Value, string Type) : ExpressionNode;
+    public sealed record FloatingExpression(double Value, string Type) : ExpressionNode;
     public sealed record StringExpression(string Value) : ExpressionNode;
     public sealed record IdentifierExpression(string Name) : ExpressionNode;
     public sealed record BinaryExpression(ExpressionNode Left, TokenKind Operator, ExpressionNode Right) : ExpressionNode;
@@ -35,4 +36,5 @@ namespace JollyCCompiler.Compiler.Syntax
     public sealed record StructFieldNode(string Type, string Name, int? ArrayLength = null) : AstNode;
     public sealed record MemberAccessExpression(ExpressionNode Object, string Member, bool ThroughPointer = false) : ExpressionNode;
     public sealed record SizeofExpression(ExpressionNode? Expression, string? Type) : ExpressionNode;
+    public sealed record CastExpression(string Type, ExpressionNode Operand) : ExpressionNode;
 }

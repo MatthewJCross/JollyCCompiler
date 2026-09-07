@@ -2707,9 +2707,93 @@ namespace JollyCCompiler
             }
         }
         
+        float addFloat(float a, float b)
+        {
+            return a + b;
+        }
+
+        double addDouble(double a, double b)
+        {
+            return a + b;
+        }
+
+        float multiplyFloat(float a, float b)
+        {
+            return a * b;
+        }
+
+        double multiplyDouble(double a, double b)
+        {
+            return a * b;
+        }
+
+        float mixedFloat(float a, int b)
+        {
+            return a + b;
+        }
+
+        double mixedDouble(double a, int b)
+        {
+            return a + b;
+        }
+
+        int testFloatFunction()
+        {
+            return (int)addFloat(10.0f, 20.0f);
+        }
+
+        int testDoubleFunction()
+        {
+            return (int)addDouble(10.0, 20.0);
+        }
+
+        int testFloatFunctionArithmetic()
+        {
+            return (int)multiplyFloat(5.0f, 6.0f);
+        }
+
+        int testDoubleFunctionArithmetic()
+        {
+            return (int)multiplyDouble(5.0, 6.0);
+        }
+
+        int testFloatParameter()
+        {
+            float value = 12.5f;
+
+            return (int)addFloat(value, 7.5f);
+        }
+
+        int testDoubleParameter()
+        {
+            double value = 12.5;
+
+            return (int)addDouble(value, 7.5);
+        }
+
+        int testMixedFloatParameter()
+        {
+            return (int)mixedFloat(10.0f, 5);
+        }
+
+        int testMixedDoubleParameter()
+        {
+            return (int)mixedDouble(10.0, 5);
+        }
+
+        int testNestedFloatCall()
+        {
+            return (int)addFloat(addFloat(5.0f, 10.0f), 20.0f);
+        }
+
+        int testNestedDoubleCall()
+        {
+            return (int)addDouble(addDouble(5.0, 10.0), 20.0);
+        }
+        
         int main()
         {
-            const int finalExpectedResult = -2147268368;
+            const int finalExpectedResult = -2147268108;
             int result;
             int temporary;
 
@@ -3320,6 +3404,46 @@ namespace JollyCCompiler
             result += temporary;
             printf("testLongLongSwitch: got=%d expected=1 running=%d\n", temporary, result);
         
+            temporary = testFloatFunction();
+            result += temporary;
+            printf("testFloatFunction: got=%d expected=30 running=%d\n", temporary, result);
+
+            temporary = testDoubleFunction();
+            result += temporary;
+            printf("testDoubleFunction: got=%d expected=30 running=%d\n", temporary, result);
+
+            temporary = testFloatFunctionArithmetic();
+            result += temporary;
+            printf("testFloatFunctionArithmetic: got=%d expected=30 running=%d\n", temporary, result);
+
+            temporary = testDoubleFunctionArithmetic();
+            result += temporary;
+            printf("testDoubleFunctionArithmetic: got=%d expected=30 running=%d\n", temporary, result);
+
+            temporary = testFloatParameter();
+            result += temporary;
+            printf("testFloatParameter: got=%d expected=20 running=%d\n", temporary, result);
+
+            temporary = testDoubleParameter();
+            result += temporary;
+            printf("testDoubleParameter: got=%d expected=20 running=%d\n", temporary, result);
+
+            temporary = testMixedFloatParameter();
+            result += temporary;
+            printf("testMixedFloatParameter: got=%d expected=15 running=%d\n", temporary, result);
+
+            temporary = testMixedDoubleParameter();
+            result += temporary;
+            printf("testMixedDoubleParameter: got=%d expected=15 running=%d\n", temporary, result);
+
+            temporary = testNestedFloatCall();
+            result += temporary;
+            printf("testNestedFloatCall: got=%d expected=35 running=%d\n", temporary, result);
+
+            temporary = testNestedDoubleCall();
+            result += temporary;
+            printf("testNestedDoubleCall: got=%d expected=35 running=%d\n", temporary, result);
+
             printf("FINAL: got=%d expected=%d difference=%d\n", result, finalExpectedResult, result - finalExpectedResult);
 
             if (result == finalExpectedResult)

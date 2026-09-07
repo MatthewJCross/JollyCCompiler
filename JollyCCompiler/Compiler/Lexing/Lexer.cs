@@ -53,7 +53,7 @@ public sealed class Lexer
 
             if (char.IsDigit(Current))
             {
-                tokens.Add(ReadInteger());
+                tokens.Add(ReadNumber());
                 continue;
             }
 
@@ -225,6 +225,8 @@ public sealed class Lexer
             "char" => TokenKind.Char,
             "short" => TokenKind.Short,
             "long" => TokenKind.Long,
+            "float" => TokenKind.Float,
+            "double" => TokenKind.Double,
             "unsigned" => TokenKind.Unsigned,
             "void" => TokenKind.Void,
             "struct" => TokenKind.Struct,
@@ -277,6 +279,62 @@ public sealed class Lexer
 
         while (!AtEnd && char.IsDigit(Current))
             Advance();
+
+        while (!AtEnd && char.IsLetter(Current))
+            Advance();
+
+        return new Token(TokenKind.IntegerLiteral, _source[start.._position], line, column);
+    }
+
+    private Token ReadNumber()
+    {
+        var line = _line;
+        var column = _column;
+        var start = _position;
+
+        if (Current == '0' && (Peek() == 'x' || Peek() == 'X'))
+            return ReadInteger();
+
+        while (!AtEnd && char.IsDigit(Current))
+            Advance();
+
+        var isFloating = false;
+
+        if (!AtEnd && Current == '.')
+        {
+            isFloating = true;
+            Advance();
+
+            while (!AtEnd && char.IsDigit(Current))
+                Advance();
+        }
+
+        if (!AtEnd && (Current == 'e' || Current == 'E'))
+        {
+            isFloating = true;
+            Advance();
+
+            if (!AtEnd && (Current == '+' || Current == '-'))
+                Advance();
+
+            var exponentStart = _position;
+
+            while (!AtEnd && char.IsDigit(Current))
+                Advance();
+
+            if (_position == exponentStart)
+            {
+                _diagnostics.Add(new Diagnostic(DiagnosticSeverity.Error, "Floating-point literal exponent requires at least one digit.", line, column));
+            }
+        }
+
+        if (isFloating)
+        {
+            if (!AtEnd && (Current == 'f' || Current == 'F'))
+                Advance();
+
+            return new Token(TokenKind.FloatLiteral, _source[start.._position], line, column);
+        }
 
         while (!AtEnd && char.IsLetter(Current))
             Advance();

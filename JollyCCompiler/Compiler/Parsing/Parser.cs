@@ -2,6 +2,7 @@
 using JollyCCompiler.Compiler.Lexing;
 using JollyCCompiler.Compiler.Syntax;
 using System.Diagnostics;
+using System.Globalization;
 
 namespace JollyCCompiler.Compiler.Parsing
 {
@@ -223,6 +224,14 @@ namespace JollyCCompiler.Compiler.Parsing
             {
                 type = AdvanceAndReturn("char");
             }
+            else if (Current.Kind == TokenKind.Float)
+            {
+                type = AdvanceAndReturn("float");
+            }
+            else if (Current.Kind == TokenKind.Double)
+            {
+                type = AdvanceAndReturn("double");
+            }
             else if (Current.Kind == TokenKind.Long)
             {
                 Advance();
@@ -366,7 +375,7 @@ namespace JollyCCompiler.Compiler.Parsing
                 return null;
             }
 
-            if (Current.Kind is TokenKind.Const or TokenKind.Short or TokenKind.Int or TokenKind.Char or TokenKind.Long or TokenKind.Unsigned or TokenKind.Struct or TokenKind.Union)
+            if (Current.Kind is TokenKind.Const or TokenKind.Short or TokenKind.Int or TokenKind.Char or TokenKind.Float or TokenKind.Double or TokenKind.Long or TokenKind.Unsigned or TokenKind.Struct or TokenKind.Union)
                 return ParseVariableDeclaration();
 
             if (Current.Kind == TokenKind.For)
@@ -450,7 +459,7 @@ namespace JollyCCompiler.Compiler.Parsing
 
             StatementNode? initializer = null;
 
-            if (Current.Kind is TokenKind.Const or TokenKind.Short or TokenKind.Int or TokenKind.Char or TokenKind.Long or TokenKind.Unsigned or TokenKind.Struct or TokenKind.Union)
+            if (Current.Kind is TokenKind.Const or TokenKind.Short or TokenKind.Int or TokenKind.Char or TokenKind.Float or TokenKind.Double or TokenKind.Long or TokenKind.Unsigned or TokenKind.Struct or TokenKind.Union)
             {
                 initializer = ParseVariableDeclaration();
             }
@@ -709,7 +718,7 @@ namespace JollyCCompiler.Compiler.Parsing
                 Advance();
                 Expect(TokenKind.LeftParen, "Expected '(' after 'sizeof'.");
 
-                if (Current.Kind is TokenKind.Short or TokenKind.Int or TokenKind.Char or TokenKind.Long or TokenKind.Unsigned or TokenKind.Void or TokenKind.Struct or TokenKind.Union)
+                if (Current.Kind is TokenKind.Short or TokenKind.Int or TokenKind.Char or TokenKind.Long or TokenKind.Unsigned or TokenKind.Void or TokenKind.Float or TokenKind.Double or TokenKind.Struct or TokenKind.Union)
                 {
                     var type = ParseType();
                     Expect(TokenKind.RightParen, "Expected ')' after sizeof type.");
@@ -719,6 +728,17 @@ namespace JollyCCompiler.Compiler.Parsing
                 var expression = ParseExpression();
                 Expect(TokenKind.RightParen, "Expected ')' after sizeof expression.");
                 return new SizeofExpression(expression, null);
+            }
+
+            if (Current.Kind == TokenKind.LeftParen && IsCastType(Peek(1).Kind))
+            {
+                Advance();
+
+                var type = ParseType();
+
+                Expect(TokenKind.RightParen, "Expected ')' after cast type.");
+
+                return new CastExpression(type, ParseUnary());
             }
 
             if (Current.Kind == TokenKind.Ampersand)
@@ -741,6 +761,20 @@ namespace JollyCCompiler.Compiler.Parsing
             }
 
             return ParsePostfix();
+        }
+
+        private static bool IsCastType(TokenKind kind)
+        {
+            return kind is TokenKind.Char
+                or TokenKind.Short
+                or TokenKind.Int
+                or TokenKind.Long
+                or TokenKind.Unsigned
+                or TokenKind.Float
+                or TokenKind.Double
+                or TokenKind.Void
+                or TokenKind.Struct
+                or TokenKind.Union;
         }
 
         private ExpressionNode ParsePostfix()
@@ -796,6 +830,17 @@ namespace JollyCCompiler.Compiler.Parsing
 
                 ErrorAt(token, $"Invalid integer literal '{token.Text}'.");
                 return new IntegerExpression(0, "int");
+            }
+
+            if (Current.Kind == TokenKind.FloatLiteral)
+            {
+                var token = Advance();
+
+                if (TryParseFloatingLiteral(token.Text, out var value, out var type))
+                    return new FloatingExpression(value, type);
+
+                ErrorAt(token, $"Invalid floating-point literal '{token.Text}'.");
+                return new FloatingExpression(0.0, "double");
             }
 
             if (Current.Kind == TokenKind.StringLiteral)
@@ -1031,6 +1076,23 @@ namespace JollyCCompiler.Compiler.Parsing
             value = 0;
             type = string.Empty;
             return false;
+        }
+
+        private static bool TryParseFloatingLiteral(string text, out double value, out string type)
+        {
+            value = 0.0;
+            type = "double";
+
+            var isFloat = text.EndsWith('f') || text.EndsWith('F');
+            var numericText = isFloat ? text[..^1] : text;
+
+            if (!double.TryParse(numericText, NumberStyles.Float, CultureInfo.InvariantCulture, out value))
+            {
+                return false;
+            }
+
+            type = isFloat ? "float" : "double";
+            return true;
         }
 
         private CallExpression ParseCall(Token identifier)

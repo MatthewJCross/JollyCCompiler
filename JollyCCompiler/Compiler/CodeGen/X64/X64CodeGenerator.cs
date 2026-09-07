@@ -1,5 +1,6 @@
 ﻿using JollyCCompiler.Compiler.Lexing;
 using JollyCCompiler.Compiler.Syntax;
+using System.Diagnostics;
 using System.Reflection.Metadata;
 using System.Security.Policy;
 using System.Text;
@@ -234,10 +235,62 @@ namespace JollyCCompiler.Compiler.CodeGen.X64
             foreach (var parameter in parameters)
             {
                 var offset = -(parameter.Value.Index + 1) * 8;
-                var isPointer = parameter.Value.Type.EndsWith("*", StringComparison.Ordinal);
-                var parameterSize = GetTypeSize(parameter.Value.Type);
+                var parameterIndex = parameter.Value.Index;
+                var parameterType = parameter.Value.Type;
+                var isPointer = parameterType.EndsWith("*", StringComparison.Ordinal);
+                var parameterSize = GetTypeSize(parameterType);
 
-                switch (parameter.Value.Index)
+                Debug.WriteLine($"PARAM {function.Name}: index={parameterIndex}, name={parameter.Key}, type={parameterType}, offset={offset}");
+                
+                if (parameterType == "float")
+                {
+                    switch (parameterIndex)
+                    {
+                        case 0:
+                            emitter.MovRbpDisp8Xmm0(offset);
+                            break;
+
+                        case 1:
+                            emitter.MovRbpDisp8Xmm1(offset);
+                            break;
+
+                        case 2:
+                            emitter.MovRbpDisp8Xmm2(offset);
+                            break;
+
+                        case 3:
+                            emitter.MovRbpDisp8Xmm3(offset);
+                            break;
+                    }
+
+                    continue;
+                }
+
+                if (parameterType == "double")
+                {
+                    switch (parameterIndex)
+                    {
+                        case 0:
+                            emitter.MovRbpDisp8Xmm0Double(offset);
+                            break;
+
+                        case 1:
+                            emitter.MovRbpDisp8Xmm1Double(offset);
+                            break;
+
+                        case 2:
+                            emitter.MovRbpDisp8Xmm2Double(offset);
+                            break;
+
+                        case 3:
+                            emitter.MovRbpDisp8Xmm3Double(offset);
+                            break;
+                    }
+
+                    continue;
+                }
+
+                switch (parameterIndex)
                 {
                     case 0:
                         if (isPointer)
@@ -265,6 +318,7 @@ namespace JollyCCompiler.Compiler.CodeGen.X64
                             emitter.MovRaxRcx();
                             emitter.MovRbpDisp8Rax(offset);
                         }
+
                         break;
 
                     case 1:
@@ -293,6 +347,7 @@ namespace JollyCCompiler.Compiler.CodeGen.X64
                             emitter.MovRaxRdx();
                             emitter.MovRbpDisp8Rax(offset);
                         }
+
                         break;
 
                     case 2:
@@ -321,6 +376,7 @@ namespace JollyCCompiler.Compiler.CodeGen.X64
                             emitter.MovRaxR8();
                             emitter.MovRbpDisp8Rax(offset);
                         }
+
                         break;
 
                     case 3:
@@ -349,6 +405,7 @@ namespace JollyCCompiler.Compiler.CodeGen.X64
                             emitter.MovRaxR9();
                             emitter.MovRbpDisp8Rax(offset);
                         }
+
                         break;
                 }
             }
@@ -442,6 +499,28 @@ namespace JollyCCompiler.Compiler.CodeGen.X64
                 if (statement.Initializer is not null)
                     throw new NotSupportedException($"Union initializer for '{statement.Name}' is not yet supported.");
 
+                return;
+            }
+
+            if (statement.Type == "float")
+            {
+                if (statement.Initializer is null)
+                    emitter.MovEax(0);
+                else
+                    GenerateExpression(statement.Initializer, emitter, data, variables, arrays, parameters);
+
+                emitter.MovRbpDisp8Xmm0(variable.Offset);
+                return;
+            }
+
+            if (statement.Type == "double")
+            {
+                if (statement.Initializer is null)
+                    emitter.MovRax(0);
+                else
+                    GenerateExpression(statement.Initializer, emitter, data, variables, arrays, parameters);
+
+                emitter.MovRbpDisp8Xmm0Double(variable.Offset);
                 return;
             }
 
@@ -559,12 +638,31 @@ namespace JollyCCompiler.Compiler.CodeGen.X64
             emitter.Jne(bodyLabel);
         }
 
+        private static void GenerateFloatingExpression(FloatingExpression expression, X64Emitter emitter, List<X64DataItem> data)
+        {
+            if (expression.Type == "float")
+            {
+                var bits = BitConverter.SingleToInt32Bits((float)expression.Value);
+                emitter.MovEax(bits);
+                emitter.MovdXmm0Eax();
+                return;
+            }
+
+            var doubleBits = BitConverter.DoubleToInt64Bits(expression.Value);
+            emitter.MovRax(doubleBits);
+            emitter.MovqXmm0Rax();
+        }
+
         private static void GenerateExpression(ExpressionNode expression, X64Emitter emitter, List<X64DataItem> data, Dictionary<string, (int Offset, string Type, bool IsConst)> variables, Dictionary<string, (int Length, string Type)> arrays, Dictionary<string, (int Index, string Type)> parameters)
         {
             switch (expression)
             {
                 case IntegerExpression integer:
                     emitter.MovRax(integer.Value);
+                    break;
+
+                case FloatingExpression floating:
+                    GenerateFloatingExpression(floating, emitter, data);
                     break;
 
                 case StringExpression:
@@ -626,9 +724,92 @@ namespace JollyCCompiler.Compiler.CodeGen.X64
                     GenerateSizeofExpression(sizeofExpression, emitter, variables, arrays, parameters);
                     return;
 
+                case CastExpression cast:
+                    GenerateCastExpression(cast, emitter, data, variables, arrays, parameters);
+                    break;
+
                 default:
                     throw new NotSupportedException($"Expression '{expression.GetType().Name}' is not supported.");
             }
+        }
+
+        private static void GenerateCastExpression(CastExpression expression, X64Emitter emitter, List<X64DataItem> data, Dictionary<string, (int Offset, string Type, bool IsConst)> variables, Dictionary<string, (int Length, string Type)> arrays, Dictionary<string, (int Index, string Type)> parameters)
+        {
+            if (!TryGetExpressionType(expression.Operand, variables, arrays, parameters, out var sourceType))
+                throw new InvalidOperationException("Cannot determine source type of cast.");
+
+            GenerateExpression(expression.Operand, emitter, data, variables, arrays, parameters);
+
+            if (expression.Type == "int")
+            {
+                if (sourceType == "float")
+                {
+                    emitter.Cvttss2siEaxXmm0();
+                    return;
+                }
+
+                if (sourceType == "double")
+                {
+                    emitter.Cvttsd2siEaxXmm0();
+                    return;
+                }
+            }
+
+            if (expression.Type == "float")
+            {
+                if (sourceType is "char" or "short" or "int" or "long")
+                {
+                    emitter.Cvtsi2ssXmm0Eax();
+                    return;
+                }
+
+                if (sourceType is "unsigned char" or "unsigned short")
+                {
+                    emitter.Cvtsi2ssXmm0Eax();
+                    return;
+                }
+
+                if (sourceType is "unsigned int" or "unsigned long")
+                {
+                    emitter.Cvtsi2ssXmm0Rax();
+                    return;
+                }
+
+                if (sourceType == "long long")
+                {
+                    emitter.Cvtsi2ssXmm0Rax();
+                    return;
+                }
+            }
+
+            if (expression.Type == "double")
+            {
+                if (sourceType is "char" or "short" or "int" or "long")
+                {
+                    emitter.Cvtsi2sdXmm0Eax();
+                    return;
+                }
+
+                if (sourceType is "unsigned char" or "unsigned short")
+                {
+                    emitter.Cvtsi2sdXmm0Eax();
+                    return;
+                }
+
+                if (sourceType is "unsigned int" or "unsigned long")
+                {
+                    emitter.Cvtsi2sdXmm0Rax();
+                    return;
+                }
+
+                if (sourceType == "long long")
+                {
+                    emitter.Cvtsi2sdXmm0Rax();
+                    return;
+                }
+            }
+
+            throw new NotSupportedException($"Cast from '{sourceType}' to '{expression.Type}' is not yet supported.");
         }
 
         private static void GenerateIdentifier(IdentifierExpression expression, X64Emitter emitter, List<X64DataItem> data, Dictionary<string, (int Offset, string Type, bool IsConst)> variables, Dictionary<string, (int Length, string Type)> arrays, Dictionary<string, (int Index, string Type)> parameters)
@@ -649,6 +830,14 @@ namespace JollyCCompiler.Compiler.CodeGen.X64
                 if (variable.Type.EndsWith("*", StringComparison.Ordinal))
                 {
                     emitter.MovRaxRbpDisp8(variable.Offset);
+                }
+                else if (variable.Type == "float")
+                {
+                    emitter.MovssXmm0RbpDisp8(variable.Offset);
+                }
+                else if (variable.Type == "double")
+                {
+                    emitter.MovsdXmm0RbpDisp8(variable.Offset);
                 }
                 else
                 {
@@ -690,39 +879,51 @@ namespace JollyCCompiler.Compiler.CodeGen.X64
             if (parameters.TryGetValue(expression.Name, out var parameter))
             {
                 var offset = -(parameter.Index + 1) * 8;
-                var typeSize = GetTypeSize(parameter.Type);
 
                 if (parameter.Type.EndsWith("*", StringComparison.Ordinal))
                 {
                     emitter.MovRaxRbpDisp8(offset);
                 }
-                else if (typeSize == 1)
+                else if (parameter.Type == "float")
                 {
-                    emitter.MovAlRbpDisp32(offset);
-
-                    if (IsUnsignedChar(parameter.Type))
-                        emitter.MovzxEaxAl();
-                    else
-                        emitter.EmitBytes(0x0F, 0xBE, 0xC0);
+                    emitter.MovssXmm0RbpDisp8(offset);
                 }
-                else if (typeSize == 2)
+                else if (parameter.Type == "double")
                 {
-                    if (IsUnsignedShort(parameter.Type))
-                        emitter.EmitBytes(0x0F, 0xB7, 0x45, unchecked((byte)offset));
-                    else
-                        emitter.EmitBytes(0x0F, 0xBF, 0x45, unchecked((byte)offset));
-                }
-                else if (typeSize == 4)
-                {
-                    emitter.MovEaxRbpDisp32(offset);
-                }
-                else if (typeSize == 8)
-                {
-                    emitter.MovRaxRbpDisp8(offset);
+                    emitter.MovsdXmm0RbpDisp8(offset);
                 }
                 else
                 {
-                    throw new NotSupportedException($"Parameter type '{parameter.Type}' is not yet supported.");
+                    var typeSize = GetTypeSize(parameter.Type);
+
+                    if (typeSize == 1)
+                    {
+                        emitter.MovAlRbpDisp32(offset);
+
+                        if (IsUnsignedChar(parameter.Type))
+                            emitter.MovzxEaxAl();
+                        else
+                            emitter.EmitBytes(0x0F, 0xBE, 0xC0);
+                    }
+                    else if (typeSize == 2)
+                    {
+                        if (IsUnsignedShort(parameter.Type))
+                            emitter.EmitBytes(0x0F, 0xB7, 0x45, unchecked((byte)offset));
+                        else
+                            emitter.EmitBytes(0x0F, 0xBF, 0x45, unchecked((byte)offset));
+                    }
+                    else if (typeSize == 4)
+                    {
+                        emitter.MovEaxRbpDisp32(offset);
+                    }
+                    else if (typeSize == 8)
+                    {
+                        emitter.MovRaxRbpDisp8(offset);
+                    }
+                    else
+                    {
+                        throw new NotSupportedException($"Parameter type '{parameter.Type}' is not yet supported.");
+                    }
                 }
 
                 return;
@@ -1038,7 +1239,15 @@ namespace JollyCCompiler.Compiler.CodeGen.X64
 
             var elementSize = GetTypeSize(elementType);
 
-            if (elementSize == 1)
+            if (elementType == "float")
+            {
+                emitter.MovssXmm0RaxMemory();
+            }
+            else if (elementType == "double")
+            {
+                emitter.MovsdXmm0RaxMemory();
+            }
+            else if (elementSize == 1)
             {
                 if (elementType == "unsigned char")
                     emitter.MovzxEaxRaxMemoryByte();
@@ -1053,11 +1262,17 @@ namespace JollyCCompiler.Compiler.CodeGen.X64
                     emitter.EmitBytes(0x0F, 0xBF, 0x00);
             }
             else if (elementSize == 4)
+            {
                 emitter.MovEaxRaxMemory();
+            }
             else if (elementSize == 8)
+            {
                 emitter.MovRaxFromMemory();
+            }
             else
+            {
                 throw new NotSupportedException($"Array element type '{elementType}' is not yet supported.");
+            }
         }
 
         private static void GeneratePointerArraySubscriptExpression(ArraySubscriptExpression expression, string pointerType, X64Emitter emitter, List<X64DataItem> data, Dictionary<string, (int Offset, string Type, bool IsConst)> variables, Dictionary<string, (int Length, string Type)> arrays, Dictionary<string, (int Index, string Type)> parameters)
@@ -1270,7 +1485,7 @@ namespace JollyCCompiler.Compiler.CodeGen.X64
 
             if (isConst)
                 throw new InvalidOperationException($"Cannot modify const variable '{target.Name}'.");
-            
+
             if (type.EndsWith("*", StringComparison.Ordinal))
             {
                 if (operatorKind != TokenKind.Equals)
@@ -1278,6 +1493,98 @@ namespace JollyCCompiler.Compiler.CodeGen.X64
 
                 GenerateExpression(value, emitter, data, variables, arrays, parameters);
                 emitter.MovRbpDisp8Rax(offset);
+                return;
+            }
+
+            if (type == "float")
+            {
+                if (!TryGetExpressionType(value, variables, arrays, parameters, out var sourceType))
+                    throw new InvalidOperationException("Cannot determine assignment source type.");
+
+                if (operatorKind == TokenKind.Equals)
+                {
+                    GenerateExpression(value, emitter, data, variables, arrays, parameters);
+                    ConvertFloatingAssignment(sourceType, "float", emitter);
+                    emitter.MovRbpDisp8Xmm0(offset);
+                    return;
+                }
+
+                emitter.MovssXmm0RbpDisp8(offset);
+                emitter.MovssXmm1Xmm0();
+
+                GenerateExpression(value, emitter, data, variables, arrays, parameters);
+                ConvertFloatingAssignment(sourceType, "float", emitter);
+
+                switch (operatorKind)
+                {
+                    case TokenKind.PlusEquals:
+                        emitter.AddssXmm1Xmm0();
+                        break;
+
+                    case TokenKind.MinusEquals:
+                        emitter.SubssXmm1Xmm0();
+                        break;
+
+                    case TokenKind.StarEquals:
+                        emitter.MulssXmm1Xmm0();
+                        break;
+
+                    case TokenKind.SlashEquals:
+                        emitter.DivssXmm1Xmm0();
+                        break;
+
+                    default:
+                        throw new NotSupportedException($"Compound assignment operator '{operatorKind}' is not supported for float.");
+                }
+
+                emitter.MovssXmm0Xmm1();
+                emitter.MovRbpDisp8Xmm0(offset);
+                return;
+            }
+
+            if (type == "double")
+            {
+                if (!TryGetExpressionType(value, variables, arrays, parameters, out var sourceType))
+                    throw new InvalidOperationException("Cannot determine assignment source type.");
+
+                if (operatorKind == TokenKind.Equals)
+                {
+                    GenerateExpression(value, emitter, data, variables, arrays, parameters);
+                    ConvertFloatingAssignment(sourceType, "double", emitter);
+                    emitter.MovRbpDisp8Xmm0Double(offset);
+                    return;
+                }
+
+                emitter.MovsdXmm0RbpDisp8(offset);
+                emitter.MovsdXmm1Xmm0();
+
+                GenerateExpression(value, emitter, data, variables, arrays, parameters);
+                ConvertFloatingAssignment(sourceType, "double", emitter);
+
+                switch (operatorKind)
+                {
+                    case TokenKind.PlusEquals:
+                        emitter.AddsdXmm1Xmm0();
+                        break;
+
+                    case TokenKind.MinusEquals:
+                        emitter.SubsdXmm1Xmm0();
+                        break;
+
+                    case TokenKind.StarEquals:
+                        emitter.MulsdXmm1Xmm0();
+                        break;
+
+                    case TokenKind.SlashEquals:
+                        emitter.DivsdXmm1Xmm0();
+                        break;
+
+                    default:
+                        throw new NotSupportedException($"Compound assignment operator '{operatorKind}' is not supported for double.");
+                }
+
+                emitter.MovsdXmm0Xmm1();
+                emitter.MovRbpDisp8Xmm0Double(offset);
                 return;
             }
 
@@ -1356,7 +1663,7 @@ namespace JollyCCompiler.Compiler.CodeGen.X64
             }
             else if (typeSize == 4)
                 emitter.MovEaxRbpDisp32(offset);
-            else if (typeSize == 8) 
+            else if (typeSize == 8)
                 emitter.MovRaxRbpDisp32(offset);
             else
                 throw new NotSupportedException($"Compound assignment on type '{type}' is not yet supported.");
@@ -1395,6 +1702,113 @@ namespace JollyCCompiler.Compiler.CodeGen.X64
             var elementSize = GetTypeSize(elementType);
 
             GenerateArraySubscriptAddress(target, emitter, data, variables, arrays, parameters);
+
+            if (elementType == "float" || elementType == "double")
+            {
+                emitter.PushRax();
+
+                if (operatorKind == TokenKind.Equals)
+                {
+                    GenerateExpression(value, emitter, data, variables, arrays, parameters);
+
+                    if (!TryGetExpressionType(value, variables, arrays, parameters, out var sourceType))
+                        throw new InvalidOperationException("Cannot determine assignment source type.");
+
+                    ConvertFloatingAssignment(sourceType, elementType, emitter);
+
+                    emitter.MovRaxRspDisp32(0);
+
+                    if (elementType == "float")
+                        emitter.MovRaxMemoryXmm0Float();
+                    else
+                        emitter.MovRaxMemoryXmm0Double();
+
+                    emitter.AddRsp(8);
+                    return;
+                }
+
+                emitter.MovRaxRspDisp32(0);
+
+                if (elementType == "float")
+                    emitter.MovssXmm0RaxMemory();
+                else
+                    emitter.MovsdXmm0RaxMemory();
+
+                if (elementType == "float")
+                    emitter.MovssXmm1Xmm0();
+                else
+                    emitter.MovsdXmm1Xmm0();
+
+                GenerateExpression(value, emitter, data, variables, arrays, parameters);
+
+                if (!TryGetExpressionType(value, variables, arrays, parameters, out var compoundSourceType))
+                    throw new InvalidOperationException("Cannot determine assignment source type.");
+
+                ConvertFloatingAssignment(compoundSourceType, elementType, emitter);
+
+                if (elementType == "float")
+                {
+                    switch (operatorKind)
+                    {
+                        case TokenKind.PlusEquals:
+                            emitter.AddssXmm1Xmm0();
+                            break;
+
+                        case TokenKind.MinusEquals:
+                            emitter.SubssXmm1Xmm0();
+                            break;
+
+                        case TokenKind.StarEquals:
+                            emitter.MulssXmm1Xmm0();
+                            break;
+
+                        case TokenKind.SlashEquals:
+                            emitter.DivssXmm1Xmm0();
+                            break;
+
+                        default:
+                            throw new NotSupportedException(
+                                $"Compound assignment operator '{operatorKind}' is not supported for float array elements.");
+                    }
+
+                    emitter.MovssXmm0Xmm1();
+                    emitter.MovRaxRspDisp32(0);
+                    emitter.MovRaxMemoryXmm0Float();
+                }
+                else
+                {
+                    switch (operatorKind)
+                    {
+                        case TokenKind.PlusEquals:
+                            emitter.AddsdXmm1Xmm0();
+                            break;
+
+                        case TokenKind.MinusEquals:
+                            emitter.SubsdXmm1Xmm0();
+                            break;
+
+                        case TokenKind.StarEquals:
+                            emitter.MulsdXmm1Xmm0();
+                            break;
+
+                        case TokenKind.SlashEquals:
+                            emitter.DivsdXmm1Xmm0();
+                            break;
+
+                        default:
+                            throw new NotSupportedException(
+                                $"Compound assignment operator '{operatorKind}' is not supported for double array elements.");
+                    }
+
+                    emitter.MovsdXmm0Xmm1();
+                    emitter.MovRaxRspDisp32(0);
+                    emitter.MovRaxMemoryXmm0Double();
+                }
+
+                emitter.AddRsp(8);
+                return;
+            }
+
             emitter.PushRax();
 
             if (operatorKind == TokenKind.Equals)
@@ -1587,8 +2001,7 @@ namespace JollyCCompiler.Compiler.CodeGen.X64
                 return;
             }
 
-            if (expression.Operator == TokenKind.Plus &&
-                TryGetPointerType(expression.Right, variables, arrays, parameters, out _))
+            if (expression.Operator == TokenKind.Plus && TryGetPointerType(expression.Right, variables, arrays, parameters, out _))
             {
                 throw new NotSupportedException("Integer plus pointer is not yet supported by the x64 backend.");
             }
@@ -1596,6 +2009,12 @@ namespace JollyCCompiler.Compiler.CodeGen.X64
             var commonType = TryGetExpressionType(expression.Left, variables, arrays, parameters, out var leftType) && TryGetExpressionType(expression.Right, variables, arrays, parameters, out var rightType)
                 ? GetCommonArithmeticType(leftType, rightType)
                 : string.Empty;
+
+            if (commonType == "float" || commonType == "double")
+            {
+                GenerateFloatingBinaryExpression(expression, commonType, emitter, data, variables, arrays, parameters);
+                return;
+            }
 
             var is64BitOperation = commonType is "long long" or "unsigned long long";
             var isUnsignedOperation = commonType is "unsigned int" or "unsigned long" or "unsigned long long";
@@ -1698,6 +2117,205 @@ namespace JollyCCompiler.Compiler.CodeGen.X64
             }
         }
 
+        private static void GenerateFloatingBinaryExpression(BinaryExpression expression, string commonType, X64Emitter emitter, List<X64DataItem> data, Dictionary<string, (int Offset, string Type, bool IsConst)> variables, Dictionary<string, (int Length, string Type)> arrays, Dictionary<string, (int Index, string Type)> parameters)
+        {
+            var isDouble = commonType == "double";
+
+            GenerateFloatingOperand(
+                expression.Right,
+                commonType,
+                emitter,
+                data,
+                variables,
+                arrays,
+                parameters);
+
+            if (isDouble)
+                emitter.MovqRaxXmm0();
+            else
+                emitter.MovdEaxXmm0();
+
+            emitter.PushRax();
+
+            GenerateFloatingOperand(
+                expression.Left,
+                commonType,
+                emitter,
+                data,
+                variables,
+                arrays,
+                parameters);
+
+            if (isDouble)
+            {
+                emitter.MovRaxRspDisp32(0);
+                emitter.MovqXmm1Rax();
+
+                switch (expression.Operator)
+                {
+                    case TokenKind.Plus:
+                        emitter.AddsdXmm0Xmm1();
+                        break;
+
+                    case TokenKind.Minus:
+                        emitter.SubsdXmm0Xmm1();
+                        break;
+
+                    case TokenKind.Star:
+                        emitter.MulsdXmm0Xmm1();
+                        break;
+
+                    case TokenKind.Slash:
+                        emitter.DivsdXmm0Xmm1();
+                        break;
+
+                    default:
+                        throw new NotSupportedException(
+                            $"Floating-point operator '{expression.Operator}' is not yet supported.");
+                }
+            }
+            else
+            {
+                emitter.MovRaxRspDisp32(0);
+                emitter.MovdXmm1Eax();
+
+                switch (expression.Operator)
+                {
+                    case TokenKind.Plus:
+                        emitter.AddssXmm0Xmm1();
+                        break;
+
+                    case TokenKind.Minus:
+                        emitter.SubssXmm0Xmm1();
+                        break;
+
+                    case TokenKind.Star:
+                        emitter.MulssXmm0Xmm1();
+                        break;
+
+                    case TokenKind.Slash:
+                        emitter.DivssXmm0Xmm1();
+                        break;
+
+                    default:
+                        throw new NotSupportedException(
+                            $"Floating-point operator '{expression.Operator}' is not yet supported.");
+                }
+            }
+
+            emitter.AddRsp(8);
+        }
+
+        private static void GenerateFloatingOperand(ExpressionNode expression, string commonType, X64Emitter emitter, List<X64DataItem> data, Dictionary<string, (int Offset, string Type, bool IsConst)> variables, Dictionary<string, (int Length, string Type)> arrays, Dictionary<string, (int Index, string Type)> parameters)
+        {
+            if (!TryGetExpressionType(expression, variables, arrays, parameters, out var sourceType))
+                throw new InvalidOperationException("Cannot determine floating-point operand type.");
+
+            GenerateExpression(expression, emitter, data, variables, arrays, parameters);
+
+            if (commonType == "double")
+            {
+                if (sourceType == "float")
+                {
+                    emitter.Cvtss2sdXmm0Xmm0();
+                    return;
+                }
+
+                if (sourceType == "double")
+                    return;
+
+                if (sourceType is "char" or "short" or "int" or "long" or "unsigned char" or "unsigned short")
+                {
+                    emitter.Cvtsi2sdXmm0Eax();
+                    return;
+                }
+
+                if (sourceType is "unsigned int" or "unsigned long" or "long long")
+                {
+                    emitter.Cvtsi2sdXmm0Rax();
+                    return;
+                }
+            }
+
+            if (commonType == "float")
+            {
+                if (sourceType == "float")
+                    return;
+
+                if (sourceType == "double")
+                {
+                    emitter.Cvtsd2ssXmm0Xmm0();
+                    return;
+                }
+
+                if (sourceType is "char" or "short" or "int" or "long" or "unsigned char" or "unsigned short")
+                {
+                    emitter.Cvtsi2ssXmm0Eax();
+                    return;
+                }
+
+                if (sourceType is "unsigned int" or "unsigned long" or "long long")
+                {
+                    emitter.Cvtsi2ssXmm0Rax();
+                    return;
+                }
+            }
+
+            throw new NotSupportedException($"Cannot convert '{sourceType}' to '{commonType}'.");
+        }
+
+        private static void ConvertFloatingAssignment(string sourceType, string targetType, X64Emitter emitter)
+        {
+            if (sourceType == targetType)
+                return;
+
+            if (targetType == "float")
+            {
+                if (sourceType == "double")
+                {
+                    emitter.Cvtsd2ssXmm0Xmm0();
+                    return;
+                }
+
+                if (sourceType is "char" or "short" or "int" or "long"
+                    or "unsigned char" or "unsigned short")
+                {
+                    emitter.Cvtsi2ssXmm0Eax();
+                    return;
+                }
+
+                if (sourceType is "unsigned int" or "unsigned long" or "long long")
+                {
+                    emitter.Cvtsi2ssXmm0Rax();
+                    return;
+                }
+            }
+
+            if (targetType == "double")
+            {
+                if (sourceType == "float")
+                {
+                    emitter.Cvtss2sdXmm0Xmm0();
+                    return;
+                }
+
+                if (sourceType is "char" or "short" or "int" or "long"
+                    or "unsigned char" or "unsigned short")
+                {
+                    emitter.Cvtsi2sdXmm0Eax();
+                    return;
+                }
+
+                if (sourceType is "unsigned int" or "unsigned long" or "long long")
+                {
+                    emitter.Cvtsi2sdXmm0Rax();
+                    return;
+                }
+            }
+
+            throw new NotSupportedException($"Cannot convert '{sourceType}' to '{targetType}' for assignment.");
+        }
+
         private static void GenerateCallExpression(CallExpression call, X64Emitter emitter, List<X64DataItem> data, Dictionary<string, (int Offset, string Type, bool IsConst)> variables, Dictionary<string, (int Length, string Type)> arrays, Dictionary<string, (int Index, string Type)> parameters)
         {
             if (call.Name == "printf")
@@ -1720,6 +2338,7 @@ namespace JollyCCompiler.Compiler.CodeGen.X64
             for (var i = 0; i < argumentCount; i++)
             {
                 var argument = call.Arguments[i];
+                var temporaryOffset = temporaryBase + (i * 8);
 
                 if (argument is IdentifierExpression identifier &&
                     arrays.TryGetValue(identifier.Name, out _))
@@ -1728,20 +2347,98 @@ namespace JollyCCompiler.Compiler.CodeGen.X64
                         throw new InvalidOperationException($"Array '{identifier.Name}' has no stack slot.");
 
                     emitter.LeaRaxRbpDisp32(arrayVariable.Offset);
+                    emitter.MovRspDisp32Rax(temporaryOffset);
+                    continue;
+                }
+
+                if (!TryGetExpressionType(argument, variables, arrays, parameters, out var argumentType))
+                    throw new InvalidOperationException("Cannot determine function argument type.");
+
+                GenerateExpression(
+                    argument,
+                    emitter,
+                    data,
+                    variables,
+                    arrays,
+                    parameters);
+
+                if (argumentType == "float")
+                {
+                    emitter.MovdEaxXmm0();
+                    emitter.MovRspDisp32Rax(temporaryOffset);
+                }
+                else if (argumentType == "double")
+                {
+                    emitter.MovqRaxXmm0();
+                    emitter.MovRspDisp32Rax(temporaryOffset);
                 }
                 else
                 {
-                    GenerateExpression(argument, emitter, data, variables, arrays, parameters);
+                    emitter.MovRspDisp32Rax(temporaryOffset);
                 }
-
-                var temporaryOffset = temporaryBase + (i * 8);
-                emitter.MovRspDisp32Rax(temporaryOffset);
             }
 
             for (var i = 0; i < argumentCount; i++)
             {
                 var argument = call.Arguments[i];
                 var temporaryOffset = temporaryBase + (i * 8);
+
+                if (!TryGetExpressionType(argument, variables, arrays, parameters, out var argumentType))
+                    throw new InvalidOperationException("Cannot determine function argument type.");
+
+                Debug.WriteLine($"ARG {call.Name}: index={i}, type={argumentType}");
+
+                if (argumentType == "float")
+                {
+                    emitter.MovRaxRspDisp32(temporaryOffset);
+
+                    switch (i)
+                    {
+                        case 0:
+                            emitter.MovdXmm0Eax();
+                            break;
+                        case 1:
+                            emitter.MovdXmm1Eax();
+                            break;
+                        case 2:
+                            emitter.MovdXmm2Eax();
+                            break;
+                        case 3:
+                            emitter.MovdXmm3Eax();
+                            break;
+                        default:
+                            emitter.MoveRaxToStackArgument(i);
+                            break;
+                    }
+
+                    continue;
+                }
+
+                if (argumentType == "double")
+                {
+                    emitter.MovRaxRspDisp32(temporaryOffset);
+
+                    switch (i)
+                    {
+                        case 0:
+                            emitter.MovqXmm0Rax();
+                            break;
+                        case 1:
+                            emitter.MovqXmm1Rax();
+                            break;
+                        case 2:
+                            emitter.MovqXmm2Rax();
+                            break;
+                        case 3:
+                            emitter.MovqXmm3Rax();
+                            break;
+                        default:
+                            emitter.MoveRaxToStackArgument(i);
+                            break;
+                    }
+
+                    continue;
+                }
 
                 emitter.MovRaxRspDisp32(temporaryOffset);
 
@@ -1766,10 +2463,8 @@ namespace JollyCCompiler.Compiler.CodeGen.X64
                 }
                 else
                 {
-                    if (!TryGetExpressionType(argument, variables, arrays, parameters, out var argumentType))
-                        throw new InvalidOperationException("Cannot determine function argument type.");
-
-                    var is64BitArgument = argumentType is "long long" or "unsigned long long";
+                    var is64BitArgument =
+                        argumentType is "long long" or "unsigned long long";
 
                     if (i < 4)
                     {
@@ -1901,6 +2596,72 @@ namespace JollyCCompiler.Compiler.CodeGen.X64
                 ? GetCommonArithmeticType(leftType, rightType)
                 : string.Empty;
 
+            if (commonType is "float" or "double")
+            {
+                GenerateFloatingOperand(expression.Right, commonType, emitter, data, variables, arrays, parameters);
+
+                if (commonType == "double")
+                    emitter.MovsdXmm1Xmm0();
+                else
+                    emitter.MovssXmm1Xmm0();
+
+                GenerateFloatingOperand(expression.Left, commonType, emitter, data, variables, arrays, parameters);
+
+                if (commonType == "double")
+                    emitter.UcomisdXmm0Xmm1();
+                else
+                    emitter.UcomissXmm0Xmm1();
+
+                var floatingTrueLabel = $"$fcmp_true_{emitter.Offset}";
+                var floatingFalseLabel = $"$fcmp_false_{emitter.Offset}";
+                var floatingEndLabel = $"$fcmp_end_{emitter.Offset}";
+                switch (expression.Operator)
+                {
+                    case TokenKind.EqualEqual:
+                        emitter.Jp(floatingFalseLabel);
+                        emitter.Je(floatingTrueLabel);
+                        break;
+
+                    case TokenKind.NotEqual:
+                        emitter.Jp(floatingTrueLabel);
+                        emitter.Jne(floatingTrueLabel);
+                        break;
+
+                    case TokenKind.Less:
+                        emitter.Jp(floatingFalseLabel);
+                        emitter.Jb(floatingTrueLabel);
+                        break;
+
+                    case TokenKind.LessEqual:
+                        emitter.Jp(floatingFalseLabel);
+                        emitter.Jbe(floatingTrueLabel);
+                        break;
+
+                    case TokenKind.Greater:
+                        emitter.Jp(floatingFalseLabel);
+                        emitter.Ja(floatingTrueLabel);
+                        break;
+
+                    case TokenKind.GreaterEqual:
+                        emitter.Jp(floatingFalseLabel);
+                        emitter.Jae(floatingTrueLabel);
+                        break;
+
+                    default:
+                        throw new NotSupportedException($"Operator '{expression.Operator}' is not a comparison operator.");
+                }
+
+                emitter.MarkLabel(floatingFalseLabel);
+                emitter.MovEax(0);
+                emitter.Jmp(floatingEndLabel);
+
+                emitter.MarkLabel(floatingTrueLabel);
+                emitter.MovEax(1);
+
+                emitter.MarkLabel(floatingEndLabel);
+                return;
+            }
+
             var is64BitComparison = commonType is "long long" or "unsigned long long";
             var useUnsignedComparison = commonType is "unsigned int" or "unsigned long" or "unsigned long long";
 
@@ -1963,7 +2724,8 @@ namespace JollyCCompiler.Compiler.CodeGen.X64
                     break;
 
                 default:
-                    throw new NotSupportedException($"Operator '{expression.Operator}' is not a comparison operator.");
+                    throw new NotSupportedException(
+                        $"Operator '{expression.Operator}' is not a comparison operator.");
             }
 
             emitter.MovEax(0);
@@ -2739,9 +3501,38 @@ namespace JollyCCompiler.Compiler.CodeGen.X64
                 return true;
             }
 
+            if (expression is FloatingExpression floating)
+            {
+                type = floating.Type;
+                return true;
+            }
+
             if (expression is IntegerExpression integer)
             {
                 type = integer.Type;
+                return true;
+            }
+
+            if (expression is UnaryExpression unary)
+            {
+                return TryGetExpressionType(unary.Operand, variables, arrays, parameters, out type);
+            }
+
+            if (expression is DereferenceExpression dereference)
+            {
+                if (!TryGetExpressionType(dereference.Operand, variables, arrays, parameters, out var pointerType))
+                {
+                    type = string.Empty;
+                    return false;
+                }
+
+                if (!pointerType.EndsWith("*", StringComparison.Ordinal))
+                {
+                    type = string.Empty;
+                    return false;
+                }
+
+                type = pointerType[..^1];
                 return true;
             }
 
@@ -2766,6 +3557,12 @@ namespace JollyCCompiler.Compiler.CodeGen.X64
 
         private static string GetCommonArithmeticType(string leftType, string rightType)
         {
+            if (leftType == "double" || rightType == "double")
+                return "double";
+
+            if (leftType == "float" || rightType == "float")
+                return "float";
+
             if (leftType == "unsigned long long" || rightType == "unsigned long long")
                 return "unsigned long long";
 
@@ -2915,6 +3712,113 @@ namespace JollyCCompiler.Compiler.CodeGen.X64
                 return;
             }
 
+            if (member.Type == "float" || member.Type == "double")
+            {
+                GenerateLValueAddress(target, emitter, data, variables, arrays, parameters);
+                emitter.PushRax();
+
+                if (operatorKind == TokenKind.Equals)
+                {
+                    GenerateExpression(value, emitter, data, variables, arrays, parameters);
+
+                    if (!TryGetExpressionType(value, variables, arrays, parameters, out var sourceType))
+                        throw new InvalidOperationException("Cannot determine assignment source type.");
+
+                    ConvertFloatingAssignment(sourceType, member.Type, emitter);
+
+                    emitter.MovRaxRspDisp32(0);
+
+                    if (member.Type == "float")
+                        emitter.MovRaxMemoryXmm0Float();
+                    else
+                        emitter.MovRaxMemoryXmm0Double();
+
+                    emitter.AddRsp(8);
+                    return;
+                }
+
+                emitter.MovRaxRspDisp32(0);
+
+                if (member.Type == "float")
+                    emitter.MovssXmm0RaxMemory();
+                else
+                    emitter.MovsdXmm0RaxMemory();
+
+                if (member.Type == "float")
+                    emitter.MovssXmm1Xmm0();
+                else
+                    emitter.MovsdXmm1Xmm0();
+
+                GenerateExpression(value, emitter, data, variables, arrays, parameters);
+
+                if (!TryGetExpressionType(value, variables, arrays, parameters, out var compoundSourceType))
+                    throw new InvalidOperationException("Cannot determine assignment source type.");
+
+                ConvertFloatingAssignment(compoundSourceType, member.Type, emitter);
+
+                if (member.Type == "float")
+                {
+                    switch (operatorKind)
+                    {
+                        case TokenKind.PlusEquals:
+                            emitter.AddssXmm1Xmm0();
+                            break;
+
+                        case TokenKind.MinusEquals:
+                            emitter.SubssXmm1Xmm0();
+                            break;
+
+                        case TokenKind.StarEquals:
+                            emitter.MulssXmm1Xmm0();
+                            break;
+
+                        case TokenKind.SlashEquals:
+                            emitter.DivssXmm1Xmm0();
+                            break;
+
+                        default:
+                            throw new NotSupportedException(
+                                $"Compound assignment operator '{operatorKind}' is not supported for float struct members.");
+                    }
+
+                    emitter.MovssXmm0Xmm1();
+                    emitter.MovRaxRspDisp32(0);
+                    emitter.MovRaxMemoryXmm0Float();
+                }
+                else
+                {
+                    switch (operatorKind)
+                    {
+                        case TokenKind.PlusEquals:
+                            emitter.AddsdXmm1Xmm0();
+                            break;
+
+                        case TokenKind.MinusEquals:
+                            emitter.SubsdXmm1Xmm0();
+                            break;
+
+                        case TokenKind.StarEquals:
+                            emitter.MulsdXmm1Xmm0();
+                            break;
+
+                        case TokenKind.SlashEquals:
+                            emitter.DivsdXmm1Xmm0();
+                            break;
+
+                        default:
+                            throw new NotSupportedException(
+                                $"Compound assignment operator '{operatorKind}' is not supported for double struct members.");
+                    }
+
+                    emitter.MovsdXmm0Xmm1();
+                    emitter.MovRaxRspDisp32(0);
+                    emitter.MovRaxMemoryXmm0Double();
+                }
+
+                emitter.AddRsp(8);
+                return;
+            }
+
             if (memberSize != 1 && memberSize != 2 && memberSize != 4 && memberSize != 8)
                 throw new NotSupportedException($"Struct member type '{member.Type}' is not yet supported for generated stores.");
 
@@ -2932,7 +3836,7 @@ namespace JollyCCompiler.Compiler.CodeGen.X64
                     emitter.EmitBytes(0x88, 0x08);
                 else if (memberSize == 2)
                 {
-                    emitter.MovRaxMemory16Cx();
+                    emitter.EmitBytes(0x66, 0x89, 0x08);
                     NormalizeIntegerResult(emitter, member.Type);
                 }
                 else if (memberSize == 4)
@@ -2977,7 +3881,7 @@ namespace JollyCCompiler.Compiler.CodeGen.X64
             if (memberSize == 1)
                 emitter.EmitBytes(0x88, 0x08);
             else if (memberSize == 2)
-                emitter.MovRaxMemory16Cx();
+                emitter.EmitBytes(0x66, 0x89, 0x08);
             else
                 emitter.EmitBytes(0x89, 0x08);
         }

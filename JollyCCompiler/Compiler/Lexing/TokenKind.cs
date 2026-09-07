@@ -6,6 +6,7 @@
 
         Identifier,
         IntegerLiteral,
+        FloatLiteral,
         StringLiteral,
         CharLiteral,
 
@@ -13,6 +14,8 @@
         Char,
         Short,
         Long,
+        Float,
+        Double,
         Unsigned,
         Void,
         Return,
