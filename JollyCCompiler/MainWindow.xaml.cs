@@ -2391,9 +2391,205 @@ namespace JollyCCompiler
             return result == 600;
         }
                 
+        int testLongAssignment()
+        {
+            long value;
+
+            value = 100;
+
+            return value == 100;
+        }
+
+        int testLongArithmetic()
+        {
+            long value;
+
+            value = 100;
+            value += 50;
+            value -= 25;
+            value *= 2;
+            value /= 5;
+            value %= 7;
+
+            return value;
+        }
+
+        int testLongComparison()
+        {
+            long a;
+            long b;
+            int result;
+
+            a = 100;
+            b = 200;
+            result = 0;
+
+            if (a < b)
+                result += 1;
+
+            if (a <= b)
+                result += 2;
+
+            if (b > a)
+                result += 4;
+
+            if (b >= a)
+                result += 8;
+
+            if (a != b)
+                result += 16;
+
+            if (a == 100)
+                result += 32;
+
+            return result == 63;
+        }
+
+        int testLongIncrementDecrement()
+        {
+            long value;
+            int result;
+
+            value = 10;
+
+            result = value++;
+            result += ++value;
+            result += value--;
+            result += --value;
+
+            return result;
+        }
+
+        int testUnsignedLongAssignment()
+        {
+            unsigned long value;
+
+            value = 100;
+
+            return value == 100;
+        }
+
+        int testUnsignedLongArithmetic()
+        {
+            unsigned long value;
+
+            value = 100;
+            value += 50;
+            value -= 25;
+            value *= 2;
+            value /= 5;
+            value %= 7;
+
+            return value;
+        }
+
+        int testUnsignedLongComparison()
+        {
+            unsigned long a;
+            unsigned long b;
+            int result;
+
+            a = 100;
+            b = 200;
+            result = 0;
+
+            if (a < b)
+                result += 1;
+
+            if (a <= b)
+                result += 2;
+
+            if (b > a)
+                result += 4;
+
+            if (b >= a)
+                result += 8;
+
+            if (a != b)
+                result += 16;
+
+            if (a == 100)
+                result += 32;
+
+            return result == 63;
+        }
+
+        int testUnsignedLongCompoundDivision()
+        {
+            unsigned long value;
+
+            value = 250;
+            value /= 5;
+
+            return value == 50;
+        }
+
+        int testUnsignedLongCompoundRemainder()
+        {
+            unsigned long value;
+
+            value = 253;
+            value %= 5;
+
+            return value == 3;
+        }
+
+        int testUnsignedLongWraparound()
+        {
+            unsigned long value;
+
+            value = 0;
+            value--;
+
+            return value == -1;
+        }
+
+        int testUnsignedLongIncrementDecrement()
+        {
+            unsigned long value;
+            int result;
+
+            value = 10;
+
+            result = value++;
+            result += ++value;
+            result += value--;
+            result += --value;
+
+            return result;
+        }
+
+        int testLongUnsignedIntPromotion()
+        {
+            long a;
+            unsigned int b;
+            unsigned long result;
+
+            a = 10;
+            b = 20;
+
+            result = a + b;
+
+            return result == 30;
+        }
+
+        int testUnsignedLongPromotion()
+        {
+            unsigned long a;
+            int b;
+            unsigned long result;
+
+            a = 100;
+            b = 25;
+
+            result = a + b;
+
+            return result == 125;
+        }
+        
         int main()
         {
-            const int finalExpectedResult = -2147268475;
+            const int finalExpectedResult = -2147268376;
             int result;
             int temporary;
 
@@ -2920,8 +3116,58 @@ namespace JollyCCompiler
             result += temporary;
             printf("testUnsignedIntArrayPointerIncrement: got=%d expected=1 running=%d\n", temporary, result);
 
-            printf("FINAL: got=%d expected=18\n", result);
-        
+            temporary = testLongAssignment();
+            result += temporary;
+            printf("testLongAssignment: got=%d expected=1 running=%d\n", temporary, result);
+
+            temporary = testLongArithmetic();
+            result += temporary;
+            printf("testLongArithmetic: got=%d expected=1 running=%d\n", temporary, result);
+
+            temporary = testLongComparison();
+            result += temporary;
+            printf("testLongComparison: got=%d expected=1 running=%d\n", temporary, result);
+
+            temporary = testLongIncrementDecrement();
+            result += temporary;
+            printf("testLongIncrementDecrement: got=%d expected=44 running=%d\n", temporary, result);
+
+            temporary = testUnsignedLongAssignment();
+            result += temporary;
+            printf("testUnsignedLongAssignment: got=%d expected=1 running=%d\n", temporary, result);
+
+            temporary = testUnsignedLongArithmetic();
+            result += temporary;
+            printf("testUnsignedLongArithmetic: got=%d expected=1 running=%d\n", temporary, result);
+
+            temporary = testUnsignedLongComparison();
+            result += temporary;
+            printf("testUnsignedLongComparison: got=%d expected=1 running=%d\n", temporary, result);
+
+            temporary = testUnsignedLongCompoundDivision();
+            result += temporary;
+            printf("testUnsignedLongCompoundDivision: got=%d expected=1 running=%d\n", temporary, result);
+
+            temporary = testUnsignedLongCompoundRemainder();
+            result += temporary;
+            printf("testUnsignedLongCompoundRemainder: got=%d expected=1 running=%d\n", temporary, result);
+
+            temporary = testUnsignedLongWraparound();
+            result += temporary;
+            printf("testUnsignedLongWraparound: got=%d expected=1 running=%d\n", temporary, result);
+
+            temporary = testUnsignedLongIncrementDecrement();
+            result += temporary;
+            printf("testUnsignedLongIncrementDecrement: got=%d expected=44 running=%d\n", temporary, result);
+
+            temporary = testLongUnsignedIntPromotion();
+            result += temporary;
+            printf("testLongUnsignedIntPromotion: got=%d expected=1 running=%d\n", temporary, result);
+
+            temporary = testUnsignedLongPromotion();
+            result += temporary;
+            printf("testUnsignedLongPromotion: got=%d expected=1 running=%d\n", temporary, result);
+
             printf("FINAL: got=%d expected=%d difference=%d\n", result, finalExpectedResult, result - finalExpectedResult);
 
             if (result == finalExpectedResult)

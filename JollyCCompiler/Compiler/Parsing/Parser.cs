@@ -255,6 +255,18 @@ namespace JollyCCompiler.Compiler.Parsing
                     Advance();
                     type = "unsigned int";
                 }
+                else if (Current.Kind == TokenKind.Long)
+                {
+                    Advance();
+
+                    if (Current.Kind == TokenKind.Long)
+                    {
+                        Advance();
+                        throw new NotSupportedException("unsigned long long is not yet supported.");
+                    }
+
+                    type = "unsigned long";
+                }
                 else
                 {
                     return ReportTypeError();
@@ -351,7 +363,7 @@ namespace JollyCCompiler.Compiler.Parsing
                 return null;
             }
 
-            if (Current.Kind is TokenKind.Const or TokenKind.Short or TokenKind.Int or TokenKind.Char or TokenKind.Unsigned or TokenKind.Struct or TokenKind.Union)
+            if (Current.Kind is TokenKind.Const or TokenKind.Short or TokenKind.Int or TokenKind.Char or TokenKind.Long or TokenKind.Unsigned or TokenKind.Struct or TokenKind.Union)
                 return ParseVariableDeclaration();
 
             if (Current.Kind == TokenKind.For)
@@ -435,7 +447,7 @@ namespace JollyCCompiler.Compiler.Parsing
 
             StatementNode? initializer = null;
 
-            if (Current.Kind is TokenKind.Const or TokenKind.Short or TokenKind.Int or TokenKind.Char or TokenKind.Unsigned or TokenKind.Struct or TokenKind.Union)
+            if (Current.Kind is TokenKind.Const or TokenKind.Short or TokenKind.Int or TokenKind.Char or TokenKind.Long or TokenKind.Unsigned or TokenKind.Struct or TokenKind.Union)
             {
                 initializer = ParseVariableDeclaration();
             }
@@ -775,12 +787,12 @@ namespace JollyCCompiler.Compiler.Parsing
             if (Current.Kind == TokenKind.IntegerLiteral)
             {
                 var token = Advance();
-                if (!int.TryParse(token.Text, out var value))
-                {
-                    ErrorAt(token, $"Invalid integer literal '{token.Text}'.");
-                    value = 0;
-                }
-                return new IntegerExpression(value);
+
+                if (TryParseIntegerLiteral(token.Text, out var value))
+                    return new IntegerExpression(value);
+
+                ErrorAt(token, $"Invalid integer literal '{token.Text}'.");
+                return new IntegerExpression(0);
             }
 
             if (Current.Kind == TokenKind.StringLiteral)
@@ -798,23 +810,63 @@ namespace JollyCCompiler.Compiler.Parsing
             if (Current.Kind == TokenKind.Identifier)
             {
                 var identifier = Advance();
+
                 if (Current.Kind == TokenKind.LeftParen)
                     return ParseCall(identifier);
+
                 return new IdentifierExpression(identifier.Text);
             }
 
             if (Current.Kind == TokenKind.LeftParen)
             {
                 Advance();
+
                 var expression = ParseExpression();
+
                 Expect(TokenKind.RightParen, "Expected ')' after expression.");
+
                 return expression;
             }
 
             Error($"Unexpected token '{Current.Text}'.");
+
             var bad = Current;
             Advance();
+
             return new IntegerExpression(0);
+        }
+
+        private static bool TryParseIntegerLiteral(string text, out int value)
+        {
+            text = text.Trim();
+
+            while (text.Length > 0 && (text.EndsWith("u", StringComparison.OrdinalIgnoreCase) || text.EndsWith("l", StringComparison.OrdinalIgnoreCase)))
+            {
+                text = text[..^1];
+            }
+
+            if (text.StartsWith("0x", StringComparison.OrdinalIgnoreCase))
+            {
+                var hexText = text[2..];
+
+                if (uint.TryParse(hexText, System.Globalization.NumberStyles.AllowHexSpecifier, System.Globalization.CultureInfo.InvariantCulture, out var unsignedValue))
+                {
+                    value = unchecked((int)unsignedValue);
+                    return true;
+                }
+
+                value = 0;
+                return false;
+            }
+
+            if (long.TryParse(text, System.Globalization.NumberStyles.Integer, System.Globalization.CultureInfo.InvariantCulture, out var signedValue) && signedValue >= int.MinValue && signedValue <= uint.MaxValue)
+            {
+                value = unchecked((int)signedValue);
+                return true;
+            }
+
+            value = 0;
+            return false;
         }
 
         private CallExpression ParseCall(Token identifier)

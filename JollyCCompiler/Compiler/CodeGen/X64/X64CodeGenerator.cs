@@ -69,6 +69,7 @@ namespace JollyCCompiler.Compiler.CodeGen.X64
             "int" => 4,
             "unsigned int" => 4,
             "long" => 4,
+            "unsigned long" => 4,
             "long long" => 8,
             "float" => 4,
             "double" => 8,
@@ -81,6 +82,7 @@ namespace JollyCCompiler.Compiler.CodeGen.X64
         private static bool IsUnsignedChar(string type) => string.Equals(type, "unsigned char", StringComparison.Ordinal);
         private static bool IsUnsignedShort(string type) => string.Equals(type, "unsigned short", StringComparison.Ordinal);
         private static bool IsUnsignedInt(string type) => string.Equals(type, "unsigned int", StringComparison.Ordinal);
+        private static bool IsUnsignedLong(string type) => string.Equals(type, "unsigned long", StringComparison.Ordinal);
 
         private static void LoadShortFromMemory(X64Emitter emitter, string type) 
         { 
@@ -1371,7 +1373,7 @@ namespace JollyCCompiler.Compiler.CodeGen.X64
 
             emitter.PopRax();
 
-            GenerateCompoundAssignmentOperation(operatorKind, emitter);
+            GenerateCompoundAssignmentOperation(operatorKind, emitter, type);
             NormalizeIntegerResult(emitter, type);
 
             if (typeSize == 1)
@@ -1441,7 +1443,7 @@ namespace JollyCCompiler.Compiler.CodeGen.X64
 
             emitter.PopRax();
 
-            GenerateCompoundAssignmentOperation(operatorKind, emitter);
+            GenerateCompoundAssignmentOperation(operatorKind, emitter, elementType);
 
             if (elementSize == 1)
                 emitter.MovzxEaxAl();
@@ -1465,8 +1467,10 @@ namespace JollyCCompiler.Compiler.CodeGen.X64
                 emitter.EmitBytes(0x89, 0x08);
         }
 
-        private static void GenerateCompoundAssignmentOperation(TokenKind operatorKind, X64Emitter emitter)
+        private static void GenerateCompoundAssignmentOperation(TokenKind operatorKind, X64Emitter emitter, string type)
         {
+            var isUnsigned = type is "unsigned int" or "unsigned long";
+
             switch (operatorKind)
             {
                 case TokenKind.PlusEquals:
@@ -1482,13 +1486,30 @@ namespace JollyCCompiler.Compiler.CodeGen.X64
                     break;
 
                 case TokenKind.SlashEquals:
-                    emitter.Cdq();
-                    emitter.IdivEcx();
+                    if (isUnsigned)
+                    {
+                        emitter.XorEdxEdx();
+                        emitter.DivEcx();
+                    }
+                    else
+                    {
+                        emitter.Cdq();
+                        emitter.IdivEcx();
+                    }
                     break;
 
                 case TokenKind.PercentEquals:
-                    emitter.Cdq();
-                    emitter.IdivEcx();
+                    if (isUnsigned)
+                    {
+                        emitter.XorEdxEdx();
+                        emitter.DivEcx();
+                    }
+                    else
+                    {
+                        emitter.Cdq();
+                        emitter.IdivEcx();
+                    }
+
                     emitter.MovEaxEdx();
                     break;
 
@@ -1528,8 +1549,9 @@ namespace JollyCCompiler.Compiler.CodeGen.X64
                 throw new NotSupportedException("Integer plus pointer is not yet supported by the x64 backend.");
             }
 
-            var isUnsignedIntOperation = TryGetExpressionType(expression.Left, variables, arrays, parameters, out var leftType) && TryGetExpressionType(expression.Right, variables, arrays, parameters, out var rightType) && GetCommonArithmeticType(leftType, rightType) == "unsigned int";
+            var commonType = TryGetExpressionType(expression.Left, variables, arrays, parameters, out var leftType) && TryGetExpressionType(expression.Right, variables, arrays, parameters, out var rightType) ? GetCommonArithmeticType(leftType, rightType) : string.Empty;
 
+            var isUnsignedOperation = commonType is "unsigned int" or "unsigned long";
             GenerateExpression(expression.Left, emitter, data, variables, arrays, parameters);
             emitter.PushRax();
 
@@ -1553,7 +1575,7 @@ namespace JollyCCompiler.Compiler.CodeGen.X64
                     break;
 
                 case TokenKind.Slash:
-                    if (isUnsignedIntOperation)
+                    if (isUnsignedOperation)
                     {
                         emitter.XorEdxEdx();
                         emitter.DivEcx();
@@ -1566,7 +1588,7 @@ namespace JollyCCompiler.Compiler.CodeGen.X64
                     break;
 
                 case TokenKind.Percent:
-                    if (isUnsignedIntOperation)
+                    if (isUnsignedOperation)
                     {
                         emitter.XorEdxEdx();
                         emitter.DivEcx();
@@ -1581,8 +1603,7 @@ namespace JollyCCompiler.Compiler.CodeGen.X64
                     break;
 
                 default:
-                    throw new NotSupportedException(
-                        $"Operator '{expression.Operator}' is not yet supported by the x64 backend.");
+                    throw new NotSupportedException($"Operator '{expression.Operator}' is not yet supported by the x64 backend.");
             }
         }
 
@@ -1769,9 +1790,12 @@ namespace JollyCCompiler.Compiler.CodeGen.X64
 
         private static void GenerateComparison( BinaryExpression expression, X64Emitter emitter, List<X64DataItem> data, Dictionary<string, (int Offset, string Type, bool IsConst)> variables, Dictionary<string, (int Length, string Type)> arrays, Dictionary<string, (int Index, string Type)> parameters)
         {
-            var useUnsignedComparison = TryGetExpressionType(expression.Left, variables, arrays, parameters, out var leftType) &&
-                TryGetExpressionType(expression.Right, variables, arrays, parameters, out var rightType) &&
-                GetCommonArithmeticType(leftType, rightType) == "unsigned int";
+            var commonType = TryGetExpressionType(expression.Left, variables, arrays, parameters, out var leftType) &&
+                             TryGetExpressionType(expression.Right, variables, arrays, parameters, out var rightType)
+                ? GetCommonArithmeticType(leftType, rightType)
+                : string.Empty;
+
+            var useUnsignedComparison = commonType is "unsigned int" or "unsigned long";
 
             GenerateExpression(expression.Left, emitter, data, variables, arrays, parameters);
             emitter.PushRax();
@@ -2604,6 +2628,17 @@ namespace JollyCCompiler.Compiler.CodeGen.X64
 
         private static string GetCommonArithmeticType(string leftType, string rightType)
         {
+            if (leftType == "unsigned long" || rightType == "unsigned long")
+                return "unsigned long";
+
+            if (leftType == "long" || rightType == "long")
+            {
+                if (leftType == "unsigned int" || rightType == "unsigned int")
+                    return "unsigned long";
+
+                return "long";
+            }
+
             if (leftType == "unsigned int" || rightType == "unsigned int")
                 return "unsigned int";
 
@@ -2613,10 +2648,7 @@ namespace JollyCCompiler.Compiler.CodeGen.X64
             if (leftType == "unsigned short" || rightType == "unsigned short")
                 return "int";
 
-            if (leftType == "short")
-                return "int";
-
-            if (rightType == "short")
+            if (leftType == "short" || rightType == "short")
                 return "int";
 
             if (leftType == "unsigned char" || rightType == "unsigned char")
@@ -2784,7 +2816,7 @@ namespace JollyCCompiler.Compiler.CodeGen.X64
 
             emitter.PopRax();
 
-            GenerateCompoundAssignmentOperation(operatorKind, emitter);
+            GenerateCompoundAssignmentOperation(operatorKind, emitter, member.Type);
 
             emitter.MovEcxEax();
             emitter.MovRaxRspDisp32(0);

@@ -254,7 +254,31 @@ public sealed class Lexer
         var column = _column;
         var start = _position;
 
+        if (Current == '0' && (Peek() == 'x' || Peek() == 'X'))
+        {
+            Advance();
+            Advance();
+
+            var hexStart = _position;
+
+            while (!AtEnd && Uri.IsHexDigit(Current))
+                Advance();
+
+            if (_position == hexStart)
+            {
+                _diagnostics.Add(new Diagnostic(DiagnosticSeverity.Error, "Hexadecimal integer literal requires at least one hexadecimal digit.", line, column));
+            }
+
+            while (!AtEnd && char.IsLetter(Current))
+                Advance();
+
+            return new Token(TokenKind.IntegerLiteral, _source[start.._position], line, column);
+        }
+
         while (!AtEnd && char.IsDigit(Current))
+            Advance();
+
+        while (!AtEnd && char.IsLetter(Current))
             Advance();
 
         return new Token(TokenKind.IntegerLiteral, _source[start.._position], line, column);
