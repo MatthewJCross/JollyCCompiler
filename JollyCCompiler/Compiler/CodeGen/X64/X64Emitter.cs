@@ -649,15 +649,46 @@ namespace JollyCCompiler.Compiler.CodeGen.X64
             var offset = Offset;
             var bytes = new byte[]
             {
-            0x3D,
-            (byte)value,
-            (byte)(value >> 8),
-            (byte)(value >> 16),
-            (byte)(value >> 24)
+                0x3D,
+                (byte)value,
+                (byte)(value >> 8),
+                (byte)(value >> 16),
+                (byte)(value >> 24)
             };
 
             _code.AddRange(bytes);
             _instructions.Add(new X64Instruction(offset, bytes, $"cmp eax, {value}"));
+        }
+
+        public void CmpRaxImm32(int value)
+        {
+            var offset = Offset;
+            var bytes = new byte[]
+            {
+                0x48,
+                0x3D,
+                (byte)value,
+                (byte)(value >> 8),
+                (byte)(value >> 16),
+                (byte)(value >> 24)
+            };
+
+            _code.AddRange(bytes);
+            _instructions.Add(new X64Instruction(offset, bytes, $"cmp rax, {value}"));
+        }
+
+        public void CmpRaxRcx()
+        {
+            var offset = Offset;
+            var bytes = new byte[]
+            {
+                0x48,
+                0x39,
+                0xC8
+            };
+
+            _code.AddRange(bytes);
+            _instructions.Add(new X64Instruction(offset, bytes, "cmp rax, rcx"));
         }
 
         public void TestEaxEax()
@@ -814,21 +845,29 @@ namespace JollyCCompiler.Compiler.CodeGen.X64
             var offset = Offset;
             var bytes = new byte[]
             {
-            0x48,
-            0x8B,
-            0x8C,
-            0x24,
-            (byte)displacement,
-            (byte)(displacement >> 8),
-            (byte)(displacement >> 16),
-            (byte)(displacement >> 24)
+                0x48,
+                0x8B,
+                0x8C,
+                0x24,
+                (byte)displacement,
+                (byte)(displacement >> 8),
+                (byte)(displacement >> 16),
+                (byte)(displacement >> 24)
             };
 
             _code.AddRange(bytes);
-            _instructions.Add(new X64Instruction(
-                offset,
-                bytes,
-                $"mov rcx, [rsp{(displacement < 0 ? displacement.ToString() : "+" + displacement)}]"));
+            _instructions.Add(new X64Instruction(offset, bytes, $"mov rcx, [rsp{(displacement < 0 ? displacement.ToString() : "+" + displacement)}]"));
+        }
+
+        public void MovRcx(long value)
+        {
+            var offset = Offset;
+            var bytes = new byte[10];
+            bytes[0] = 0x48;
+            bytes[1] = 0xB9;
+            BinaryPrimitives.WriteInt64LittleEndian(bytes.AsSpan(2), value);
+            _code.AddRange(bytes);
+            _instructions.Add(new X64Instruction(offset, bytes, $"mov rcx, {value}"));
         }
 
         public void MovRax(long value)
@@ -888,16 +927,13 @@ namespace JollyCCompiler.Compiler.CodeGen.X64
             var offset = Offset;
             var bytes = new byte[]
             {
-            0x88,
-            0x45,
-            unchecked((byte)displacement)
+                0x88,
+                0x45,
+                unchecked((byte)displacement)
             };
 
             _code.AddRange(bytes);
-            _instructions.Add(new X64Instruction(
-                offset,
-                bytes,
-                $"mov [rbp{FormatOffset(displacement)}], al"));
+            _instructions.Add(new X64Instruction(offset, bytes, $"mov [rbp{FormatOffset(displacement)}], al"));
         }
 
         public void MovRbpDisp32Al(int displacement)
@@ -905,12 +941,12 @@ namespace JollyCCompiler.Compiler.CodeGen.X64
             var offset = Offset;
             var bytes = new byte[]
             {
-            0x88,
-            0x85,
-            (byte)displacement,
-            (byte)(displacement >> 8),
-            (byte)(displacement >> 16),
-            (byte)(displacement >> 24)
+                0x88,
+                0x85,
+                (byte)displacement,
+                (byte)(displacement >> 8),
+                (byte)(displacement >> 16),
+                (byte)(displacement >> 24)
             };
 
             _code.AddRange(bytes);
@@ -925,19 +961,16 @@ namespace JollyCCompiler.Compiler.CodeGen.X64
             var offset = Offset;
             var bytes = new byte[]
             {
-            0x8A,
-            0x85,
-            (byte)displacement,
-            (byte)(displacement >> 8),
-            (byte)(displacement >> 16),
-            (byte)(displacement >> 24)
+                0x8A,
+                0x85,
+                (byte)displacement,
+                (byte)(displacement >> 8),
+                (byte)(displacement >> 16),
+                (byte)(displacement >> 24)
             };
 
             _code.AddRange(bytes);
-            _instructions.Add(new X64Instruction(
-                offset,
-                bytes,
-                $"mov al, [rbp{displacement:+#;-#;0}]"));
+            _instructions.Add(new X64Instruction(offset, bytes, $"mov al, [rbp{displacement:+#;-#;0}]"));
         }
 
         public void MovAlRaxMemory()
@@ -964,10 +997,7 @@ namespace JollyCCompiler.Compiler.CodeGen.X64
             var bytes = new byte[] { 0x0F, 0xB6, 0x00 };
 
             _code.AddRange(bytes);
-            _instructions.Add(new X64Instruction(
-                offset,
-                bytes,
-                "movzx eax, byte ptr [rax]"));
+            _instructions.Add(new X64Instruction(offset, bytes, "movzx eax, byte ptr [rax]"));
         }
 
         public void MovEaxRaxMemory()
@@ -1048,10 +1078,43 @@ namespace JollyCCompiler.Compiler.CodeGen.X64
             var bytes = new byte[] { 0x6B, 0xC0, value };
 
             _code.AddRange(bytes);
-            _instructions.Add(new X64Instruction(
-                offset,
-                bytes,
-                $"imul eax, eax, {value}"));
+            _instructions.Add(new X64Instruction(offset, bytes, $"imul eax, eax, {value}"));
+        }
+
+        public void ImulRaxRcx()
+        {
+            var offset = Offset;
+            var bytes = new byte[] { 0x48, 0x0F, 0xAF, 0xC1 };
+
+            _code.AddRange(bytes);
+            _instructions.Add(new X64Instruction(offset, bytes, "imul rax, rcx"));
+        }
+
+        public void Cqo()
+        {
+            var offset = Offset;
+            var bytes = new byte[] { 0x48, 0x99 };
+
+            _code.AddRange(bytes);
+            _instructions.Add(new X64Instruction(offset, bytes, "cqo"));
+        }
+
+        public void IdivRcx()
+        {
+            var offset = Offset;
+            var bytes = new byte[] { 0x48, 0xF7, 0xF9 };
+
+            _code.AddRange(bytes);
+            _instructions.Add(new X64Instruction(offset, bytes, "idiv rcx"));
+        }
+
+        public void DivRcx()
+        {
+            var offset = Offset;
+            var bytes = new byte[] { 0x48, 0xF7, 0xF1 };
+
+            _code.AddRange(bytes);
+            _instructions.Add(new X64Instruction(offset, bytes, "div rcx"));
         }
 
         // ------------------------------------------------------------

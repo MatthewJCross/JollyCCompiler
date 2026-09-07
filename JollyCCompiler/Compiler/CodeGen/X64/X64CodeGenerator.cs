@@ -1,6 +1,10 @@
 ﻿using JollyCCompiler.Compiler.Lexing;
 using JollyCCompiler.Compiler.Syntax;
+using System.Reflection.Metadata;
+using System.Security.Policy;
 using System.Text;
+using System.Threading.Channels;
+using static System.Net.Mime.MediaTypeNames;
 
 namespace JollyCCompiler.Compiler.CodeGen.X64
 {
@@ -71,6 +75,7 @@ namespace JollyCCompiler.Compiler.CodeGen.X64
             "long" => 4,
             "unsigned long" => 4,
             "long long" => 8,
+            "unsigned long long" => 8,
             "float" => 4,
             "double" => 8,
             _ when type.EndsWith("*", StringComparison.Ordinal) => 8,
@@ -366,7 +371,7 @@ namespace JollyCCompiler.Compiler.CodeGen.X64
                     break;
 
                 case ReturnStatement returnStatement:
-                    GenerateReturn(returnStatement, emitter, data, variables, arrays, parameters, frameSize);
+                    GenerateReturnExpression(returnStatement, emitter, data, variables, arrays, parameters, frameSize);
                     break;
 
                 case ExpressionStatement expressionStatement:
@@ -468,7 +473,7 @@ namespace JollyCCompiler.Compiler.CodeGen.X64
                 throw new NotSupportedException($"Initialization of type '{statement.Type}' is not yet supported.");
         }
 
-        private static void GenerateReturn(ReturnStatement statement, X64Emitter emitter, List<X64DataItem> data, Dictionary<string, (int Offset, string Type, bool IsConst)> variables, Dictionary<string, (int Length, string Type)> arrays, Dictionary<string, (int Index, string Type)> parameters, int frameSize)
+        private static void GenerateReturnExpression(ReturnStatement statement, X64Emitter emitter, List<X64DataItem> data, Dictionary<string, (int Offset, string Type, bool IsConst)> variables, Dictionary<string, (int Length, string Type)> arrays, Dictionary<string, (int Index, string Type)> parameters, int frameSize)
         {
             if (statement.Expression is null)
                 emitter.MovEax(0);
@@ -485,14 +490,7 @@ namespace JollyCCompiler.Compiler.CodeGen.X64
             GenerateExpression(statement.Expression, emitter, data, variables, arrays, parameters);
         }
 
-        private static void GenerateForStatement(
-            ForStatement statement,
-            X64Emitter emitter,
-            List<X64DataItem> data,
-            Dictionary<string, (int Offset, string Type, bool IsConst)> variables,
-            Dictionary<string, (int Length, string Type)> arrays,
-            Dictionary<string, (int Index, string Type)> parameters,
-            int frameSize)
+        private static void GenerateForStatement(ForStatement statement, X64Emitter emitter, List<X64DataItem> data, Dictionary<string, (int Offset, string Type, bool IsConst)> variables, Dictionary<string, (int Length, string Type)> arrays, Dictionary<string, (int Index, string Type)> parameters, int frameSize)
         {
             if (statement.Initializer is not null)
                 GenerateStatement(statement.Initializer, emitter, data, variables, arrays, parameters, frameSize);
@@ -525,14 +523,7 @@ namespace JollyCCompiler.Compiler.CodeGen.X64
             _loopLabels.Pop();
         }
 
-        private static void GenerateWhileStatement(
-            WhileStatement statement,
-            X64Emitter emitter,
-            List<X64DataItem> data,
-            Dictionary<string, (int Offset, string Type, bool IsConst)> variables,
-            Dictionary<string, (int Length, string Type)> arrays,
-            Dictionary<string, (int Index, string Type)> parameters,
-            int frameSize)
+        private static void GenerateWhileStatement( WhileStatement statement, X64Emitter emitter, List<X64DataItem> data, Dictionary<string, (int Offset, string Type, bool IsConst)> variables, Dictionary<string, (int Length, string Type)> arrays, Dictionary<string, (int Index, string Type)> parameters, int frameSize)
         {
             var conditionLabel = emitter.CreateLabel("while_condition");
             var endLabel = emitter.CreateLabel("while_end");
@@ -553,14 +544,7 @@ namespace JollyCCompiler.Compiler.CodeGen.X64
             _loopLabels.Pop();
         }
 
-        private static void GenerateDoWhileStatement(
-            DoWhileStatement statement,
-            X64Emitter emitter,
-            List<X64DataItem> data,
-            Dictionary<string, (int Offset, string Type, bool IsConst)> variables,
-            Dictionary<string, (int Length, string Type)> arrays,
-            Dictionary<string, (int Index, string Type)> parameters,
-            int frameSize)
+        private static void GenerateDoWhileStatement(DoWhileStatement statement, X64Emitter emitter, List<X64DataItem> data, Dictionary<string, (int Offset, string Type, bool IsConst)> variables, Dictionary<string, (int Length, string Type)> arrays, Dictionary<string, (int Index, string Type)> parameters, int frameSize)
         {
             var bodyLabel = emitter.CreateLabel("do_while_body");
             var conditionLabel = emitter.CreateLabel("do_while_condition");
@@ -580,7 +564,7 @@ namespace JollyCCompiler.Compiler.CodeGen.X64
             switch (expression)
             {
                 case IntegerExpression integer:
-                    emitter.MovEax(integer.Value);
+                    emitter.MovRax(integer.Value);
                     break;
 
                 case StringExpression:
@@ -769,6 +753,12 @@ namespace JollyCCompiler.Compiler.CodeGen.X64
 
             GenerateExpression(statement.Expression, emitter, data, variables, arrays, parameters);
 
+            var switchType = TryGetExpressionType(statement.Expression, variables, arrays, parameters, out var expressionType)
+                ? expressionType
+                : "int";
+
+            var is64BitSwitch = switchType is "long long" or "unsigned long long";
+
             for (var i = 0; i < statement.Cases.Count; i++)
             {
                 var switchCase = statement.Cases[i];
@@ -779,7 +769,16 @@ namespace JollyCCompiler.Compiler.CodeGen.X64
                 if (!TryGetConstantInteger(switchCase.Value, out var value))
                     throw new InvalidOperationException("Switch case value must be an integer constant expression.");
 
-                emitter.CmpEaxImm32(value);
+                if (is64BitSwitch)
+                {
+                    emitter.MovRcx(value);
+                    emitter.CmpRaxRcx();
+                }
+                else
+                {
+                    emitter.CmpEaxImm32((int)value);
+                }
+
                 emitter.Je(caseLabels[i]);
             }
 
@@ -917,7 +916,7 @@ namespace JollyCCompiler.Compiler.CodeGen.X64
             }
         }
 
-        private static bool TryGetConstantInteger(ExpressionNode expression, out int value)
+        private static bool TryGetConstantInteger(ExpressionNode expression, out long value)
         {
             if (expression is IntegerExpression integer)
             {
@@ -937,13 +936,7 @@ namespace JollyCCompiler.Compiler.CodeGen.X64
             return false;
         }
 
-        private static void GenerateAddressOfExpression(
-            AddressOfExpression expression,
-            X64Emitter emitter,
-            List<X64DataItem> data,
-            Dictionary<string, (int Offset, string Type, bool IsConst)> variables,
-            Dictionary<string, (int Length, string Type)> arrays,
-            Dictionary<string, (int Index, string Type)> parameters)
+        private static void GenerateAddressOfExpression(AddressOfExpression expression, X64Emitter emitter, List<X64DataItem> data, Dictionary<string, (int Offset, string Type, bool IsConst)> variables, Dictionary<string, (int Length, string Type)> arrays, Dictionary<string, (int Index, string Type)> parameters)
         {
             GenerateLValueAddress(expression.Operand, emitter, data, variables, arrays, parameters);
         }
@@ -1363,13 +1356,19 @@ namespace JollyCCompiler.Compiler.CodeGen.X64
             }
             else if (typeSize == 4)
                 emitter.MovEaxRbpDisp32(offset);
+            else if (typeSize == 8) 
+                emitter.MovRaxRbpDisp32(offset);
             else
                 throw new NotSupportedException($"Compound assignment on type '{type}' is not yet supported.");
 
             emitter.PushRax();
 
             GenerateExpression(value, emitter, data, variables, arrays, parameters);
-            emitter.MovEcxEax();
+
+            if (typeSize == 8)
+                emitter.MovRcxRax();
+            else
+                emitter.MovEcxEax();
 
             emitter.PopRax();
 
@@ -1378,10 +1377,14 @@ namespace JollyCCompiler.Compiler.CodeGen.X64
 
             if (typeSize == 1)
                 emitter.MovRbpDisp32Al(offset);
-            else if (typeSize == 2) 
+            else if (typeSize == 2)
                 emitter.MovRbpDisp16Ax(offset);
-            else
+            else if (typeSize == 4)
                 emitter.MovRbpDisp32Eax(offset);
+            else if (typeSize == 8)
+                emitter.MovRbpDisp8Rax(offset);
+            else
+                throw new NotSupportedException($"Compound assignment on type '{type}' is not yet supported.");
         }
 
         private static void GenerateArrayAssignmentExpression(ArraySubscriptExpression target, TokenKind operatorKind, ExpressionNode value, X64Emitter emitter, List<X64DataItem> data, Dictionary<string, (int Offset, string Type, bool IsConst)> variables, Dictionary<string, (int Length, string Type)> arrays, Dictionary<string, (int Index, string Type)> parameters)
@@ -1469,24 +1472,47 @@ namespace JollyCCompiler.Compiler.CodeGen.X64
 
         private static void GenerateCompoundAssignmentOperation(TokenKind operatorKind, X64Emitter emitter, string type)
         {
-            var isUnsigned = type is "unsigned int" or "unsigned long";
+            var is64Bit = type is "long long" or "unsigned long long";
+            var isUnsigned = type is "unsigned int" or "unsigned long" or "unsigned long long";
 
             switch (operatorKind)
             {
                 case TokenKind.PlusEquals:
-                    emitter.AddEaxEcx();
+                    if (is64Bit)
+                        emitter.AddRaxRcx();
+                    else
+                        emitter.AddEaxEcx();
                     break;
 
                 case TokenKind.MinusEquals:
-                    emitter.SubEaxEcx();
+                    if (is64Bit)
+                        emitter.SubRaxRcx();
+                    else
+                        emitter.SubEaxEcx();
                     break;
 
                 case TokenKind.StarEquals:
-                    emitter.ImulEaxEcx();
+                    if (is64Bit)
+                        emitter.ImulRaxRcx();
+                    else
+                        emitter.ImulEaxEcx();
                     break;
 
                 case TokenKind.SlashEquals:
-                    if (isUnsigned)
+                    if (is64Bit)
+                    {
+                        if (isUnsigned)
+                        {
+                            emitter.XorEdxEdx();
+                            emitter.DivRcx();
+                        }
+                        else
+                        {
+                            emitter.Cqo();
+                            emitter.IdivRcx();
+                        }
+                    }
+                    else if (isUnsigned)
                     {
                         emitter.XorEdxEdx();
                         emitter.DivEcx();
@@ -1499,18 +1525,36 @@ namespace JollyCCompiler.Compiler.CodeGen.X64
                     break;
 
                 case TokenKind.PercentEquals:
-                    if (isUnsigned)
+                    if (is64Bit)
                     {
-                        emitter.XorEdxEdx();
-                        emitter.DivEcx();
+                        if (isUnsigned)
+                        {
+                            emitter.XorEdxEdx();
+                            emitter.DivRcx();
+                        }
+                        else
+                        {
+                            emitter.Cqo();
+                            emitter.IdivRcx();
+                        }
+
+                        emitter.MovRaxRdx();
                     }
                     else
                     {
-                        emitter.Cdq();
-                        emitter.IdivEcx();
-                    }
+                        if (isUnsigned)
+                        {
+                            emitter.XorEdxEdx();
+                            emitter.DivEcx();
+                        }
+                        else
+                        {
+                            emitter.Cdq();
+                            emitter.IdivEcx();
+                        }
 
-                    emitter.MovEaxEdx();
+                        emitter.MovEaxEdx();
+                    }
                     break;
 
                 default:
@@ -1549,33 +1593,63 @@ namespace JollyCCompiler.Compiler.CodeGen.X64
                 throw new NotSupportedException("Integer plus pointer is not yet supported by the x64 backend.");
             }
 
-            var commonType = TryGetExpressionType(expression.Left, variables, arrays, parameters, out var leftType) && TryGetExpressionType(expression.Right, variables, arrays, parameters, out var rightType) ? GetCommonArithmeticType(leftType, rightType) : string.Empty;
+            var commonType = TryGetExpressionType(expression.Left, variables, arrays, parameters, out var leftType) && TryGetExpressionType(expression.Right, variables, arrays, parameters, out var rightType)
+                ? GetCommonArithmeticType(leftType, rightType)
+                : string.Empty;
 
-            var isUnsignedOperation = commonType is "unsigned int" or "unsigned long";
+            var is64BitOperation = commonType is "long long" or "unsigned long long";
+            var isUnsignedOperation = commonType is "unsigned int" or "unsigned long" or "unsigned long long";
+
             GenerateExpression(expression.Left, emitter, data, variables, arrays, parameters);
             emitter.PushRax();
 
             GenerateExpression(expression.Right, emitter, data, variables, arrays, parameters);
-            emitter.MovEcxEax();
+
+            if (is64BitOperation)
+                emitter.MovRcxRax();
+            else
+                emitter.MovEcxEax();
 
             emitter.PopRax();
 
             switch (expression.Operator)
             {
                 case TokenKind.Plus:
-                    emitter.AddEaxEcx();
+                    if (is64BitOperation)
+                        emitter.AddRaxRcx();
+                    else
+                        emitter.AddEaxEcx();
                     break;
 
                 case TokenKind.Minus:
-                    emitter.SubEaxEcx();
+                    if (is64BitOperation)
+                        emitter.SubRaxRcx();
+                    else
+                        emitter.SubEaxEcx();
                     break;
 
                 case TokenKind.Star:
-                    emitter.ImulEaxEcx();
+                    if (is64BitOperation)
+                        emitter.ImulRaxRcx();
+                    else
+                        emitter.ImulEaxEcx();
                     break;
 
                 case TokenKind.Slash:
-                    if (isUnsignedOperation)
+                    if (is64BitOperation)
+                    {
+                        if (isUnsignedOperation)
+                        {
+                            emitter.XorEdxEdx();
+                            emitter.DivRcx();
+                        }
+                        else
+                        {
+                            emitter.Cqo();
+                            emitter.IdivRcx();
+                        }
+                    }
+                    else if (isUnsignedOperation)
                     {
                         emitter.XorEdxEdx();
                         emitter.DivEcx();
@@ -1588,7 +1662,22 @@ namespace JollyCCompiler.Compiler.CodeGen.X64
                     break;
 
                 case TokenKind.Percent:
-                    if (isUnsignedOperation)
+                    if (is64BitOperation)
+                    {
+                        if (isUnsignedOperation)
+                        {
+                            emitter.XorEdxEdx();
+                            emitter.DivRcx();
+                        }
+                        else
+                        {
+                            emitter.Cqo();
+                            emitter.IdivRcx();
+                        }
+
+                        emitter.MovRaxRdx();
+                    }
+                    else if (isUnsignedOperation)
                     {
                         emitter.XorEdxEdx();
                         emitter.DivEcx();
@@ -1599,7 +1688,9 @@ namespace JollyCCompiler.Compiler.CodeGen.X64
                         emitter.IdivEcx();
                     }
 
-                    emitter.MovEaxEdx();
+                    if (!is64BitOperation)
+                        emitter.MovEaxEdx();
+
                     break;
 
                 default:
@@ -1675,10 +1766,25 @@ namespace JollyCCompiler.Compiler.CodeGen.X64
                 }
                 else
                 {
+                    if (!TryGetExpressionType(argument, variables, arrays, parameters, out var argumentType))
+                        throw new InvalidOperationException("Cannot determine function argument type.");
+
+                    var is64BitArgument = argumentType is "long long" or "unsigned long long";
+
                     if (i < 4)
-                        emitter.MoveEaxToArgumentRegister(i);
+                    {
+                        if (is64BitArgument)
+                            emitter.MoveRaxToArgumentRegister(i);
+                        else
+                            emitter.MoveEaxToArgumentRegister(i);
+                    }
                     else
-                        emitter.MoveEaxToStackArgument(i);
+                    {
+                        if (is64BitArgument)
+                            emitter.MoveRaxToStackArgument(i);
+                        else
+                            emitter.MoveEaxToStackArgument(i);
+                    }
                 }
             }
 
@@ -1788,23 +1894,32 @@ namespace JollyCCompiler.Compiler.CodeGen.X64
             return false;
         }
 
-        private static void GenerateComparison( BinaryExpression expression, X64Emitter emitter, List<X64DataItem> data, Dictionary<string, (int Offset, string Type, bool IsConst)> variables, Dictionary<string, (int Length, string Type)> arrays, Dictionary<string, (int Index, string Type)> parameters)
+        private static void GenerateComparison(BinaryExpression expression, X64Emitter emitter, List<X64DataItem> data, Dictionary<string, (int Offset, string Type, bool IsConst)> variables, Dictionary<string, (int Length, string Type)> arrays, Dictionary<string, (int Index, string Type)> parameters)
         {
             var commonType = TryGetExpressionType(expression.Left, variables, arrays, parameters, out var leftType) &&
                              TryGetExpressionType(expression.Right, variables, arrays, parameters, out var rightType)
                 ? GetCommonArithmeticType(leftType, rightType)
                 : string.Empty;
 
-            var useUnsignedComparison = commonType is "unsigned int" or "unsigned long";
+            var is64BitComparison = commonType is "long long" or "unsigned long long";
+            var useUnsignedComparison = commonType is "unsigned int" or "unsigned long" or "unsigned long long";
 
             GenerateExpression(expression.Left, emitter, data, variables, arrays, parameters);
             emitter.PushRax();
 
             GenerateExpression(expression.Right, emitter, data, variables, arrays, parameters);
-            emitter.MovEcxEax();
+
+            if (is64BitComparison)
+                emitter.MovRcxRax();
+            else
+                emitter.MovEcxEax();
 
             emitter.PopRax();
-            emitter.CmpEaxEcx();
+
+            if (is64BitComparison)
+                emitter.CmpRaxRcx();
+            else
+                emitter.CmpEaxEcx();
 
             var trueLabel = $"$cmp_true_{emitter.Offset}";
             var endLabel = $"$cmp_end_{emitter.Offset}";
@@ -2158,17 +2273,19 @@ namespace JollyCCompiler.Compiler.CodeGen.X64
             throw new NotSupportedException($"Increment/decrement operand AST: {expression.Operand}");
         }
 
-        private static void GenerateArrayIncrementDecrement(ArraySubscriptExpression subscript, UnaryExpression expression, X64Emitter emitter, List<X64DataItem> data, Dictionary<string, (int Offset, string Type, bool IsConst)> variables, Dictionary<string, (int Length, string Type)> arrays, Dictionary<string, (int Index, string Type)> parameters) 
-        { 
-            if (!TryGetExpressionType(subscript, variables, arrays, parameters, out var elementType)) 
-                throw new InvalidOperationException("Cannot determine array element type."); 
-            
-            var elementSize = GetTypeSize(elementType); 
-            if (elementSize != 1 && elementSize != 2 && elementSize != 4) 
-                throw new NotSupportedException($"Increment/decrement on array element type '{elementType}' is not yet supported."); 
-            
-            GenerateArraySubscriptAddress(subscript, emitter, data, variables, arrays, parameters); 
+        private static void GenerateArrayIncrementDecrement(ArraySubscriptExpression subscript, UnaryExpression expression, X64Emitter emitter, List<X64DataItem> data, Dictionary<string, (int Offset, string Type, bool IsConst)> variables, Dictionary<string, (int Length, string Type)> arrays, Dictionary<string, (int Index, string Type)> parameters)
+        {
+            if (!TryGetExpressionType(subscript, variables, arrays, parameters, out var elementType))
+                throw new InvalidOperationException("Cannot determine array element type.");
+
+            var elementSize = GetTypeSize(elementType);
+
+            if (elementSize != 1 && elementSize != 2 && elementSize != 4 && elementSize != 8)
+                throw new NotSupportedException($"Increment/decrement on array element type '{elementType}' is not yet supported.");
+
+            GenerateArraySubscriptAddress(subscript, emitter, data, variables, arrays, parameters);
             emitter.PushRax();
+
             if (elementSize == 1)
             {
                 if (elementType == "unsigned char")
@@ -2176,34 +2293,52 @@ namespace JollyCCompiler.Compiler.CodeGen.X64
                 else
                     emitter.MovsxEaxRaxMemoryByte();
             }
-            else if (elementSize == 2) 
-            { 
-                if (IsUnsignedShort(elementType)) 
-                    emitter.EmitBytes(0x0F, 0xB7, 0x00); 
-                else 
-                    emitter.EmitBytes(0x0F, 0xBF, 0x00); 
-            } 
-            else 
-                emitter.MovEaxRaxMemory(); 
-            
-            if (expression.IsPostfix) 
-                emitter.PushRax(); 
+            else if (elementSize == 2)
+            {
+                if (IsUnsignedShort(elementType))
+                    emitter.EmitBytes(0x0F, 0xB7, 0x00);
+                else
+                    emitter.EmitBytes(0x0F, 0xBF, 0x00);
+            }
+            else if (elementSize == 4)
+            {
+                emitter.MovEaxRaxMemory();
+            }
+            else
+            {
+                emitter.MovRaxFromMemory();
+            }
 
-            emitter.MovEcx(1); 
-            
-            if (expression.Operator == TokenKind.PlusPlus) 
-                emitter.AddEaxEcx(); 
-            else 
-                emitter.SubEaxEcx();
+            if (expression.IsPostfix)
+                emitter.PushRax();
+
+            emitter.MovEcx(1);
+
+            if (expression.Operator == TokenKind.PlusPlus)
+            {
+                if (elementSize == 8)
+                    emitter.AddRaxRcx();
+                else
+                    emitter.AddEaxEcx();
+            }
+            else
+            {
+                if (elementSize == 8)
+                    emitter.SubRaxRcx();
+                else
+                    emitter.SubEaxEcx();
+            }
 
             if (elementSize == 1)
+            {
                 NormalizeIntegerResult(emitter, elementType);
-            else if (elementSize == 2) 
-            { 
-                if (IsUnsignedShort(elementType)) 
-                    emitter.EmitBytes(0x0F, 0xB7, 0xC0); 
-                else 
-                    emitter.EmitBytes(0x0F, 0xBF, 0xC0); 
+            }
+            else if (elementSize == 2)
+            {
+                if (IsUnsignedShort(elementType))
+                    emitter.EmitBytes(0x0F, 0xB7, 0xC0);
+                else
+                    emitter.EmitBytes(0x0F, 0xBF, 0xC0);
             }
 
             if (expression.IsPostfix)
@@ -2216,8 +2351,10 @@ namespace JollyCCompiler.Compiler.CodeGen.X64
                     emitter.EmitBytes(0x88, 0x08);
                 else if (elementSize == 2)
                     emitter.EmitBytes(0x66, 0x89, 0x08);
-                else
+                else if (elementSize == 4)
                     emitter.EmitBytes(0x89, 0x08);
+                else
+                    emitter.EmitBytes(0x48, 0x89, 0x08);
 
                 emitter.MovRaxRspDisp32(0);
                 emitter.AddRsp(16);
@@ -2230,8 +2367,10 @@ namespace JollyCCompiler.Compiler.CodeGen.X64
                     emitter.EmitBytes(0x88, 0x01);
                 else if (elementSize == 2)
                     emitter.EmitBytes(0x66, 0x89, 0x01);
-                else
+                else if (elementSize == 4)
                     emitter.EmitBytes(0x89, 0x01);
+                else
+                    emitter.EmitBytes(0x48, 0x89, 0x01);
 
                 emitter.AddRsp(8);
             }
@@ -2497,8 +2636,7 @@ namespace JollyCCompiler.Compiler.CodeGen.X64
             if (TryGetPointerType(expression, variables, arrays, parameters, out type))
                 return true;
 
-            if (expression is CallExpression call &&
-                _functionReturnTypes.TryGetValue(call.Name, out var returnType))
+            if (expression is CallExpression call && _functionReturnTypes.TryGetValue(call.Name, out var returnType))
             {
                 type = returnType;
                 return true;
@@ -2601,9 +2739,9 @@ namespace JollyCCompiler.Compiler.CodeGen.X64
                 return true;
             }
 
-            if (expression is IntegerExpression)
+            if (expression is IntegerExpression integer)
             {
-                type = "int";
+                type = integer.Type;
                 return true;
             }
 
@@ -2628,6 +2766,20 @@ namespace JollyCCompiler.Compiler.CodeGen.X64
 
         private static string GetCommonArithmeticType(string leftType, string rightType)
         {
+            if (leftType == "unsigned long long" || rightType == "unsigned long long")
+                return "unsigned long long";
+
+            if (leftType == "long long" || rightType == "long long")
+            {
+                if (leftType == "unsigned long" || rightType == "unsigned long")
+                    return "unsigned long long";
+
+                if (leftType == "unsigned int" || rightType == "unsigned int")
+                    return "long long";
+
+                return "long long";
+            }
+
             if (leftType == "unsigned long" || rightType == "unsigned long")
                 return "unsigned long";
 

@@ -2587,9 +2587,129 @@ namespace JollyCCompiler
             return result == 125;
         }
         
+        int testLongLongBasic()
+        {
+            long long a;
+            long long b;
+
+            a = 5000000000LL;
+            b = 3000000000LL;
+
+            return a + b == 8000000000LL;
+        }
+
+        int testLongLongArithmetic()
+        {
+            long long value;
+
+            value = 5000000000LL;
+            value += 2000000000LL;
+            value -= 1000000000LL;
+            value *= 3LL;
+            value /= 2LL;
+            value %= 1000000000LL;
+
+            return value == 0LL;
+        }
+
+        int testLongLongIncrement()
+        {
+            long long value;
+            long long result;
+
+            value = 5000000000LL;
+
+            result = value++;
+            result += ++value;
+            result += value--;
+            result += --value;
+
+            return result == 20000000004LL;
+        }
+
+        int testLongLongNegative()
+        {
+            long long value;
+
+            value = -5000000000LL;
+
+            return value == -5000000000LL;
+        }
+
+        int testLongLongComparison()
+        {
+            long long a;
+            long long b;
+            int result;
+
+            a = 5000000000LL;
+            b = 4000000000LL;
+            result = 0;
+
+            if (a > b)
+                result += 1;
+
+            if (a >= b)
+                result += 2;
+
+            if (a != b)
+                result += 4;
+
+            if (b < a)
+                result += 8;
+
+            if (b <= a)
+                result += 16;
+
+            return result == 31;
+        }
+
+        int testUnsignedLongLong()
+        {
+            unsigned long long value;
+
+            value = 18446744073709551615ULL;
+            value += 1ULL;
+
+            return value == 0ULL;
+        }
+
+        int testUnsignedLongLongArithmetic()
+        {
+            unsigned long long value;
+
+            value = 10000000000ULL;
+            value /= 3ULL;
+            value %= 1000ULL;
+
+            return value == 333ULL;
+        }
+
+        int testLongLongSwitch()
+        {
+            long long value;
+
+            value = 5000000000LL;
+
+            switch (value)
+            {
+                case 1000000000LL:
+                    return 0;
+
+                case 5000000000LL:
+                    return 1;
+
+                case 9000000000LL:
+                    return 0;
+
+                default:
+                    return 0;
+            }
+        }
+        
         int main()
         {
-            const int finalExpectedResult = -2147268376;
+            const int finalExpectedResult = -2147268368;
             int result;
             int temporary;
 
@@ -3168,6 +3288,38 @@ namespace JollyCCompiler
             result += temporary;
             printf("testUnsignedLongPromotion: got=%d expected=1 running=%d\n", temporary, result);
 
+            temporary = testLongLongBasic();
+            result += temporary;
+            printf("testLongLongBasic: got=%d expected=1 running=%d\n", temporary, result);
+
+            temporary = testLongLongArithmetic();
+            result += temporary;
+            printf("testLongLongArithmetic: got=%d expected=1 running=%d\n", temporary, result);
+
+            temporary = testLongLongIncrement();
+            result += temporary;
+            printf("testLongLongIncrement: got=%d expected=1 running=%d\n", temporary, result);
+
+            temporary = testLongLongNegative();
+            result += temporary;
+            printf("testLongLongNegative: got=%d expected=1 running=%d\n", temporary, result);
+
+            temporary = testLongLongComparison();
+            result += temporary;
+            printf("testLongLongComparison: got=%d expected=1 running=%d\n", temporary, result);
+
+            temporary = testUnsignedLongLong();
+            result += temporary;
+            printf("testUnsignedLongLong: got=%d expected=1 running=%d\n", temporary, result);
+
+            temporary = testUnsignedLongLongArithmetic();
+            result += temporary;
+            printf("testUnsignedLongLongArithmetic: got=%d expected=1 running=%d\n", temporary, result);
+
+            temporary = testLongLongSwitch();
+            result += temporary;
+            printf("testLongLongSwitch: got=%d expected=1 running=%d\n", temporary, result);
+        
             printf("FINAL: got=%d expected=%d difference=%d\n", result, finalExpectedResult, result - finalExpectedResult);
 
             if (result == finalExpectedResult)

@@ -13,7 +13,7 @@ namespace JollyCCompiler.Compiler.Syntax
     public sealed record ExpressionStatement(ExpressionNode Expression) : StatementNode;
     public sealed record ForStatement(StatementNode? Initializer, ExpressionNode? Condition, ExpressionNode? Increment, StatementNode Body) : StatementNode;
     public abstract record ExpressionNode : AstNode;
-    public sealed record IntegerExpression(int Value) : ExpressionNode;
+    public sealed record IntegerExpression(long Value, string Type) : ExpressionNode;
     public sealed record StringExpression(string Value) : ExpressionNode;
     public sealed record IdentifierExpression(string Name) : ExpressionNode;
     public sealed record BinaryExpression(ExpressionNode Left, TokenKind Operator, ExpressionNode Right) : ExpressionNode;

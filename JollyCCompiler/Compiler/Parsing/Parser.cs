@@ -223,18 +223,19 @@ namespace JollyCCompiler.Compiler.Parsing
             {
                 type = AdvanceAndReturn("char");
             }
-            else if (Current.Kind == TokenKind.Long) 
-            { 
-                Advance(); 
-                if (Current.Kind == TokenKind.Long) 
-                { 
-                    Advance(); 
-                    type = "long long"; 
-                } 
-                else 
-                { 
-                    type = "long"; 
-                } 
+            else if (Current.Kind == TokenKind.Long)
+            {
+                Advance();
+
+                if (Current.Kind == TokenKind.Long)
+                {
+                    Advance();
+                    type = "long long";
+                }
+                else
+                {
+                    type = "long";
+                }
             }
             else if (Current.Kind == TokenKind.Unsigned)
             {
@@ -262,10 +263,12 @@ namespace JollyCCompiler.Compiler.Parsing
                     if (Current.Kind == TokenKind.Long)
                     {
                         Advance();
-                        throw new NotSupportedException("unsigned long long is not yet supported.");
+                        type = "unsigned long long";
                     }
-
-                    type = "unsigned long";
+                    else
+                    {
+                        type = "unsigned long";
+                    }
                 }
                 else
                 {
@@ -396,7 +399,7 @@ namespace JollyCCompiler.Compiler.Parsing
             if (Current.Kind == TokenKind.Semicolon)
             {
                 Advance();
-                return new ExpressionStatement(new IntegerExpression(0));
+                return new ExpressionStatement(new IntegerExpression(0, "int"));
             }
 
             var expression = ParseExpression();
@@ -788,11 +791,11 @@ namespace JollyCCompiler.Compiler.Parsing
             {
                 var token = Advance();
 
-                if (TryParseIntegerLiteral(token.Text, out var value))
-                    return new IntegerExpression(value);
+                if (TryParseIntegerLiteral(token.Text, out var value, out var type))
+                    return new IntegerExpression(value, type);
 
                 ErrorAt(token, $"Invalid integer literal '{token.Text}'.");
-                return new IntegerExpression(0);
+                return new IntegerExpression(0, "int");
             }
 
             if (Current.Kind == TokenKind.StringLiteral)
@@ -804,7 +807,7 @@ namespace JollyCCompiler.Compiler.Parsing
             if (Current.Kind == TokenKind.CharLiteral)
             {
                 var token = Advance();
-                return new IntegerExpression(token.Text.Length > 0 ? token.Text[0] : 0);
+                return new IntegerExpression(token.Text.Length > 0 ? token.Text[0] : 0, "int");
             }
 
             if (Current.Kind == TokenKind.Identifier)
@@ -833,39 +836,200 @@ namespace JollyCCompiler.Compiler.Parsing
             var bad = Current;
             Advance();
 
-            return new IntegerExpression(0);
+            return new IntegerExpression(0, "int");
         }
 
-        private static bool TryParseIntegerLiteral(string text, out int value)
+        private static bool TryParseIntegerLiteral(string text, out long value, out string type)
         {
             text = text.Trim();
 
-            while (text.Length > 0 && (text.EndsWith("u", StringComparison.OrdinalIgnoreCase) || text.EndsWith("l", StringComparison.OrdinalIgnoreCase)))
+            var suffixStart = text.Length;
+
+            while (suffixStart > 0 && char.IsLetter(text[suffixStart - 1]))
+                suffixStart--;
+
+            var numberText = text[..suffixStart];
+            var suffix = text[suffixStart..].ToUpperInvariant();
+
+            if (suffix is not "" and not "U" and not "L" and not "UL" and not "LU" and not "LL" and not "ULL" and not "LLU")
             {
-                text = text[..^1];
+                value = 0;
+                type = string.Empty;
+                return false;
             }
 
-            if (text.StartsWith("0x", StringComparison.OrdinalIgnoreCase))
-            {
-                var hexText = text[2..];
+            var isHex = numberText.StartsWith("0x", StringComparison.OrdinalIgnoreCase);
+            var isUnsigned = suffix.Contains('U');
+            var isLongLong = suffix.Contains("LL", StringComparison.Ordinal);
+            var isLong = !isLongLong && suffix.Contains('L');
 
-                if (uint.TryParse(hexText, System.Globalization.NumberStyles.AllowHexSpecifier, System.Globalization.CultureInfo.InvariantCulture, out var unsignedValue))
+            ulong unsignedValue;
+
+            if (isHex)
+            {
+                var hexText = numberText[2..];
+
+                if (hexText.Length == 0 ||
+                    !ulong.TryParse(
+                        hexText,
+                        System.Globalization.NumberStyles.AllowHexSpecifier,
+                        System.Globalization.CultureInfo.InvariantCulture,
+                        out unsignedValue))
                 {
-                    value = unchecked((int)unsignedValue);
+                    value = 0;
+                    type = string.Empty;
+                    return false;
+                }
+            }
+            else
+            {
+                if (!ulong.TryParse(
+                        numberText,
+                        System.Globalization.NumberStyles.None,
+                        System.Globalization.CultureInfo.InvariantCulture,
+                        out unsignedValue))
+                {
+                    value = 0;
+                    type = string.Empty;
+                    return false;
+                }
+            }
+
+            if (suffix == "ULL" || suffix == "LLU")
+            {
+                value = unchecked((long)unsignedValue);
+                type = "unsigned long long";
+                return true;
+            }
+
+            if (suffix == "LL")
+            {
+                if (unsignedValue <= long.MaxValue)
+                {
+                    value = unchecked((long)unsignedValue);
+                    type = "long long";
+                    return true;
+                }
+
+                if (isHex)
+                {
+                    value = unchecked((long)unsignedValue);
+                    type = "unsigned long long";
                     return true;
                 }
 
                 value = 0;
+                type = string.Empty;
                 return false;
             }
 
-            if (long.TryParse(text, System.Globalization.NumberStyles.Integer, System.Globalization.CultureInfo.InvariantCulture, out var signedValue) && signedValue >= int.MinValue && signedValue <= uint.MaxValue)
+            if (suffix == "UL" || suffix == "LU")
             {
-                value = unchecked((int)signedValue);
+                if (unsignedValue <= uint.MaxValue)
+                {
+                    value = unchecked((long)unsignedValue);
+                    type = "unsigned long";
+                    return true;
+                }
+
+                value = unchecked((long)unsignedValue);
+                type = "unsigned long long";
+                return true;
+            }
+
+            if (suffix == "L")
+            {
+                if (unsignedValue <= int.MaxValue)
+                {
+                    value = unchecked((long)unsignedValue);
+                    type = "long";
+                    return true;
+                }
+
+                if (unsignedValue <= long.MaxValue)
+                {
+                    value = unchecked((long)unsignedValue);
+                    type = "long long";
+                    return true;
+                }
+
+                if (isHex)
+                {
+                    if (unsignedValue <= uint.MaxValue)
+                    {
+                        value = unchecked((long)unsignedValue);
+                        type = "unsigned long";
+                        return true;
+                    }
+
+                    value = unchecked((long)unsignedValue);
+                    type = "unsigned long long";
+                    return true;
+                }
+
+                value = 0;
+                type = string.Empty;
+                return false;
+            }
+
+            if (suffix == "U")
+            {
+                if (unsignedValue <= uint.MaxValue)
+                {
+                    value = unchecked((long)unsignedValue);
+                    type = "unsigned int";
+                    return true;
+                }
+
+                value = unchecked((long)unsignedValue);
+                type = "unsigned long long";
+                return true;
+            }
+
+            if (isHex)
+            {
+                if (unsignedValue <= int.MaxValue)
+                {
+                    value = unchecked((long)unsignedValue);
+                    type = "int";
+                    return true;
+                }
+
+                if (unsignedValue <= uint.MaxValue)
+                {
+                    value = unchecked((long)unsignedValue);
+                    type = "unsigned int";
+                    return true;
+                }
+
+                if (unsignedValue <= long.MaxValue)
+                {
+                    value = unchecked((long)unsignedValue);
+                    type = "long";
+                    return true;
+                }
+
+                value = unchecked((long)unsignedValue);
+                type = "unsigned long long";
+                return true;
+            }
+
+            if (unsignedValue <= int.MaxValue)
+            {
+                value = unchecked((long)unsignedValue);
+                type = "int";
+                return true;
+            }
+
+            if (unsignedValue <= long.MaxValue)
+            {
+                value = unchecked((long)unsignedValue);
+                type = "long long";
                 return true;
             }
 
             value = 0;
+            type = string.Empty;
             return false;
         }
 
@@ -907,12 +1071,13 @@ namespace JollyCCompiler.Compiler.Parsing
             Expect(TokenKind.RightParen, "Expected ')' after switch expression."); 
             Expect(TokenKind.LeftBrace, "Expected '{' after switch expression."); 
             var cases = new List<SwitchCase>(); 
-            var seenValues = new HashSet<int>(); 
+            var seenValues = new HashSet<long>(); 
             var hasDefault = false; 
             while (Current.Kind != TokenKind.RightBrace && Current.Kind != TokenKind.EndOfFile) 
             { 
                 if (Current.Kind == TokenKind.Case) 
-                { Advance(); var value = ParseExpression(); 
+                { 
+                    Advance(); var value = ParseExpression(); 
                     if (!TryGetConstantInteger(value, out var constantValue)) 
                         Error("Case value must be an integer constant expression."); 
                     else if (!seenValues.Add(constantValue)) 
@@ -966,22 +1131,24 @@ namespace JollyCCompiler.Compiler.Parsing
             return new SwitchStatement(expression, cases); 
         }
 
-        private static bool TryGetConstantInteger(ExpressionNode expression, out int value) 
-        { 
-            if (expression is IntegerExpression integer) 
-            { 
-                value = integer.Value; 
-                return true; 
-            } 
-            
-            if (expression is UnaryExpression unary && unary.Operator == TokenKind.Minus && unary.Operand is IntegerExpression operand) 
-            { 
-                value = -operand.Value; 
-                return true; 
-            } 
-            
-            value = 0; 
-            return false; 
+        private static bool TryGetConstantInteger(ExpressionNode expression, out long value)
+        {
+            if (expression is IntegerExpression integer)
+            {
+                value = integer.Value;
+                return true;
+            }
+
+            if (expression is UnaryExpression unary &&
+                unary.Operator == TokenKind.Minus &&
+                unary.Operand is IntegerExpression operand)
+            {
+                value = -operand.Value;
+                return true;
+            }
+
+            value = 0;
+            return false;
         }
 
         private Token Expect(TokenKind kind, string message)
