@@ -3,7 +3,7 @@
 namespace JollyCCompiler.Compiler.Syntax
 {
     public abstract record AstNode;
-    public sealed record ProgramNode(IReadOnlyList<StructDeclarationNode> Structs, IReadOnlyList<UnionDeclarationNode> Unions, IReadOnlyList<FunctionNode> Functions) : AstNode;
+    public sealed record ProgramNode(IReadOnlyList<StructDeclarationNode> Structs, IReadOnlyList<UnionDeclarationNode> Unions, IReadOnlyList<VariableDeclarationStatement> Globals, IReadOnlyList<FunctionNode> Functions) : AstNode; 
     public sealed record FunctionNode(string ReturnType, string Name, IReadOnlyList<ParameterNode> Parameters, BlockStatement Body) : AstNode;
     public sealed record ParameterNode(string Type, string Name) : AstNode;
     public abstract record StatementNode : AstNode;
@@ -17,6 +17,7 @@ namespace JollyCCompiler.Compiler.Syntax
     public sealed record FloatingExpression(double Value, string Type) : ExpressionNode;
     public sealed record StringExpression(string Value) : ExpressionNode;
     public sealed record IdentifierExpression(string Name) : ExpressionNode;
+    public sealed record InitializerListExpression(IReadOnlyList<ExpressionNode> Elements) : ExpressionNode;
     public sealed record BinaryExpression(ExpressionNode Left, TokenKind Operator, ExpressionNode Right) : ExpressionNode;
     public sealed record UnaryExpression(TokenKind Operator, ExpressionNode Operand, bool IsPostfix = false) : ExpressionNode;
     public sealed record CallExpression(string Name, IReadOnlyList<ExpressionNode> Arguments) : ExpressionNode;

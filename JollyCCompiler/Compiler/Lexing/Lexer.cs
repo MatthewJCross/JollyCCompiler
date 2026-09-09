@@ -75,18 +75,37 @@ public sealed class Lexer
             {
                 '+' when Peek() == '+' => TokenKind.PlusPlus,
                 '+' when Peek() == '=' => TokenKind.PlusEquals,
+
                 '-' when Peek() == '-' => TokenKind.MinusMinus,
                 '-' when Peek() == '=' => TokenKind.MinusEquals,
                 '-' when Peek() == '>' => TokenKind.Arrow,
+
                 '*' when Peek() == '=' => TokenKind.StarEquals,
                 '/' when Peek() == '=' => TokenKind.SlashEquals,
                 '%' when Peek() == '=' => TokenKind.PercentEquals,
+
+                '&' when Peek() == '&' => TokenKind.AndAnd,
+                '&' when Peek() == '=' => TokenKind.AmpersandEquals,
+
+                '|' when Peek() == '|' => TokenKind.OrOr,
+                '|' when Peek() == '=' => TokenKind.PipeEquals,
+
+                '^' when Peek() == '=' => TokenKind.CaretEquals,
+
+                '<' when Peek() == '<' && Peek(2) == '=' => TokenKind.LeftShiftEquals,
+                '<' when Peek() == '<' => TokenKind.ShiftLeft,
+                '<' when Peek() == '=' => TokenKind.LessEqual,
+
+                '>' when Peek() == '>' && Peek(2) == '=' => TokenKind.RightShiftEquals,
+                '>' when Peek() == '>' => TokenKind.ShiftRight,
+                '>' when Peek() == '=' => TokenKind.GreaterEqual,
 
                 '+' => TokenKind.Plus,
                 '-' => TokenKind.Minus,
                 '*' => TokenKind.Star,
                 '/' => TokenKind.Slash,
                 '%' => TokenKind.Percent,
+
                 '(' => TokenKind.LeftParen,
                 ')' => TokenKind.RightParen,
                 '{' => TokenKind.LeftBrace,
@@ -98,10 +117,10 @@ public sealed class Lexer
                 ';' => TokenKind.Semicolon,
                 ':' => TokenKind.Colon,
 
-                '&' when Peek() == '&' => TokenKind.AndAnd,
-                '|' when Peek() == '|' => TokenKind.OrOr,
-
                 '&' => TokenKind.Ampersand,
+                '|' => TokenKind.Pipe,
+                '^' => TokenKind.Caret,
+                '~' => TokenKind.Tilde,
 
                 '!' when Peek() == '=' => TokenKind.NotEqual,
                 '!' => TokenKind.Exclamation,
@@ -109,10 +128,7 @@ public sealed class Lexer
                 '=' when Peek() == '=' => TokenKind.EqualEqual,
                 '=' => TokenKind.Equals,
 
-                '<' when Peek() == '=' => TokenKind.LessEqual,
                 '<' => TokenKind.Less,
-
-                '>' when Peek() == '=' => TokenKind.GreaterEqual,
                 '>' => TokenKind.Greater,
 
                 _ => null
@@ -128,6 +144,33 @@ public sealed class Lexer
             if ((Current == '+' || Current == '-' || Current == '*' || Current == '/' || Current == '%') && Peek() == '=')
             {
                 text = $"{Current}=";
+                Advance();
+            }
+            else if (Current == '&' && Peek() == '=')
+            {
+                text = "&=";
+                Advance();
+            }
+            else if (Current == '|' && Peek() == '=')
+            {
+                text = "|=";
+                Advance();
+            }
+            else if (Current == '^' && Peek() == '=')
+            {
+                text = "^=";
+                Advance();
+            }
+            else if (Current == '<' && Peek() == '<' && Peek(2) == '=')
+            {
+                text = "<<=";
+                Advance();
+                Advance();
+            }
+            else if (Current == '>' && Peek() == '>' && Peek(2) == '=')
+            {
+                text = ">>=";
+                Advance();
                 Advance();
             }
             else if (Current == '-' && Peek() == '>')
@@ -153,6 +196,16 @@ public sealed class Lexer
             else if (Current == '|' && Peek() == '|')
             {
                 text = "||";
+                Advance();
+            }
+            else if (Current == '<' && Peek() == '<')
+            {
+                text = "<<";
+                Advance();
+            }
+            else if (Current == '>' && Peek() == '>')
+            {
+                text = ">>";
                 Advance();
             }
             else if (Current is '=' or '!' or '<' or '>')
@@ -256,25 +309,70 @@ public sealed class Lexer
         var column = _column;
         var start = _position;
 
-        if (Current == '0' && (Peek() == 'x' || Peek() == 'X'))
+        if (Current == '0')
         {
-            Advance();
-            Advance();
-
-            var hexStart = _position;
-
-            while (!AtEnd && Uri.IsHexDigit(Current))
+            if (Peek() == 'x' || Peek() == 'X')
+            {
+                Advance();
                 Advance();
 
-            if (_position == hexStart)
-            {
-                _diagnostics.Add(new Diagnostic(DiagnosticSeverity.Error, "Hexadecimal integer literal requires at least one hexadecimal digit.", line, column));
+                var digitStart = _position;
+
+                while (!AtEnd && IsHexDigit(Current))
+                    Advance();
+
+                if (_position == digitStart)
+                {
+                    _diagnostics.Add(new Diagnostic(DiagnosticSeverity.Error, "Hexadecimal literal requires at least one hexadecimal digit.", line, column));
+                }
+
+                while (!AtEnd && char.IsLetter(Current))
+                    Advance();
+
+                return new Token(TokenKind.IntegerLiteral, _source[start.._position], line, column);
             }
 
-            while (!AtEnd && char.IsLetter(Current))
+            if (Peek() == 'b' || Peek() == 'B')
+            {
+                Advance();
                 Advance();
 
-            return new Token(TokenKind.IntegerLiteral, _source[start.._position], line, column);
+                var digitStart = _position;
+
+                while (!AtEnd && (Current == '0' || Current == '1'))
+                    Advance();
+
+                if (_position == digitStart)
+                {
+                    _diagnostics.Add(new Diagnostic(DiagnosticSeverity.Error, "Binary literal requires at least one binary digit.", line, column));
+                }
+
+                while (!AtEnd && char.IsLetter(Current))
+                    Advance();
+
+                return new Token(TokenKind.IntegerLiteral, _source[start.._position], line, column);
+            }
+
+            if (Peek() == 'o' || Peek() == 'O')
+            {
+                Advance();
+                Advance();
+
+                var digitStart = _position;
+
+                while (!AtEnd && Current >= '0' && Current <= '7')
+                    Advance();
+
+                if (_position == digitStart)
+                {
+                    _diagnostics.Add(new Diagnostic(DiagnosticSeverity.Error, "Octal literal requires at least one octal digit.", line, column));
+                }
+
+                while (!AtEnd && char.IsLetter(Current))
+                    Advance();
+
+                return new Token(TokenKind.IntegerLiteral, _source[start.._position], line, column);
+            }
         }
 
         while (!AtEnd && char.IsDigit(Current))
@@ -286,14 +384,28 @@ public sealed class Lexer
         return new Token(TokenKind.IntegerLiteral, _source[start.._position], line, column);
     }
 
+    private static bool IsHexDigit(char c)
+    {
+        return char.IsDigit(c) || (c >= 'a' && c <= 'f') || (c >= 'A' && c <= 'F');
+    }
+
     private Token ReadNumber()
     {
         var line = _line;
         var column = _column;
         var start = _position;
 
-        if (Current == '0' && (Peek() == 'x' || Peek() == 'X'))
-            return ReadInteger();
+        if (Current == '0')
+        {
+            if (Peek() == 'x' || Peek() == 'X')
+                return ReadInteger();
+
+            if (Peek() == 'b' || Peek() == 'B')
+                return ReadInteger();
+
+            if (Peek() == 'o' || Peek() == 'O')
+                return ReadInteger();
+        }
 
         while (!AtEnd && char.IsDigit(Current))
             Advance();

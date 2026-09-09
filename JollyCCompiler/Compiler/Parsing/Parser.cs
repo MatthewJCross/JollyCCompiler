@@ -12,6 +12,7 @@ namespace JollyCCompiler.Compiler.Parsing
         private readonly List<Diagnostic> _diagnostics = new();
         private readonly List<StructDeclarationNode> _structs = new();
         private readonly List<UnionDeclarationNode> _unions = new();
+        private readonly List<VariableDeclarationStatement> _globals = new();
         private int _position;
 
         public Parser(IReadOnlyList<Token> tokens) { _tokens = tokens ?? throw new ArgumentNullException(nameof(tokens)); }
@@ -23,39 +24,56 @@ namespace JollyCCompiler.Compiler.Parsing
         {
             _structs.Clear();
             _unions.Clear();
+            _globals.Clear();
 
             var functions = new List<FunctionNode>();
 
             while (Current.Kind != TokenKind.EndOfFile)
             {
                 var startPosition = _position;
+                var startToken = Current;
 
                 if (IsStructDeclaration())
                 {
                     var structDeclaration = ParseStructDeclaration();
+
                     if (structDeclaration is not null)
                         _structs.Add(structDeclaration);
                 }
                 else if (IsUnionDeclaration())
                 {
                     var unionDeclaration = ParseUnionDeclaration();
+
                     if (unionDeclaration is not null)
                         _unions.Add(unionDeclaration);
                 }
-                else
+                else if (IsFunctionDeclaration())
                 {
                     var function = ParseFunction();
+
                     if (function is not null)
                         functions.Add(function);
                 }
+                else
+                {
+                    var global = ParseVariableDeclaration();
+
+                    if (global is not null)
+                        _globals.Add(global);
+                }
+
+                //if (_position == startPosition)
+                //{
+                //    ErrorAt(startToken, $"Parser made no progress at token '{startToken.Text}' ({startToken.Kind}).");
+                //    Advance();
+                //}
 
                 if (_position == startPosition)
                     Synchronize();
             }
 
-            return new ProgramNode(_structs, _unions, functions);
+            return new ProgramNode(_structs, _unions, _globals, functions);
         }
-
         private bool IsStructDeclaration()
         {
             return Current.Kind == TokenKind.Struct && Peek(1).Kind == TokenKind.Identifier && Peek(2).Kind == TokenKind.LeftBrace;
@@ -147,6 +165,36 @@ namespace JollyCCompiler.Compiler.Parsing
             Expect(TokenKind.RightBrace, "Expected '}' after union fields."); 
             Expect(TokenKind.Semicolon, "Expected ';' after union declaration.");
             return new UnionDeclarationNode(name.Text, fields); 
+        }
+
+        private bool IsFunctionDeclaration()
+        {
+            var savedPosition = _position;
+
+            if (Current.Kind == TokenKind.Const)
+                Advance();
+
+            var type = ParseType();
+
+            if (type is null)
+            {
+                _position = savedPosition;
+                return false;
+            }
+
+            if (Current.Kind != TokenKind.Identifier)
+            {
+                _position = savedPosition;
+                return false;
+            }
+
+            Advance();
+
+            var result = Current.Kind == TokenKind.LeftParen;
+
+            _position = savedPosition;
+
+            return result;
         }
 
         private FunctionNode? ParseFunction()
@@ -418,38 +466,104 @@ namespace JollyCCompiler.Compiler.Parsing
             return new ExpressionStatement(expression);
         }
 
-        private VariableDeclarationStatement ParseVariableDeclaration() 
-        { 
-            bool isConst = false; 
-            if (Current.Kind == TokenKind.Const) 
-            { 
-                Advance(); 
-                isConst = true; 
-            } 
-            
-            var type = ParseType()!; 
-            var name = Expect(TokenKind.Identifier, "Expected variable name."); 
-            int? arrayLength = null; 
-            if (Current.Kind == TokenKind.LeftBracket) 
-            { 
-                Advance(); 
-                var lengthToken = Expect(TokenKind.IntegerLiteral, "Expected array size."); 
-                arrayLength = int.Parse(lengthToken.Text); 
-                Expect(TokenKind.RightBracket, "Expected ']' after array size."); 
-            } 
-            
-            ExpressionNode? initializer = null; 
-            if (Current.Kind == TokenKind.Equals) 
-            { 
-                Advance(); 
-                initializer = ParseExpression(); 
-            } 
-            
+        private VariableDeclarationStatement ParseVariableDeclaration()
+        {
+            bool isConst = false;
+
+            if (Current.Kind == TokenKind.Const)
+            {
+                Advance();
+                isConst = true;
+            }
+
+            var type = ParseType()!;
+
+            var name = Expect(TokenKind.Identifier, "Expected variable name.");
+
+            int? arrayLength = null;
+
+            if (Current.Kind == TokenKind.LeftBracket)
+            {
+                Advance();
+
+                if (Current.Kind == TokenKind.IntegerLiteral)
+                {
+                    var lengthToken = Advance();
+
+                    if (int.TryParse(lengthToken.Text, out var length))
+                        arrayLength = length;
+                    else
+                        ErrorAt(lengthToken, $"Invalid array size '{lengthToken.Text}'.");
+                }
+
+                Expect(TokenKind.RightBracket, "Expected ']' after array declaration.");
+            }
+
+            ExpressionNode? initializer = null;
+
+            if (Current.Kind == TokenKind.Equals)
+            {
+                Advance();
+                initializer = ParseInitializer();
+            }
+
             if (isConst && initializer is null)
                 Error("A const variable must be initialized.");
-            
-            Expect(TokenKind.Semicolon, "Expected ';' after variable declaration."); 
-            return new VariableDeclarationStatement(type, name.Text, initializer, arrayLength, isConst); 
+
+            Expect(TokenKind.Semicolon, "Expected ';' after variable declaration.");
+
+            return new VariableDeclarationStatement(type, name.Text, initializer, arrayLength, isConst);
+        }
+
+        private ExpressionNode ParseInitializer()
+        {
+            if (Current.Kind == TokenKind.LeftBrace)
+                return ParseInitializerList();
+
+            return ParseExpression();
+        }
+
+        private InitializerListExpression ParseInitializerList()
+        {
+            Expect(TokenKind.LeftBrace, "Expected '{'.");
+
+            var elements = new List<ExpressionNode>();
+
+            if (Current.Kind == TokenKind.RightBrace)
+            {
+                Advance();
+                return new InitializerListExpression(elements);
+            }
+
+            while (Current.Kind != TokenKind.RightBrace &&
+                   Current.Kind != TokenKind.EndOfFile)
+            {
+                var startPosition = _position;
+
+                elements.Add(ParseInitializer());
+
+                if (_position == startPosition)
+                {
+                    Advance();
+                    break;
+                }
+
+                if (Current.Kind == TokenKind.Comma)
+                {
+                    Advance();
+
+                    if (Current.Kind == TokenKind.RightBrace)
+                        break;
+
+                    continue;
+                }
+
+                break;
+            }
+
+            Expect(TokenKind.RightBrace, "Expected '}' after initializer list.");
+
+            return new InitializerListExpression(elements);
         }
 
         private ForStatement ParseFor()
@@ -585,7 +699,17 @@ namespace JollyCCompiler.Compiler.Parsing
         {
             var left = ParseLogicalOr();
 
-            if (Current.Kind is TokenKind.Equals or TokenKind.PlusEquals or TokenKind.MinusEquals or TokenKind.StarEquals or TokenKind.SlashEquals or TokenKind.PercentEquals)
+            if (Current.Kind is TokenKind.Equals
+                or TokenKind.PlusEquals
+                or TokenKind.MinusEquals
+                or TokenKind.StarEquals
+                or TokenKind.SlashEquals
+                or TokenKind.PercentEquals
+                or TokenKind.AmpersandEquals
+                or TokenKind.PipeEquals
+                or TokenKind.CaretEquals
+                or TokenKind.LeftShiftEquals
+                or TokenKind.RightShiftEquals)
             {
                 var operatorToken = Current;
                 var operatorKind = Current.Kind;
@@ -628,9 +752,60 @@ namespace JollyCCompiler.Compiler.Parsing
 
         private ExpressionNode ParseLogicalAnd()
         {
-            var left = ParseEquality();
+            var left = ParseBitwiseOr();
 
             while (Current.Kind == TokenKind.AndAnd)
+            {
+                var op = Current.Kind;
+                Advance();
+
+                var right = ParseBitwiseOr();
+
+                left = new BinaryExpression(left, op, right);
+            }
+
+            return left;
+        }
+
+        private ExpressionNode ParseBitwiseOr()
+        {
+            var left = ParseBitwiseXor();
+
+            while (Current.Kind == TokenKind.Pipe)
+            {
+                var op = Current.Kind;
+                Advance();
+
+                var right = ParseBitwiseXor();
+
+                left = new BinaryExpression(left, op, right);
+            }
+
+            return left;
+        }
+
+        private ExpressionNode ParseBitwiseXor()
+        {
+            var left = ParseBitwiseAnd();
+
+            while (Current.Kind == TokenKind.Caret)
+            {
+                var op = Current.Kind;
+                Advance();
+
+                var right = ParseBitwiseAnd();
+
+                left = new BinaryExpression(left, op, right);
+            }
+
+            return left;
+        }
+
+        private ExpressionNode ParseBitwiseAnd()
+        {
+            var left = ParseEquality();
+
+            while (Current.Kind == TokenKind.Ampersand)
             {
                 var op = Current.Kind;
                 Advance();
@@ -662,9 +837,26 @@ namespace JollyCCompiler.Compiler.Parsing
 
         private ExpressionNode ParseComparison()
         {
-            var left = ParseTerm();
+            var left = ParseShift();
 
             while (Current.Kind is TokenKind.Less or TokenKind.LessEqual or TokenKind.Greater or TokenKind.GreaterEqual)
+            {
+                var op = Current.Kind;
+                Advance();
+
+                var right = ParseShift();
+
+                left = new BinaryExpression(left, op, right);
+            }
+
+            return left;
+        }
+
+        private ExpressionNode ParseShift()
+        {
+            var left = ParseTerm();
+
+            while (Current.Kind is TokenKind.ShiftLeft or TokenKind.ShiftRight)
             {
                 var op = Current.Kind;
                 Advance();
@@ -753,7 +945,7 @@ namespace JollyCCompiler.Compiler.Parsing
                 return new DereferenceExpression(ParseUnary());
             }
 
-            if (Current.Kind is TokenKind.PlusPlus or TokenKind.MinusMinus or TokenKind.Minus or TokenKind.Exclamation)
+            if (Current.Kind is TokenKind.PlusPlus or TokenKind.MinusMinus or TokenKind.Minus or TokenKind.Exclamation or TokenKind.Tilde)
             {
                 var op = Current.Kind;
                 Advance();
@@ -890,8 +1082,39 @@ namespace JollyCCompiler.Compiler.Parsing
 
             var suffixStart = text.Length;
 
-            while (suffixStart > 0 && char.IsLetter(text[suffixStart - 1]))
-                suffixStart--;
+            if (text.StartsWith("0x", StringComparison.OrdinalIgnoreCase))
+            {
+                suffixStart = 2;
+
+                while (suffixStart < text.Length && (char.IsDigit(text[suffixStart]) || (text[suffixStart] >= 'a' && text[suffixStart] <= 'f') || (text[suffixStart] >= 'A' && text[suffixStart] <= 'F')))
+                {
+                    suffixStart++;
+                }
+            }
+            else if (text.StartsWith("0b", StringComparison.OrdinalIgnoreCase))
+            {
+                suffixStart = 2;
+
+                while (suffixStart < text.Length &&
+                       (text[suffixStart] == '0' || text[suffixStart] == '1'))
+                {
+                    suffixStart++;
+                }
+            }
+            else if (text.StartsWith("0o", StringComparison.OrdinalIgnoreCase))
+            {
+                suffixStart = 2;
+
+                while (suffixStart < text.Length && text[suffixStart] >= '0' && text[suffixStart] <= '7')
+                {
+                    suffixStart++;
+                }
+            }
+            else
+            {
+                while (suffixStart > 0 && char.IsLetter(text[suffixStart - 1]))
+                    suffixStart--;
+            }
 
             var numberText = text[..suffixStart];
             var suffix = text[suffixStart..].ToUpperInvariant();
@@ -904,6 +1127,9 @@ namespace JollyCCompiler.Compiler.Parsing
             }
 
             var isHex = numberText.StartsWith("0x", StringComparison.OrdinalIgnoreCase);
+            var isBinary = numberText.StartsWith("0b", StringComparison.OrdinalIgnoreCase);
+            var isOctal = numberText.StartsWith("0o", StringComparison.OrdinalIgnoreCase);
+
             var isUnsigned = suffix.Contains('U');
             var isLongLong = suffix.Contains("LL", StringComparison.Ordinal);
             var isLong = !isLongLong && suffix.Contains('L');
@@ -912,27 +1138,68 @@ namespace JollyCCompiler.Compiler.Parsing
 
             if (isHex)
             {
-                var hexText = numberText[2..];
+                var digits = numberText[2..];
 
-                if (hexText.Length == 0 ||
-                    !ulong.TryParse(
-                        hexText,
-                        System.Globalization.NumberStyles.AllowHexSpecifier,
-                        System.Globalization.CultureInfo.InvariantCulture,
-                        out unsignedValue))
+                if (digits.Length == 0 || !ulong.TryParse(digits, NumberStyles.AllowHexSpecifier, CultureInfo.InvariantCulture, out unsignedValue))
                 {
                     value = 0;
                     type = string.Empty;
                     return false;
                 }
             }
+            else if (isBinary)
+            {
+                var digits = numberText[2..];
+
+                if (digits.Length == 0)
+                {
+                    value = 0;
+                    type = string.Empty;
+                    return false;
+                }
+
+                unsignedValue = 0;
+
+                foreach (var digit in digits)
+                {
+                    if (digit != '0' && digit != '1')
+                    {
+                        value = 0;
+                        type = string.Empty;
+                        return false;
+                    }
+
+                    unsignedValue = checked((unsignedValue << 1) | (uint)(digit - '0'));
+                }
+            }
+            else if (isOctal)
+            {
+                var digits = numberText[2..];
+
+                if (digits.Length == 0)
+                {
+                    value = 0;
+                    type = string.Empty;
+                    return false;
+                }
+
+                unsignedValue = 0;
+
+                foreach (var digit in digits)
+                {
+                    if (digit < '0' || digit > '7')
+                    {
+                        value = 0;
+                        type = string.Empty;
+                        return false;
+                    }
+
+                    unsignedValue = checked((unsignedValue << 3) | (uint)(digit - '0'));
+                }
+            }
             else
             {
-                if (!ulong.TryParse(
-                        numberText,
-                        System.Globalization.NumberStyles.None,
-                        System.Globalization.CultureInfo.InvariantCulture,
-                        out unsignedValue))
+                if (!ulong.TryParse(numberText, NumberStyles.None, CultureInfo.InvariantCulture, out unsignedValue))
                 {
                     value = 0;
                     type = string.Empty;
@@ -956,7 +1223,7 @@ namespace JollyCCompiler.Compiler.Parsing
                     return true;
                 }
 
-                if (isHex)
+                if (isHex || isBinary || isOctal)
                 {
                     value = unchecked((long)unsignedValue);
                     type = "unsigned long long";
@@ -998,7 +1265,7 @@ namespace JollyCCompiler.Compiler.Parsing
                     return true;
                 }
 
-                if (isHex)
+                if (isHex || isBinary || isOctal)
                 {
                     if (unsignedValue <= uint.MaxValue)
                     {
@@ -1031,7 +1298,7 @@ namespace JollyCCompiler.Compiler.Parsing
                 return true;
             }
 
-            if (isHex)
+            if (isHex || isBinary || isOctal)
             {
                 if (unsignedValue <= int.MaxValue)
                 {

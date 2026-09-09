@@ -24,7 +24,7 @@ namespace JollyCCompiler.Object
         private const ushort DllCharacteristicsNxCompat = 0x0100;
         private const ushort DllCharacteristicsNoSeh = 0x0400;
         private const uint TextCharacteristics = 0x00000020 | 0x40000000 | 0x20000000;
-        private const uint RDataCharacteristics = 0x00000040 | 0x40000000;
+        private const uint RDataCharacteristics = 0x00000040 | 0x40000000 | 0x80000000;
         private const uint IDataCharacteristics = 0x00000040 | 0x40000000 | 0x80000000;
 
         public void Write(string filePath, X64CodeGenerationResult result) 
@@ -44,6 +44,25 @@ namespace JollyCCompiler.Object
             uint mainRva = TextRva + (uint)entryStubSize; 
             PatchRelative32(startup, mainCallDispOffset, TextRva + (uint)(mainCallDispOffset + 4), mainRva); 
             byte[] text = new byte[AlignUp(entryStubSize + result.MachineCode.Length, (int)FileAlignment)];
+
+            Debug.WriteLine("PE MACHINE CODE DIRECT:");
+
+            for (int i = 118; i <= 128 && i < result.MachineCode.Length; i++)
+            {
+                Debug.WriteLine(
+                    $"MachineCode[{i}] = {result.MachineCode[i]:X2}");
+            }
+
+            Buffer.BlockCopy(result.MachineCode, 0, text, entryStubSize, result.MachineCode.Length);
+            
+            Debug.WriteLine($"PE TEXT COPY: entryStubSize={entryStubSize:X}");
+            Debug.WriteLine($"PE TEXT COPY: machineCodeLength={result.MachineCode.Length}");
+
+            for (int i = 120; i < 130 && i < result.MachineCode.Length; i++)
+            {
+                Debug.WriteLine($"PE TEXT SOURCE [{i:X3}] = {result.MachineCode[i]:X2}");
+            }
+
 
             Buffer.BlockCopy(startup, 0, text, 0, startup.Length); 
             Buffer.BlockCopy(result.MachineCode, 0, text, entryStubSize, result.MachineCode.Length); 

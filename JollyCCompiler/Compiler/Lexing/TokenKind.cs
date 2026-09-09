@@ -39,6 +39,12 @@
         Slash,
         Percent,
 
+        Pipe,
+        Caret,
+        Tilde,
+        ShiftLeft,
+        ShiftRight,
+        
         PlusPlus,
         MinusMinus,
         PlusEquals,
@@ -46,7 +52,13 @@
         StarEquals,
         SlashEquals,
         PercentEquals,
-        
+
+        AmpersandEquals,
+        PipeEquals,
+        CaretEquals,
+        LeftShiftEquals,
+        RightShiftEquals,
+
         Equals,
         EqualEqual,
         NotEqual,
