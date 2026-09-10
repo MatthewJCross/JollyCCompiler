@@ -299,6 +299,7 @@ public sealed class Lexer
             "sizeof" => TokenKind.Sizeof,
             "enum" => TokenKind.Enum,
             "typedef" => TokenKind.Typedef,
+            "extern" => TokenKind.Extern,
             _ => TokenKind.Identifier
         };
 

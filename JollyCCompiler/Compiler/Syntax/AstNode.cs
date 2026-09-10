@@ -6,7 +6,8 @@ namespace JollyCCompiler.Compiler.Syntax
     public sealed record ProgramNode(IReadOnlyList<StructDeclarationNode> Structs, IReadOnlyList<UnionDeclarationNode> Unions, IReadOnlyList<EnumDeclarationNode> Enums, IReadOnlyList<VariableDeclarationStatement> Globals, IReadOnlyList<FunctionNode> Functions) : AstNode;
     public abstract record StatementNode : AstNode;
     public sealed record BlockStatement(IReadOnlyList<StatementNode> Statements) : StatementNode;
-    public sealed record FunctionNode(string ReturnType, string Name, IReadOnlyList<ParameterNode> Parameters, BlockStatement Body) : AstNode; public sealed record VariableDeclarationStatement(string Type, string Name, ExpressionNode? Initializer, int? ArrayLength = null, bool IsConst = false) : StatementNode;
+    public sealed record FunctionNode(string ReturnType, string Name, IReadOnlyList<ParameterNode> Parameters, BlockStatement Body) : AstNode; 
+    public sealed record VariableDeclarationStatement(string Type, string Name, ExpressionNode? Initializer, int? ArrayLength = null, bool IsConst = false, bool IsExtern = false) : StatementNode;
     public sealed record ParameterNode(string Type, string Name) : AstNode;
     public sealed record ReturnStatement(ExpressionNode? Expression) : StatementNode;
     public sealed record ExpressionStatement(ExpressionNode Expression) : StatementNode;

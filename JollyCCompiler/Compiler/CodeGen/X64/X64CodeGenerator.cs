@@ -15,7 +15,7 @@ namespace JollyCCompiler.Compiler.CodeGen.X64
         private static readonly Dictionary<string, StructDeclarationNode> _structs = new();
         private static readonly Dictionary<string, UnionDeclarationNode> _unions = new();
         private static readonly Dictionary<string, string> _functionReturnTypes = new();
-        private static readonly Dictionary<string, (string Type, bool IsConst)> _globals = new();
+        private static readonly Dictionary<string, (string Type, bool IsConst, bool IsExtern)> _globals = new();
         private static readonly Dictionary<string, (int Length, string Type)> _globalArrays = new(StringComparer.Ordinal);
         private static readonly Dictionary<string, int> _enumConstants = new(StringComparer.Ordinal);
 
@@ -36,13 +36,33 @@ namespace JollyCCompiler.Compiler.CodeGen.X64
 
             foreach (var global in program.Globals)
             {
-                if (_globals.ContainsKey(global.Name))
-                    throw new InvalidOperationException($"Global variable '{global.Name}' is already declared.");
+                if (_globals.TryGetValue(global.Name, out var existing))
+                {
+                    if (existing.Type != global.Type)
+                    {
+                        throw new InvalidOperationException($"Global variable '{global.Name}' has conflicting types '{existing.Type}' and '{global.Type}'.");
+                    }
 
-                _globals[global.Name] = (global.Type, global.IsConst);
+                    if (existing.IsExtern && !global.IsExtern)
+                    {
+                        _globals[global.Name] = (global.Type, global.IsConst, false);
 
-                if (global.ArrayLength is int arrayLength)
-                    _globalArrays[global.Name] = (arrayLength, global.Type);
+                        if (global.ArrayLength is int arrayLength)
+                            _globalArrays[global.Name] = (arrayLength, global.Type);
+
+                        continue;
+                    }
+
+                    if (global.IsExtern)
+                        continue;
+
+                    throw new InvalidOperationException($"Global variable '{global.Name}' is already defined.");
+                }
+
+                _globals[global.Name] = (global.Type, global.IsConst, global.IsExtern);
+
+                if (global.ArrayLength is int length)
+                    _globalArrays[global.Name] = (length, global.Type);
             }
 
             foreach (var function in program.Functions)
@@ -61,6 +81,9 @@ namespace JollyCCompiler.Compiler.CodeGen.X64
 
             foreach (var global in program.Globals)
             {
+                if (global.IsExtern)
+                    continue;
+
                 data.Add(CreateGlobalDataItem(global));
             }
 
@@ -3771,7 +3794,7 @@ namespace JollyCCompiler.Compiler.CodeGen.X64
             throw new NotSupportedException($"Increment/decrement operand AST: {expression.Operand}");
         }
 
-        private static void GenerateGlobalIncrementDecrement(string name, string type, bool isConst, UnaryExpression expression, X64Emitter emitter, (string Type, bool IsConst) symbol)
+        private static void GenerateGlobalIncrementDecrement(string name, string type, bool isConst, UnaryExpression expression, X64Emitter emitter, (string Type, bool IsConst, bool IsExtern) symbol)
         {
             if (isConst)
                 throw new InvalidOperationException($"Cannot modify const variable '{name}'.");

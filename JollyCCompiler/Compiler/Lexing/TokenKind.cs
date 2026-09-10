@@ -91,7 +91,8 @@
         Sizeof,
         Const,
         Enum,
-        Typedef
+        Typedef,
+        Extern
     }
 
 }

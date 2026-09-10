@@ -64,6 +64,13 @@ namespace JollyCCompiler.Compiler.Parsing
                     if (declaration is not null)
                         _enums.Add(declaration);
                 }
+                else if (Current.Kind == TokenKind.Extern)
+                {
+                    var global = ParseVariableDeclaration();
+
+                    if (global is not null)
+                        _globals.Add(global);
+                }
                 else if (IsFunctionDeclaration())
                 {
                     var function = ParseFunction();
@@ -787,6 +794,13 @@ namespace JollyCCompiler.Compiler.Parsing
         private VariableDeclarationStatement ParseVariableDeclaration()
         {
             bool isConst = false;
+            bool isExtern = false;
+
+            if (Current.Kind == TokenKind.Extern)
+            {
+                Advance();
+                isExtern = true;
+            }
 
             if (Current.Kind == TokenKind.Const)
             {
@@ -839,7 +853,7 @@ namespace JollyCCompiler.Compiler.Parsing
 
             Expect(TokenKind.Semicolon, "Expected ';' after variable declaration.");
 
-            return new VariableDeclarationStatement(type, name.Text, initializer, arrayLength, isConst);
+            return new VariableDeclarationStatement(type, name.Text, initializer, arrayLength, isConst, isExtern);
         }
 
         private ExpressionNode ParseInitializer()
