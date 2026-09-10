@@ -460,14 +460,6 @@ namespace JollyCCompiler.Compiler.CodeGen.X64
         public byte[] GetCode()
         {
             var result = _code.ToArray();
-
-            Debug.WriteLine($"EMITTER CODE COUNT: {_code.Count}");
-
-            for (int i = 118; i <= 130 && i < _code.Count; i++)
-            {
-                Debug.WriteLine($"EMITTER _code[{i}] = {_code[i]:X2}");
-            }
-
             return result;
         }
 
@@ -1295,10 +1287,6 @@ namespace JollyCCompiler.Compiler.CodeGen.X64
             };
 
             _code.AddRange(bytes);
-
-            Debug.WriteLine($"AFTER ADD: count={_code.Count}");
-            Debug.WriteLine($"AFTER ADD: [{offset}]={_code[offset]:X2} [{offset + 1}]={_code[offset + 1]:X2} [{offset + 2}]={_code[offset + 2]:X2}");
-
             _instructions.Add(new X64Instruction(offset, bytes, "sar rax, cl"));
         }
 
@@ -2521,10 +2509,10 @@ namespace JollyCCompiler.Compiler.CodeGen.X64
 
             var bytes = new byte[]
             {
-            0x66,
-            0x0F,
-            0x6E,
-            0xC0
+                0x66,
+                0x0F,
+                0x6E,
+                0xC0
             };
 
             _code.AddRange(bytes);
@@ -2589,11 +2577,11 @@ namespace JollyCCompiler.Compiler.CodeGen.X64
 
             var bytes = new byte[]
             {
-            0x66,
-            0x48,
-            0x0F,
-            0x6E,
-            0xC0
+                0x66,
+                0x48,
+                0x0F,
+                0x6E,
+                0xC0
             };
 
             _code.AddRange(bytes);
@@ -2707,18 +2695,15 @@ namespace JollyCCompiler.Compiler.CodeGen.X64
 
             var bytes = new byte[]
             {
-            0xF3,
-            0x0F,
-            0x10,
-            0x45,
-            unchecked((byte)displacement)
+                0xF3,
+                0x0F,
+                0x10,
+                0x45,
+                unchecked((byte)displacement)
             };
 
             _code.AddRange(bytes);
-            _instructions.Add(new X64Instruction(
-                offset,
-                bytes,
-                $"movss xmm0, [rbp{FormatOffset(displacement)}]"));
+            _instructions.Add(new X64Instruction(offset, bytes, $"movss xmm0, [rbp{FormatOffset(displacement)}]"));
         }
 
         // Loads a float from an RBP-relative 32-bit displacement into XMM0.
@@ -2758,18 +2743,15 @@ namespace JollyCCompiler.Compiler.CodeGen.X64
 
             var bytes = new byte[]
             {
-            0xF3,
-            0x0F,
-            0x11,
-            0x45,
-            unchecked((byte)displacement)
+                0xF3,
+                0x0F,
+                0x11,
+                0x45,
+                unchecked((byte)displacement)
             };
 
             _code.AddRange(bytes);
-            _instructions.Add(new X64Instruction(
-                offset,
-                bytes,
-                $"movss [rbp{FormatOffset(displacement)}], xmm0"));
+            _instructions.Add(new X64Instruction(offset, bytes, $"movss [rbp{FormatOffset(displacement)}], xmm0"));
         }
 
         // Stores the float in XMM0 using an RBP-relative 32-bit displacement.
@@ -3381,17 +3363,14 @@ namespace JollyCCompiler.Compiler.CodeGen.X64
 
             var bytes = new byte[]
             {
-            0xF3,
-            0x0F,
-            0x10,
-            0xC8
+                0xF3,
+                0x0F,
+                0x10,
+                0xC8
             };
 
             _code.AddRange(bytes);
-            _instructions.Add(new X64Instruction(
-                offset,
-                bytes,
-                "movss xmm1, xmm0"));
+            _instructions.Add(new X64Instruction(offset, bytes, "movss xmm1, xmm0"));
         }
 
         // Copies a single-precision value from XMM0 to XMM2.
@@ -3461,17 +3440,14 @@ namespace JollyCCompiler.Compiler.CodeGen.X64
 
             var bytes = new byte[]
             {
-            0xF2,
-            0x0F,
-            0x10,
-            0xC8
+                0xF2,
+                0x0F,
+                0x10,
+                0xC8
             };
 
             _code.AddRange(bytes);
-            _instructions.Add(new X64Instruction(
-                offset,
-                bytes,
-                "movsd xmm1, xmm0"));
+            _instructions.Add(new X64Instruction(offset, bytes, "movsd xmm1, xmm0"));
         }
 
         // Copies a double-precision value from XMM0 to XMM2.
@@ -3998,17 +3974,14 @@ namespace JollyCCompiler.Compiler.CodeGen.X64
 
             var bytes = new byte[]
             {
-            0xF3,
-            0x0F,
-            0x5A,
-            0xC0
+                0xF3,
+                0x0F,
+                0x5A,
+                0xC0
             };
 
             _code.AddRange(bytes);
-            _instructions.Add(new X64Instruction(
-                offset,
-                bytes,
-                "cvtss2sd xmm0, xmm0"));
+            _instructions.Add(new X64Instruction(offset, bytes, "cvtss2sd xmm0, xmm0"));
         }
 
         // Converts double precision in XMM0 to single precision.
@@ -4018,17 +3991,14 @@ namespace JollyCCompiler.Compiler.CodeGen.X64
 
             var bytes = new byte[]
             {
-            0xF2,
-            0x0F,
-            0x5A,
-            0xC0
+                0xF2,
+                0x0F,
+                0x5A,
+                0xC0
             };
 
             _code.AddRange(bytes);
-            _instructions.Add(new X64Instruction(
-                offset,
-                bytes,
-                "cvtsd2ss xmm0, xmm0"));
+            _instructions.Add(new X64Instruction(offset, bytes, "cvtsd2ss xmm0, xmm0"));
         }
 
 
@@ -4043,16 +4013,13 @@ namespace JollyCCompiler.Compiler.CodeGen.X64
 
             var bytes = new byte[]
             {
-            0x0F,
-            0x2E,
-            0xC1
+                0x0F,
+                0x2E,
+                0xC1
             };
 
             _code.AddRange(bytes);
-            _instructions.Add(new X64Instruction(
-                offset,
-                bytes,
-                "ucomiss xmm0, xmm1"));
+            _instructions.Add(new X64Instruction(offset, bytes, "ucomiss xmm0, xmm1"));
         }
 
         // Performs an unordered double-precision comparison of XMM0 and XMM1.
@@ -4062,17 +4029,14 @@ namespace JollyCCompiler.Compiler.CodeGen.X64
 
             var bytes = new byte[]
             {
-            0x66,
-            0x0F,
-            0x2E,
-            0xC1
+                0x66,
+                0x0F,
+                0x2E,
+                0xC1
             };
 
             _code.AddRange(bytes);
-            _instructions.Add(new X64Instruction(
-                offset,
-                bytes,
-                "ucomisd xmm0, xmm1"));
+            _instructions.Add(new X64Instruction(offset, bytes, "ucomisd xmm0, xmm1"));
         }
 
 

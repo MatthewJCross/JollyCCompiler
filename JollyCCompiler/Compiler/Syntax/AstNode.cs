@@ -3,12 +3,11 @@
 namespace JollyCCompiler.Compiler.Syntax
 {
     public abstract record AstNode;
-    public sealed record ProgramNode(IReadOnlyList<StructDeclarationNode> Structs, IReadOnlyList<UnionDeclarationNode> Unions, IReadOnlyList<VariableDeclarationStatement> Globals, IReadOnlyList<FunctionNode> Functions) : AstNode; 
-    public sealed record FunctionNode(string ReturnType, string Name, IReadOnlyList<ParameterNode> Parameters, BlockStatement Body) : AstNode;
-    public sealed record ParameterNode(string Type, string Name) : AstNode;
+    public sealed record ProgramNode(IReadOnlyList<StructDeclarationNode> Structs, IReadOnlyList<UnionDeclarationNode> Unions, IReadOnlyList<EnumDeclarationNode> Enums, IReadOnlyList<VariableDeclarationStatement> Globals, IReadOnlyList<FunctionNode> Functions) : AstNode;
     public abstract record StatementNode : AstNode;
     public sealed record BlockStatement(IReadOnlyList<StatementNode> Statements) : StatementNode;
-    public sealed record VariableDeclarationStatement(string Type, string Name, ExpressionNode? Initializer, int? ArrayLength = null, bool IsConst = false) : StatementNode;
+    public sealed record FunctionNode(string ReturnType, string Name, IReadOnlyList<ParameterNode> Parameters, BlockStatement Body) : AstNode; public sealed record VariableDeclarationStatement(string Type, string Name, ExpressionNode? Initializer, int? ArrayLength = null, bool IsConst = false) : StatementNode;
+    public sealed record ParameterNode(string Type, string Name) : AstNode;
     public sealed record ReturnStatement(ExpressionNode? Expression) : StatementNode;
     public sealed record ExpressionStatement(ExpressionNode Expression) : StatementNode;
     public sealed record ForStatement(StatementNode? Initializer, ExpressionNode? Condition, ExpressionNode? Increment, StatementNode Body) : StatementNode;
@@ -38,4 +37,6 @@ namespace JollyCCompiler.Compiler.Syntax
     public sealed record MemberAccessExpression(ExpressionNode Object, string Member, bool ThroughPointer = false) : ExpressionNode;
     public sealed record SizeofExpression(ExpressionNode? Expression, string? Type) : ExpressionNode;
     public sealed record CastExpression(string Type, ExpressionNode Operand) : ExpressionNode;
+    public sealed record EnumMemberNode(string Name, int Value) : AstNode;
+    public sealed record EnumDeclarationNode(string? Name, IReadOnlyList<EnumMemberNode> Members) : AstNode;
 }

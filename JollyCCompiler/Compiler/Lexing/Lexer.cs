@@ -297,6 +297,8 @@ public sealed class Lexer
             "break" => TokenKind.Break,
             "continue" => TokenKind.Continue,
             "sizeof" => TokenKind.Sizeof,
+            "enum" => TokenKind.Enum,
+            "typedef" => TokenKind.Typedef,
             _ => TokenKind.Identifier
         };
 

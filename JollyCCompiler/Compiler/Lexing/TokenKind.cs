@@ -89,7 +89,9 @@
         Semicolon,
 
         Sizeof,
-        Const
+        Const,
+        Enum,
+        Typedef
     }
 
 }

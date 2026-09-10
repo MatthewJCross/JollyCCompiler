@@ -17,6 +17,7 @@ namespace JollyCCompiler.Compiler.CodeGen.X64
         private static readonly Dictionary<string, string> _functionReturnTypes = new();
         private static readonly Dictionary<string, (string Type, bool IsConst)> _globals = new();
         private static readonly Dictionary<string, (int Length, string Type)> _globalArrays = new(StringComparer.Ordinal);
+        private static readonly Dictionary<string, int> _enumConstants = new(StringComparer.Ordinal);
 
         public X64CodeGenerationResult Generate(ProgramNode program)
         {
@@ -25,6 +26,7 @@ namespace JollyCCompiler.Compiler.CodeGen.X64
             _functionReturnTypes.Clear();
             _globals.Clear();
             _globalArrays.Clear();
+            _enumConstants.Clear();
 
             foreach (var structDeclaration in program.Structs)
                 _structs[structDeclaration.Name] = structDeclaration;
@@ -45,6 +47,14 @@ namespace JollyCCompiler.Compiler.CodeGen.X64
 
             foreach (var function in program.Functions)
                 _functionReturnTypes[function.Name] = function.ReturnType;
+
+            foreach (var enumDeclaration in program.Enums)
+            {
+                foreach (var member in enumDeclaration.Members)
+                {
+                    _enumConstants[member.Name] = member.Value;
+                }
+            }
 
             var emitter = new X64Emitter();
             var data = new List<X64DataItem>();
@@ -84,13 +94,6 @@ namespace JollyCCompiler.Compiler.CodeGen.X64
             }
 
             var machineCode = emitter.GetCode();
-
-            Debug.WriteLine("GET CODE AROUND 124:");
-
-            for (int i = 118; i <= 128 && i < machineCode.Length; i++)
-            {
-                Debug.WriteLine($"GetCode[{i}] = {machineCode[i]:X2}");
-            }
 
             return new X64CodeGenerationResult(machineCode, emitter.Instructions, emitter.Fixups, data, emitter.Labels);
         }
@@ -247,6 +250,7 @@ namespace JollyCCompiler.Compiler.CodeGen.X64
             "float" => 4,
             "double" => 8,
             _ when type.EndsWith("*", StringComparison.Ordinal) => 8,
+            _ when type.StartsWith("enum ", StringComparison.Ordinal) => 4,
             _ when type.StartsWith("struct ", StringComparison.Ordinal) => GetStructSize(type[7..]),
             _ when type.StartsWith("union ", StringComparison.Ordinal) => GetUnionSize(type[6..]),
             _ => throw new NotSupportedException($"Cannot determine the size of type '{type}'.")
@@ -407,8 +411,6 @@ namespace JollyCCompiler.Compiler.CodeGen.X64
                 var isPointer = parameterType.EndsWith("*", StringComparison.Ordinal);
                 var parameterSize = GetTypeSize(parameterType);
 
-                Debug.WriteLine($"PARAM {function.Name}: index={parameterIndex}, name={parameter.Key}, type={parameterType}, offset={offset}");
-                
                 if (parameterType == "float")
                 {
                     switch (parameterIndex)
@@ -672,9 +674,14 @@ namespace JollyCCompiler.Compiler.CodeGen.X64
             if (statement.Type == "float")
             {
                 if (statement.Initializer is null)
+                {
                     emitter.MovEax(0);
+                    emitter.MovdXmm0Eax();
+                }
                 else
-                    GenerateExpression(statement.Initializer, emitter, data, variables, arrays, parameters);
+                {
+                    GenerateFloatingOperand(statement.Initializer, "float", emitter, data, variables, arrays, parameters);
+                }
 
                 emitter.MovRbpDisp8Xmm0(variable.Offset);
                 return;
@@ -683,9 +690,14 @@ namespace JollyCCompiler.Compiler.CodeGen.X64
             if (statement.Type == "double")
             {
                 if (statement.Initializer is null)
+                {
                     emitter.MovRax(0);
+                    emitter.MovqXmm0Rax();
+                }
                 else
-                    GenerateExpression(statement.Initializer, emitter, data, variables, arrays, parameters);
+                {
+                    GenerateFloatingOperand(statement.Initializer, "double", emitter, data, variables, arrays, parameters);
+                }
 
                 emitter.MovRbpDisp8Xmm0Double(variable.Offset);
                 return;
@@ -1163,6 +1175,12 @@ namespace JollyCCompiler.Compiler.CodeGen.X64
                 return;
             }
 
+            if (_enumConstants.TryGetValue(expression.Name, out var enumValue))
+            {
+                emitter.MovEax(enumValue);
+                return;
+            }
+
             throw new InvalidOperationException($"Unknown identifier '{expression.Name}'.");
         }
 
@@ -1416,7 +1434,9 @@ namespace JollyCCompiler.Compiler.CodeGen.X64
             }
         }
 
-        private static bool TryGetConstantInteger(ExpressionNode expression, out long value)
+        private static bool TryGetConstantInteger(
+            ExpressionNode expression,
+            out long value)
         {
             if (expression is IntegerExpression integer)
             {
@@ -1424,12 +1444,30 @@ namespace JollyCCompiler.Compiler.CodeGen.X64
                 return true;
             }
 
-            if (expression is UnaryExpression unary &&
-                unary.Operator == TokenKind.Minus &&
-                unary.Operand is IntegerExpression operand)
+            if (expression is IdentifierExpression identifier &&
+                _enumConstants.TryGetValue(identifier.Name, out var enumValue))
             {
-                value = -operand.Value;
+                value = enumValue;
                 return true;
+            }
+
+            if (expression is UnaryExpression unary &&
+                unary.Operator == TokenKind.Minus)
+            {
+                if (unary.Operand is IntegerExpression operand)
+                {
+                    value = -operand.Value;
+                    return true;
+                }
+
+                if (unary.Operand is IdentifierExpression enumIdentifier &&
+                    _enumConstants.TryGetValue(
+                        enumIdentifier.Name,
+                        out var negativeEnumValue))
+                {
+                    value = -negativeEnumValue;
+                    return true;
+                }
             }
 
             value = 0;
@@ -2617,9 +2655,6 @@ namespace JollyCCompiler.Compiler.CodeGen.X64
                 ? GetCommonArithmeticType(leftType, rightType)
                 : string.Empty;
 
-            Debug.WriteLine($"BITWISE DEBUG: operator={expression.Operator}, commonType={commonType}, leftType={leftType}, rightType={rightType}");
-
-
             if (commonType == "float" || commonType == "double")
             {
                 GenerateFloatingBinaryExpression(expression, commonType, emitter, data, variables, arrays, parameters);
@@ -2629,8 +2664,6 @@ namespace JollyCCompiler.Compiler.CodeGen.X64
             var is64BitOperation = commonType is "long long" or "unsigned long long";
             var isUnsignedOperation = commonType is "unsigned int" or "unsigned long" or "unsigned long long";
 
-            Debug.WriteLine($"SHIFT DEBUG: 64Bit={is64BitOperation}, Unsigned={isUnsignedOperation}, commonType={commonType}");
-            
             GenerateExpression(expression.Left, emitter, data, variables, arrays, parameters);
             emitter.PushRax();
 
@@ -2754,47 +2787,30 @@ namespace JollyCCompiler.Compiler.CodeGen.X64
                     break;
 
                 case TokenKind.ShiftRight:
-                    Debug.WriteLine($"SHIFT RIGHT EMIT: 64Bit={is64BitOperation}, Unsigned={isUnsignedOperation}, Type={commonType}");
-
                     if (is64BitOperation)
                     {
-                        Debug.WriteLine("SHIFT RIGHT EMIT: entering 64-bit branch");
-
                         if (isUnsignedOperation)
                         {
-                            Debug.WriteLine("SHIFT RIGHT EMIT: calling ShrRaxCl()");
                             emitter.ShrRaxCl();
                         }
                         else
                         {
-                            Debug.WriteLine("SHIFT RIGHT EMIT: calling SarRaxCl()");
                             emitter.SarRaxCl();
                         }
                     }
                     else
                     {
-                        Debug.WriteLine("SHIFT RIGHT EMIT: entering 32-bit branch");
-
                         if (isUnsignedOperation)
                         {
-                            Debug.WriteLine("SHIFT RIGHT EMIT: calling ShrEaxCl()");
                             emitter.ShrEaxCl();
                         }
                         else
                         {
-                            Debug.WriteLine("SHIFT RIGHT EMIT: calling SarEaxCl()");
                             emitter.SarEaxCl();
                         }
                     }
 
-                    break;
-                    
-                    //case TokenKind.ShiftRight:
-                //    if (isUnsignedOperation)
-                //        emitter.ShrEaxCl();
-                //    else
-                //        emitter.SarEaxCl();
-                //    break;
+                    break;                    
 
                 default:
                     throw new NotSupportedException($"Operator '{expression.Operator}' is not yet supported by the x64 backend.");
@@ -2854,8 +2870,7 @@ namespace JollyCCompiler.Compiler.CodeGen.X64
                         break;
 
                     default:
-                        throw new NotSupportedException(
-                            $"Floating-point operator '{expression.Operator}' is not yet supported.");
+                        throw new NotSupportedException($"Floating-point operator '{expression.Operator}' is not yet supported.");
                 }
             }
             else
@@ -3069,8 +3084,6 @@ namespace JollyCCompiler.Compiler.CodeGen.X64
 
                 if (!TryGetExpressionType(argument, variables, arrays, parameters, out var argumentType))
                     throw new InvalidOperationException("Cannot determine function argument type.");
-
-                Debug.WriteLine($"ARG {call.Name}: index={i}, type={argumentType}");
 
                 if (argumentType == "float")
                 {
@@ -4261,7 +4274,8 @@ private static void GenerateArrayIncrementDecrement(
             if (TryGetPointerType(expression, variables, arrays, parameters, out type))
                 return true;
 
-            if (expression is CallExpression call && _functionReturnTypes.TryGetValue(call.Name, out var returnType))
+            if (expression is CallExpression call &&
+                _functionReturnTypes.TryGetValue(call.Name, out var returnType))
             {
                 type = returnType;
                 return true;
@@ -4286,17 +4300,29 @@ private static void GenerateArrayIncrementDecrement(
                     type = global.Type;
                     return true;
                 }
+
+                if (_enumConstants.ContainsKey(identifier.Name))
+                {
+                    type = "int";
+                    return true;
+                }
             }
 
             if (expression is ArraySubscriptExpression subscript)
             {
-                if (subscript.Array is IdentifierExpression arrayIdentifier && arrays.TryGetValue(arrayIdentifier.Name, out var arrayInfo))
+                if (subscript.Array is IdentifierExpression arrayIdentifier &&
+                    arrays.TryGetValue(arrayIdentifier.Name, out var arrayInfo))
                 {
                     type = arrayInfo.Type;
                     return true;
                 }
 
-                if (TryGetPointerType(subscript.Array, variables, arrays, parameters, out var pointerType))
+                if (TryGetPointerType(
+                        subscript.Array,
+                        variables,
+                        arrays,
+                        parameters,
+                        out var pointerType))
                 {
                     type = pointerType[..^1];
                     return true;
@@ -4304,7 +4330,12 @@ private static void GenerateArrayIncrementDecrement(
 
                 if (subscript.Array is MemberAccessExpression arrayMember)
                 {
-                    if (!TryGetExpressionType(arrayMember.Object, variables, arrays, parameters, out var objectType))
+                    if (!TryGetExpressionType(
+                            arrayMember.Object,
+                            variables,
+                            arrays,
+                            parameters,
+                            out var objectType))
                     {
                         type = string.Empty;
                         return false;
@@ -4323,7 +4354,10 @@ private static void GenerateArrayIncrementDecrement(
 
                     if (objectType.StartsWith("union ", StringComparison.Ordinal))
                     {
-                        var field = GetUnionField(objectType, arrayMember.Member);
+                        var field = GetUnionField(
+                            objectType,
+                            arrayMember.Member);
+
                         if (field.ArrayLength is not null)
                         {
                             type = field.Type;
@@ -4332,7 +4366,10 @@ private static void GenerateArrayIncrementDecrement(
                     }
                     else if (objectType.StartsWith("struct ", StringComparison.Ordinal))
                     {
-                        var field = GetStructField(objectType, arrayMember.Member);
+                        var field = GetStructField(
+                            objectType,
+                            arrayMember.Member);
+
                         type = field.Type;
                         return true;
                     }
@@ -4341,7 +4378,12 @@ private static void GenerateArrayIncrementDecrement(
 
             if (expression is MemberAccessExpression member)
             {
-                if (!TryGetExpressionType(member.Object, variables, arrays, parameters, out var objectType))
+                if (!TryGetExpressionType(
+                        member.Object,
+                        variables,
+                        arrays,
+                        parameters,
+                        out var objectType))
                 {
                     type = string.Empty;
                     return false;
@@ -4360,12 +4402,18 @@ private static void GenerateArrayIncrementDecrement(
 
                 if (objectType.StartsWith("union ", StringComparison.Ordinal))
                 {
-                    var unionField = GetUnionField(objectType, member.Member);
+                    var unionField = GetUnionField(
+                        objectType,
+                        member.Member);
+
                     type = unionField.Type;
                     return true;
                 }
 
-                var structField = GetStructField(objectType, member.Member);
+                var structField = GetStructField(
+                    objectType,
+                    member.Member);
+
                 type = structField.Type;
                 return true;
             }
@@ -4390,12 +4438,22 @@ private static void GenerateArrayIncrementDecrement(
 
             if (expression is UnaryExpression unary)
             {
-                return TryGetExpressionType(unary.Operand, variables, arrays, parameters, out type);
+                return TryGetExpressionType(
+                    unary.Operand,
+                    variables,
+                    arrays,
+                    parameters,
+                    out type);
             }
 
             if (expression is DereferenceExpression dereference)
             {
-                if (!TryGetExpressionType(dereference.Operand, variables, arrays, parameters, out var pointerType))
+                if (!TryGetExpressionType(
+                        dereference.Operand,
+                        variables,
+                        arrays,
+                        parameters,
+                        out var pointerType))
                 {
                     type = string.Empty;
                     return false;
@@ -4413,15 +4471,37 @@ private static void GenerateArrayIncrementDecrement(
 
             if (expression is BinaryExpression binary)
             {
-                if (binary.Operator is TokenKind.EqualEqual or TokenKind.NotEqual or TokenKind.Less or TokenKind.LessEqual or TokenKind.Greater or TokenKind.GreaterEqual or TokenKind.AndAnd or TokenKind.OrOr)
+                if (binary.Operator is
+                    TokenKind.EqualEqual or
+                    TokenKind.NotEqual or
+                    TokenKind.Less or
+                    TokenKind.LessEqual or
+                    TokenKind.Greater or
+                    TokenKind.GreaterEqual or
+                    TokenKind.AndAnd or
+                    TokenKind.OrOr)
                 {
                     type = "int";
                     return true;
                 }
 
-                if (TryGetExpressionType(binary.Left, variables, arrays, parameters, out var leftType) && TryGetExpressionType(binary.Right, variables, arrays, parameters, out var rightType))
+                if (TryGetExpressionType(
+                        binary.Left,
+                        variables,
+                        arrays,
+                        parameters,
+                        out var leftType) &&
+                    TryGetExpressionType(
+                        binary.Right,
+                        variables,
+                        arrays,
+                        parameters,
+                        out var rightType))
                 {
-                    type = GetCommonArithmeticType(leftType, rightType);
+                    type = GetCommonArithmeticType(
+                        leftType,
+                        rightType);
+
                     return true;
                 }
             }

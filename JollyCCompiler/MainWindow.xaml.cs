@@ -3532,27 +3532,6 @@ namespace JollyCCompiler
                     var codeGenerator = new X64CodeGenerator();
                     var nativeCode = codeGenerator.Generate(result.Program!);
 
-                    Debug.WriteLine($"MACHINE CODE LENGTH: {nativeCode.MachineCode.Length}");
-
-                    for (int i = 0; i < nativeCode.MachineCode.Length - 2; i++)
-                    {
-                        if (nativeCode.MachineCode[i] == 0xD3 &&
-                            nativeCode.MachineCode[i + 1] == 0xF8)
-                        {
-                            Debug.WriteLine(
-                                $"MACHINE CODE: D3 F8 at {i:X}, previous={nativeCode.MachineCode[i - 1]:X2}");
-                        }
-
-                        if (nativeCode.MachineCode[i] == 0x48 &&
-                            nativeCode.MachineCode[i + 1] == 0xD3 &&
-                            nativeCode.MachineCode[i + 2] == 0xF8)
-                        {
-                            Debug.WriteLine(
-                                $"MACHINE CODE: 48 D3 F8 at {i:X}");
-                        }
-                    }
-
-
                     var outputDirectory = Path.Combine(AppContext.BaseDirectory, "output");
                     Directory.CreateDirectory(outputDirectory);
                     var executablePath = Path.Combine(outputDirectory, "JollyCProgram.exe");
@@ -3572,25 +3551,7 @@ namespace JollyCCompiler
                     output.AppendLine(executablePath);
 
                     AstOutput.Text = AstPrinter.Print(result.Program!);
-
                     NativeCodeGrid.ItemsSource = nativeCode.Instructions;
-
-                    foreach (var instruction in nativeCode.Instructions)
-                    {
-                        if (instruction.Offset >= 110 && instruction.Offset <= 140)
-                        {
-                            Debug.WriteLine(
-                                $"{instruction.Offset:X4}: {instruction.BytesText,-20} {instruction.Assembly}");
-                        }
-
-                        if (instruction.Offset >= 280 && instruction.Offset <= 305)
-                        {
-                            Debug.WriteLine(
-                                $"{instruction.Offset:X4}: {instruction.BytesText,-20} {instruction.Assembly}");
-                        }
-                    }
-
-
                     StatusText.Text = "Compile succeeded";
                 }
                 else

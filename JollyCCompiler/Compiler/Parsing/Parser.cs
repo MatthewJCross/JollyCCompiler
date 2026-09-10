@@ -13,6 +13,9 @@ namespace JollyCCompiler.Compiler.Parsing
         private readonly List<StructDeclarationNode> _structs = new();
         private readonly List<UnionDeclarationNode> _unions = new();
         private readonly List<VariableDeclarationStatement> _globals = new();
+        private readonly Dictionary<string, string> _typedefs = new(StringComparer.Ordinal);
+        private readonly List<EnumDeclarationNode> _enums = new();
+        private readonly Dictionary<string, int> _enumConstants = new(StringComparer.Ordinal); 
         private int _position;
 
         public Parser(IReadOnlyList<Token> tokens) { _tokens = tokens ?? throw new ArgumentNullException(nameof(tokens)); }
@@ -25,6 +28,9 @@ namespace JollyCCompiler.Compiler.Parsing
             _structs.Clear();
             _unions.Clear();
             _globals.Clear();
+            _typedefs.Clear();
+            _enums.Clear();
+            _enumConstants.Clear();
 
             var functions = new List<FunctionNode>();
 
@@ -33,7 +39,11 @@ namespace JollyCCompiler.Compiler.Parsing
                 var startPosition = _position;
                 var startToken = Current;
 
-                if (IsStructDeclaration())
+                if (Current.Kind == TokenKind.Typedef)
+                {
+                    ParseTypedefDeclaration();
+                }
+                else if (IsStructDeclaration())
                 {
                     var structDeclaration = ParseStructDeclaration();
 
@@ -46,6 +56,13 @@ namespace JollyCCompiler.Compiler.Parsing
 
                     if (unionDeclaration is not null)
                         _unions.Add(unionDeclaration);
+                }
+                else if (IsEnumDeclaration())
+                {
+                    var declaration = ParseEnumDeclaration();
+
+                    if (declaration is not null)
+                        _enums.Add(declaration);
                 }
                 else if (IsFunctionDeclaration())
                 {
@@ -62,18 +79,13 @@ namespace JollyCCompiler.Compiler.Parsing
                         _globals.Add(global);
                 }
 
-                //if (_position == startPosition)
-                //{
-                //    ErrorAt(startToken, $"Parser made no progress at token '{startToken.Text}' ({startToken.Kind}).");
-                //    Advance();
-                //}
-
                 if (_position == startPosition)
                     Synchronize();
             }
 
-            return new ProgramNode(_structs, _unions, _globals, functions);
+            return new ProgramNode(_structs, _unions, _enums, _globals, functions);
         }
+        
         private bool IsStructDeclaration()
         {
             return Current.Kind == TokenKind.Struct && Peek(1).Kind == TokenKind.Identifier && Peek(2).Kind == TokenKind.LeftBrace;
@@ -83,6 +95,194 @@ namespace JollyCCompiler.Compiler.Parsing
         {
             var index = Math.Min(_position + offset, _tokens.Count - 1);
             return _tokens[index];
+        }
+
+        private void ParseTypedefDeclaration()
+        {
+            Expect(
+                TokenKind.Typedef,
+                "Expected 'typedef'.");
+
+            if (Current.Kind == TokenKind.Enum &&
+                (Peek(1).Kind == TokenKind.LeftBrace ||
+                 (Peek(1).Kind == TokenKind.Identifier &&
+                  Peek(2).Kind == TokenKind.LeftBrace)))
+            {
+                var enumDeclaration = ParseEnumDeclaration(false);
+
+                if (enumDeclaration is null)
+                    return;
+
+                var typedefName = Expect(
+                    TokenKind.Identifier,
+                    "Expected typedef name after enum declaration.");
+
+                if (typedefName.Kind != TokenKind.Identifier)
+                    return;
+
+                EnumDeclarationNode storedEnum;
+
+                if (string.IsNullOrEmpty(enumDeclaration.Name))
+                {
+                    storedEnum = new EnumDeclarationNode(
+                        typedefName.Text,
+                        enumDeclaration.Members);
+                }
+                else
+                {
+                    storedEnum = enumDeclaration;
+                }
+
+                _enums.Add(storedEnum);
+
+                var enumTypeName = storedEnum.Name;
+
+                if (string.IsNullOrEmpty(enumTypeName))
+                    throw new InvalidOperationException(
+                        $"Enum typedef '{typedefName.Text}' has no enum name.");
+
+                var typedefType = $"enum {enumTypeName}";
+
+                if (_typedefs.ContainsKey(typedefName.Text))
+                {
+                    ErrorAt(
+                        typedefName,
+                        $"Typedef '{typedefName.Text}' is already declared.");
+
+                    Synchronize();
+                    return;
+                }
+
+                _typedefs[typedefName.Text] = typedefType;
+
+                Expect(
+                    TokenKind.Semicolon,
+                    "Expected ';' after typedef declaration.");
+
+                return;
+            }
+
+            var type = ParseType();
+
+            if (type is null)
+                return;
+
+            var name = Expect(
+                TokenKind.Identifier,
+                "Expected typedef name.");
+
+            if (name.Kind != TokenKind.Identifier)
+                return;
+
+            if (_typedefs.ContainsKey(name.Text))
+            {
+                ErrorAt(
+                    name,
+                    $"Typedef '{name.Text}' is already declared.");
+
+                Synchronize();
+                return;
+            }
+
+            _typedefs[name.Text] = type;
+
+            Expect(
+                TokenKind.Semicolon,
+                "Expected ';' after typedef declaration.");
+        }
+
+        private EnumDeclarationNode? ParseEnumDeclaration(bool consumeSemicolon = true)
+        {
+            Expect(
+                TokenKind.Enum,
+                "Expected 'enum'.");
+
+            string? name = null;
+
+            if (Current.Kind == TokenKind.Identifier)
+            {
+                name = Current.Text;
+                Advance();
+            }
+
+            Expect(
+                TokenKind.LeftBrace,
+                "Expected '{' after enum name.");
+
+            var members = new List<EnumMemberNode>();
+            var nextValue = 0;
+
+            while (Current.Kind != TokenKind.RightBrace &&
+                   Current.Kind != TokenKind.EndOfFile)
+            {
+                var memberName = Expect(
+                    TokenKind.Identifier,
+                    "Expected enum member name.");
+
+                if (memberName.Kind != TokenKind.Identifier)
+                    return null;
+
+                var value = nextValue;
+
+                if (Current.Kind == TokenKind.Equals)
+                {
+                    Advance();
+
+                    var valueToken = Expect(
+                        TokenKind.IntegerLiteral,
+                        "Expected integer value for enum member.");
+
+                    if (valueToken.Kind != TokenKind.IntegerLiteral)
+                        return null;
+
+                    value = int.Parse(valueToken.Text);
+                }
+
+                if (_enumConstants.ContainsKey(memberName.Text))
+                {
+                    ErrorAt(
+                        memberName,
+                        $"Enum constant '{memberName.Text}' is already declared.");
+                }
+                else
+                {
+                    _enumConstants[memberName.Text] = value;
+                }
+
+                members.Add(
+                    new EnumMemberNode(
+                        memberName.Text,
+                        value));
+
+                nextValue = value + 1;
+
+                if (Current.Kind == TokenKind.Comma)
+                {
+                    Advance();
+
+                    if (Current.Kind == TokenKind.RightBrace)
+                        break;
+
+                    continue;
+                }
+
+                break;
+            }
+
+            Expect(
+                TokenKind.RightBrace,
+                "Expected '}' after enum members.");
+
+            if (consumeSemicolon)
+            {
+                Expect(
+                    TokenKind.Semicolon,
+                    "Expected ';' after enum declaration.");
+            }
+
+            return new EnumDeclarationNode(
+                name,
+                members);
         }
 
         private StructDeclarationNode? ParseStructDeclaration()
@@ -165,6 +365,91 @@ namespace JollyCCompiler.Compiler.Parsing
             Expect(TokenKind.RightBrace, "Expected '}' after union fields."); 
             Expect(TokenKind.Semicolon, "Expected ';' after union declaration.");
             return new UnionDeclarationNode(name.Text, fields); 
+        }
+
+        private bool IsEnumDeclaration()
+        {
+            if (Current.Kind != TokenKind.Enum)
+                return false;
+
+            if (Peek(1).Kind == TokenKind.LeftBrace)
+                return true;
+
+            return Peek(1).Kind == TokenKind.Identifier && Peek(2).Kind == TokenKind.LeftBrace;
+        }
+
+        private EnumDeclarationNode? ParseEnumDeclaration()
+        {
+            Expect(TokenKind.Enum, "Expected 'enum'.");
+
+            string? name = null;
+
+            if (Current.Kind == TokenKind.Identifier)
+            {
+                name = Current.Text;
+                Advance();
+            }
+
+            Expect(TokenKind.LeftBrace, "Expected '{' after enum name.");
+
+            var members = new List<EnumMemberNode>();
+
+            var nextValue = 0;
+
+            while (Current.Kind != TokenKind.RightBrace && Current.Kind != TokenKind.EndOfFile)
+            {
+                var memberName = Expect(TokenKind.Identifier, "Expected enum member name.");
+
+                if (memberName.Kind != TokenKind.Identifier)
+                    return null;
+
+                var value = nextValue;
+
+                if (Current.Kind == TokenKind.Equals)
+                {
+                    Advance();
+
+                    var valueToken = Expect(TokenKind.IntegerLiteral, "Expected integer value for enum member.");
+
+                    if (valueToken.Kind != TokenKind.IntegerLiteral)
+                        return null;
+
+                    value = int.Parse(valueToken.Text);
+                }
+
+                if (_enumConstants.ContainsKey(memberName.Text))
+                {
+                    ErrorAt(memberName, $"Enum constant '{memberName.Text}' is already declared.");
+                }
+                else
+                {
+                    _enumConstants[memberName.Text] = value;
+                }
+
+                members.Add(
+                    new EnumMemberNode(
+                        memberName.Text,
+                        value));
+
+                nextValue = value + 1;
+
+                if (Current.Kind == TokenKind.Comma)
+                {
+                    Advance();
+
+                    if (Current.Kind == TokenKind.RightBrace)
+                        break;
+
+                    continue;
+                }
+
+                break;
+            }
+
+            Expect(TokenKind.RightBrace, "Expected '}' after enum members.");
+            Expect(TokenKind.Semicolon, "Expected ';' after enum declaration.");
+
+            return new EnumDeclarationNode(name, members);
         }
 
         private bool IsFunctionDeclaration()
@@ -358,6 +643,22 @@ namespace JollyCCompiler.Compiler.Parsing
 
                 type = $"union {name.Text}";
             }
+            else if (Current.Kind == TokenKind.Identifier && _typedefs.TryGetValue(Current.Text, out var typedefType))
+            {
+                Advance();
+                type = typedefType;
+            }
+            else if (Current.Kind == TokenKind.Enum)
+            {
+                Advance();
+
+                var name = Expect(TokenKind.Identifier, "Expected enum name.");
+
+                if (name.Kind != TokenKind.Identifier)
+                    return null;
+
+                type = $"enum {name.Text}";
+            }
             else
             {
                 return ReportTypeError();
@@ -410,20 +711,24 @@ namespace JollyCCompiler.Compiler.Parsing
             if (IsStructDeclaration())
             {
                 var declaration = ParseStructDeclaration();
+
                 if (declaration is not null)
                     _structs.Add(declaration);
+
                 return null;
             }
 
             if (IsUnionDeclaration())
             {
                 var declaration = ParseUnionDeclaration();
+
                 if (declaration is not null)
                     _unions.Add(declaration);
+
                 return null;
             }
 
-            if (Current.Kind is TokenKind.Const or TokenKind.Short or TokenKind.Int or TokenKind.Char or TokenKind.Float or TokenKind.Double or TokenKind.Long or TokenKind.Unsigned or TokenKind.Struct or TokenKind.Union)
+            if (IsTypeName())
                 return ParseVariableDeclaration();
 
             if (Current.Kind == TokenKind.For)
@@ -466,6 +771,19 @@ namespace JollyCCompiler.Compiler.Parsing
             return new ExpressionStatement(expression);
         }
 
+        private bool IsTypeName()
+        {
+            if (Current.Kind == TokenKind.Const)
+                return true;
+
+            if (Current.Kind is TokenKind.Short or TokenKind.Int or TokenKind.Char or TokenKind.Float or TokenKind.Double or TokenKind.Long or TokenKind.Unsigned or TokenKind.Void or TokenKind.Struct or TokenKind.Union or TokenKind.Enum)
+            {
+                return true;
+            }
+
+            return Current.Kind == TokenKind.Identifier && _typedefs.ContainsKey(Current.Text);
+        }
+
         private VariableDeclarationStatement ParseVariableDeclaration()
         {
             bool isConst = false;
@@ -476,7 +794,12 @@ namespace JollyCCompiler.Compiler.Parsing
                 isConst = true;
             }
 
-            var type = ParseType()!;
+            var type = ParseType();
+
+            if (type is null)
+            {
+                throw new InvalidOperationException($"Expected a valid type at token '{Current.Text}' ({Current.Kind}).");
+            }
 
             var name = Expect(TokenKind.Identifier, "Expected variable name.");
 
@@ -491,9 +814,13 @@ namespace JollyCCompiler.Compiler.Parsing
                     var lengthToken = Advance();
 
                     if (int.TryParse(lengthToken.Text, out var length))
+                    {
                         arrayLength = length;
+                    }
                     else
+                    {
                         ErrorAt(lengthToken, $"Invalid array size '{lengthToken.Text}'.");
+                    }
                 }
 
                 Expect(TokenKind.RightBracket, "Expected ']' after array declaration.");
@@ -908,26 +1235,40 @@ namespace JollyCCompiler.Compiler.Parsing
             if (Current.Kind == TokenKind.Sizeof)
             {
                 Advance();
+
                 Expect(TokenKind.LeftParen, "Expected '(' after 'sizeof'.");
 
-                if (Current.Kind is TokenKind.Short or TokenKind.Int or TokenKind.Char or TokenKind.Long or TokenKind.Unsigned or TokenKind.Void or TokenKind.Float or TokenKind.Double or TokenKind.Struct or TokenKind.Union)
+                if (Current.Kind is
+                    TokenKind.Short or
+                    TokenKind.Int or
+                    TokenKind.Char or
+                    TokenKind.Long or
+                    TokenKind.Unsigned or
+                    TokenKind.Void or
+                    TokenKind.Float or
+                    TokenKind.Double or
+                    TokenKind.Struct or
+                    TokenKind.Union or
+                    TokenKind.Enum ||
+                    (Current.Kind == TokenKind.Identifier && _typedefs.ContainsKey(Current.Text)))
                 {
                     var type = ParseType();
                     Expect(TokenKind.RightParen, "Expected ')' after sizeof type.");
+
                     return new SizeofExpression(null, type);
                 }
 
                 var expression = ParseExpression();
+
                 Expect(TokenKind.RightParen, "Expected ')' after sizeof expression.");
+
                 return new SizeofExpression(expression, null);
             }
 
             if (Current.Kind == TokenKind.LeftParen && IsCastType(Peek(1).Kind))
             {
                 Advance();
-
                 var type = ParseType();
-
                 Expect(TokenKind.RightParen, "Expected ')' after cast type.");
 
                 return new CastExpression(type, ParseUnary());
@@ -949,6 +1290,7 @@ namespace JollyCCompiler.Compiler.Parsing
             {
                 var op = Current.Kind;
                 Advance();
+
                 return new UnaryExpression(op, ParseUnary());
             }
 
@@ -1460,7 +1802,7 @@ namespace JollyCCompiler.Compiler.Parsing
             return new SwitchStatement(expression, cases); 
         }
 
-        private static bool TryGetConstantInteger(ExpressionNode expression, out long value)
+        private bool TryGetConstantInteger(ExpressionNode expression, out long value)
         {
             if (expression is IntegerExpression integer)
             {
@@ -1468,11 +1810,21 @@ namespace JollyCCompiler.Compiler.Parsing
                 return true;
             }
 
-            if (expression is UnaryExpression unary &&
-                unary.Operator == TokenKind.Minus &&
-                unary.Operand is IntegerExpression operand)
+            if (expression is IdentifierExpression identifier && _enumConstants.TryGetValue(identifier.Name, out var enumValue))
+            {
+                value = enumValue;
+                return true;
+            }
+
+            if (expression is UnaryExpression unary && unary.Operator == TokenKind.Minus && unary.Operand is IntegerExpression operand)
             {
                 value = -operand.Value;
+                return true;
+            }
+
+            if (expression is UnaryExpression enumUnary && enumUnary.Operator == TokenKind.Minus && enumUnary.Operand is IdentifierExpression enumIdentifier && _enumConstants.TryGetValue(enumIdentifier.Name, out var negativeEnumValue))
+            {
+                value = -negativeEnumValue;
                 return true;
             }
 

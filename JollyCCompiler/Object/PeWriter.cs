@@ -45,25 +45,7 @@ namespace JollyCCompiler.Object
             PatchRelative32(startup, mainCallDispOffset, TextRva + (uint)(mainCallDispOffset + 4), mainRva); 
             byte[] text = new byte[AlignUp(entryStubSize + result.MachineCode.Length, (int)FileAlignment)];
 
-            Debug.WriteLine("PE MACHINE CODE DIRECT:");
-
-            for (int i = 118; i <= 128 && i < result.MachineCode.Length; i++)
-            {
-                Debug.WriteLine(
-                    $"MachineCode[{i}] = {result.MachineCode[i]:X2}");
-            }
-
-            Buffer.BlockCopy(result.MachineCode, 0, text, entryStubSize, result.MachineCode.Length);
-            
-            Debug.WriteLine($"PE TEXT COPY: entryStubSize={entryStubSize:X}");
-            Debug.WriteLine($"PE TEXT COPY: machineCodeLength={result.MachineCode.Length}");
-
-            for (int i = 120; i < 130 && i < result.MachineCode.Length; i++)
-            {
-                Debug.WriteLine($"PE TEXT SOURCE [{i:X3}] = {result.MachineCode[i]:X2}");
-            }
-
-
+            Buffer.BlockCopy(result.MachineCode, 0, text, entryStubSize, result.MachineCode.Length);            
             Buffer.BlockCopy(startup, 0, text, 0, startup.Length); 
             Buffer.BlockCopy(result.MachineCode, 0, text, entryStubSize, result.MachineCode.Length); 
             uint textVirtualSize = (uint)text.Length; 
