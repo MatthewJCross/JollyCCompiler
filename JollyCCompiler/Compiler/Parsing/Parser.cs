@@ -492,11 +492,13 @@ namespace JollyCCompiler.Compiler.Parsing
         private FunctionNode? ParseFunction()
         {
             var returnType = ParseType();
-            if (returnType is null) 
+
+            if (returnType is null)
                 return null;
 
             var name = Expect(TokenKind.Identifier, "Expected function name.");
-            if (name.Kind != TokenKind.Identifier) 
+
+            if (name.Kind != TokenKind.Identifier)
                 return null;
 
             Expect(TokenKind.LeftParen, "Expected '(' after function name.");
@@ -507,26 +509,54 @@ namespace JollyCCompiler.Compiler.Parsing
             {
                 while (true)
                 {
-                    var type = ParseType();
-                    if (type is null)
+                    var parameterType = ParseType();
+
+                    if (parameterType is null)
                         return null;
 
-                    var parameterName = Expect(TokenKind.Identifier, "Expected parameter name.");
-                    if (parameterName.Kind != TokenKind.Identifier)
-                        return null;
+                    string parameterName;
 
-                    if (Current.Kind == TokenKind.LeftBracket)
+                    if (IsFunctionPointerDeclarator())
                     {
-                        Advance();
+                        var functionPointerType = ParseFunctionPointerType(
+                            parameterType,
+                            out parameterName);
 
-                        if (Current.Kind == TokenKind.IntegerLiteral)
+                        if (functionPointerType is null)
+                            return null;
+
+                        parameterType = functionPointerType;
+                    }
+                    else
+                    {
+                        var parameterNameToken = Expect(
+                            TokenKind.Identifier,
+                            "Expected parameter name.");
+
+                        if (parameterNameToken.Kind != TokenKind.Identifier)
+                            return null;
+
+                        parameterName = parameterNameToken.Text;
+
+                        if (Current.Kind == TokenKind.LeftBracket)
+                        {
                             Advance();
 
-                        Expect(TokenKind.RightBracket, "Expected ']' after array parameter.");
-                        type += "*";
+                            if (Current.Kind == TokenKind.IntegerLiteral)
+                                Advance();
+
+                            Expect(
+                                TokenKind.RightBracket,
+                                "Expected ']' after array parameter.");
+
+                            parameterType += "*";
+                        }
                     }
 
-                    parameters.Add(new ParameterNode(type, parameterName.Text));
+                    parameters.Add(
+                        new ParameterNode(
+                            parameterType,
+                            parameterName));
 
                     if (Current.Kind != TokenKind.Comma)
                         break;
@@ -541,11 +571,17 @@ namespace JollyCCompiler.Compiler.Parsing
                 }
             }
 
-            Expect(TokenKind.RightParen, "Expected ')' after parameters.");
+            Expect(
+                TokenKind.RightParen,
+                "Expected ')' after parameters.");
 
             var body = ParseBlock();
 
-            return new FunctionNode(returnType, name.Text, parameters, body);
+            return new FunctionNode(
+                returnType,
+                name.Text,
+                parameters,
+                body);
         }
 
         private string? ParseType()
@@ -791,6 +827,62 @@ namespace JollyCCompiler.Compiler.Parsing
             return Current.Kind == TokenKind.Identifier && _typedefs.ContainsKey(Current.Text);
         }
 
+        private bool IsFunctionPointerDeclarator()
+        {
+            return Current.Kind == TokenKind.LeftParen && Peek(1).Kind == TokenKind.Star && Peek(2).Kind == TokenKind.Identifier;
+        }
+
+        private string? ParseFunctionPointerType(string returnType, out string name)
+        {
+            name = string.Empty;
+
+            Expect(TokenKind.LeftParen, "Expected '(' before function pointer declarator.");
+            Expect(TokenKind.Star, "Expected '*' in function pointer declarator.");
+
+            var nameToken = Expect(TokenKind.Identifier, "Expected function pointer name.");
+
+            if (nameToken.Kind != TokenKind.Identifier)
+                return null;
+
+            name = nameToken.Text;
+
+            Expect(TokenKind.RightParen, "Expected ')' after function pointer name.");
+            Expect(TokenKind.LeftParen, "Expected '(' before function pointer parameters.");
+
+            var parameterTypes = new List<string>();
+
+            if (Current.Kind != TokenKind.RightParen)
+            {
+                while (true)
+                {
+                    var parameterType = ParseType();
+
+                    if (parameterType is null)
+                        return null;
+
+                    if (Current.Kind == TokenKind.Identifier)
+                        Advance();
+
+                    parameterTypes.Add(parameterType);
+
+                    if (Current.Kind != TokenKind.Comma)
+                        break;
+
+                    Advance();
+
+                    if (Current.Kind == TokenKind.RightParen)
+                    {
+                        Error("Expected parameter after ','.");
+                        break;
+                    }
+                }
+            }
+
+            Expect(TokenKind.RightParen, "Expected ')' after function pointer parameters.");
+
+            return $"function*({returnType})({string.Join(",", parameterTypes)})";
+        }
+
         private VariableDeclarationStatement ParseVariableDeclaration()
         {
             bool isConst = false;
@@ -815,7 +907,30 @@ namespace JollyCCompiler.Compiler.Parsing
                 throw new InvalidOperationException($"Expected a valid type at token '{Current.Text}' ({Current.Kind}).");
             }
 
-            var name = Expect(TokenKind.Identifier, "Expected variable name.");
+            string name;
+
+            if (IsFunctionPointerDeclarator())
+            {
+                var functionPointerType = ParseFunctionPointerType(type, out name);
+
+                if (functionPointerType is null)
+                {
+                    throw new InvalidOperationException($"Invalid function pointer declaration at token '{Current.Text}' ({Current.Kind}).");
+                }
+
+                type = functionPointerType;
+            }
+            else
+            {
+                var nameToken = Expect(TokenKind.Identifier, "Expected variable name.");
+
+                if (nameToken.Kind != TokenKind.Identifier)
+                {
+                    throw new InvalidOperationException($"Expected variable name at token '{Current.Text}' ({Current.Kind}).");
+                }
+
+                name = nameToken.Text;
+            }
 
             int? arrayLength = null;
 
@@ -853,7 +968,7 @@ namespace JollyCCompiler.Compiler.Parsing
 
             Expect(TokenKind.Semicolon, "Expected ';' after variable declaration.");
 
-            return new VariableDeclarationStatement(type, name.Text, initializer, arrayLength, isConst, isExtern);
+            return new VariableDeclarationStatement(type, name, initializer, arrayLength, isConst, isExtern);
         }
 
         private ExpressionNode ParseInitializer()

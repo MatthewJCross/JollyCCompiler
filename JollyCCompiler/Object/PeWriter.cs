@@ -65,15 +65,27 @@ namespace JollyCCompiler.Object
                 if (fixup.Kind == X64FixupKind.RipRelative32)
                 {
                     uint targetRva;
-                    if (!dataSymbolRvas.TryGetValue(fixup.Symbol, out targetRva))
+
+                    if (dataSymbolRvas.TryGetValue(fixup.Symbol, out targetRva))
                     {
-                        if (string.Equals(fixup.Symbol, "printf", StringComparison.Ordinal))
-                            targetRva = printfIatRva;
-                        else if (string.Equals(fixup.Symbol, "ExitProcess", StringComparison.Ordinal))
-                            targetRva = exitProcessIatRva;
-                        else
-                            throw new InvalidOperationException($"Unknown x64 RIP-relative fixup symbol '{fixup.Symbol}'.");
                     }
+                    else if (result.Labels.TryGetValue(fixup.Symbol, out int targetOffset))
+                    {
+                        targetRva = TextRva + (uint)entryStubSize + (uint)targetOffset;
+                    }
+                    else if (string.Equals(fixup.Symbol, "printf", StringComparison.Ordinal))
+                    {
+                        targetRva = printfIatRva;
+                    }
+                    else if (string.Equals(fixup.Symbol, "ExitProcess", StringComparison.Ordinal))
+                    {
+                        targetRva = exitProcessIatRva;
+                    }
+                    else
+                    {
+                        throw new InvalidOperationException($"Unknown x64 RIP-relative fixup symbol '{fixup.Symbol}'.");
+                    }
+
                     uint instructionRva = TextRva + (uint)entryStubSize + (uint)fixup.Offset;
                     uint nextInstructionRva = instructionRva + 4;
                     int displacement = checked((int)((long)targetRva - nextInstructionRva));

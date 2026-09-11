@@ -4619,6 +4619,13 @@ namespace JollyCCompiler.Compiler.CodeGen.X64
             Jmp(label);
         }
 
+        // Emits an indirect call through the address stored in RAX.
+        // Used for function-pointer calls where RAX contains the target function address.
+        public void CallRax()
+        {
+            EmitBytes(0xFF, 0xD0);
+        }
+
 
         // ------------------------------------------------------------
         // Raw machine-code emission

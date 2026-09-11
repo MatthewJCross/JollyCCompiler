@@ -272,6 +272,7 @@ namespace JollyCCompiler.Compiler.CodeGen.X64
             "unsigned long long" => 8,
             "float" => 4,
             "double" => 8,
+            _ when type.StartsWith("function*(", StringComparison.Ordinal) => 8,
             _ when type.EndsWith("*", StringComparison.Ordinal) => 8,
             _ when type.StartsWith("enum ", StringComparison.Ordinal) => 4,
             _ when type.StartsWith("struct ", StringComparison.Ordinal) => GetStructSize(type[7..]),
@@ -1201,6 +1202,12 @@ namespace JollyCCompiler.Compiler.CodeGen.X64
             if (_enumConstants.TryGetValue(expression.Name, out var enumValue))
             {
                 emitter.MovEax(enumValue);
+                return;
+            }
+
+            if (_functionReturnTypes.ContainsKey(expression.Name))
+            {
+                emitter.LeaRaxRipRelative($"$fn_{expression.Name}");
                 return;
             }
 
@@ -3203,7 +3210,22 @@ namespace JollyCCompiler.Compiler.CodeGen.X64
                 }
             }
 
-            emitter.CallRelative($"$fn_{call.Name}");
+            if (variables.TryGetValue(call.Name, out var functionPointer))
+            {
+                emitter.MovRaxRbpDisp8(functionPointer.Offset);
+                emitter.CallRax();
+            }
+            else if (parameters.TryGetValue(call.Name, out var functionPointerParameter))
+            {
+                var parameterOffset = -(functionPointerParameter.Index + 1) * 8;
+                emitter.MovRaxRbpDisp8(parameterOffset);
+                emitter.CallRax();
+            }
+            else
+            {
+                emitter.CallRelative($"$fn_{call.Name}");
+            }
+
             emitter.AddRsp(totalBytes);
         }
 
