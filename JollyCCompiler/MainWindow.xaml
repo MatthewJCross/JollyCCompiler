@@ -4,8 +4,9 @@
         xmlns:d="http://schemas.microsoft.com/expression/blend/2008"
         xmlns:mc="http://schemas.openxmlformats.org/markup-compatibility/2006"
         xmlns:local="clr-namespace:JollyCCompiler"
+        xmlns:controls="clr-namespace:JollyCCompiler.GUI.Controls"
         mc:Ignorable="d"
-        Title="JollyC Compiler" Width="1200" Height="1000" MinWidth="900" MinHeight="600" WindowStartupLocation="CenterScreen">
+        Title="JollyC Compiler" Width="1800" Height="1200" MinWidth="900" MinHeight="600" WindowStartupLocation="CenterScreen">
     <DockPanel>
         <Menu DockPanel.Dock="Top">
             <MenuItem Header="_File">
@@ -31,11 +32,19 @@
         </ToolBar>
 
         <StatusBar DockPanel.Dock="Bottom">
-            <StatusBarItem>
-                <TextBlock x:Name="StatusText" Text="Ready"/>
+            <StatusBarItem HorizontalContentAlignment="Stretch">
+                <Grid>
+                    <Grid.ColumnDefinitions>
+                        <ColumnDefinition Width="*"/>
+                        <ColumnDefinition Width="Auto"/>
+                    </Grid.ColumnDefinitions>
+
+                    <TextBlock x:Name="StatusText" Text="Ready" VerticalAlignment="Center" Grid.Column="0"/>
+                    <TextBlock x:Name="CursorPositionText" Text="Ln: 1, Col: 1" Margin="12,0,12,0" VerticalAlignment="Center" Grid.Column="1"/>
+                </Grid>
             </StatusBarItem>
         </StatusBar>
-
+        
         <Grid Margin="8">
             <Grid.RowDefinitions>
                 <RowDefinition Height="*"/>
@@ -48,7 +57,7 @@
             </Grid.ColumnDefinitions>
 
             <GroupBox Header="C Source" Grid.Row="0" Grid.Column="0" Margin="0,0,6,6">
-                <TextBox x:Name="Editor" FontFamily="Consolas" FontSize="15" AcceptsReturn="True" AcceptsTab="True" HorizontalScrollBarVisibility="Auto" VerticalScrollBarVisibility="Auto" TextWrapping="NoWrap" Padding="10"/>
+                <controls:CodeEditorControl x:Name="Editor"/>            
             </GroupBox>
 
             <GroupBox Header="Tokens" Grid.Row="0" Grid.Column="1" Margin="6,0,0,6">

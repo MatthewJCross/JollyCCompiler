@@ -26,8 +26,14 @@ namespace JollyCCompiler
 
             Editor.Text = SampleSource;
             StatusText.Text = "Ready";
+
+            Editor.CursorPositionChanged += CodeEditor_CursorPositionChanged;
         }
 
+        private void CodeEditor_CursorPositionChanged(object? sender, EventArgs e)
+        {
+            CursorPositionText.Text = $"Ln: {Editor.CurrentLine}, Col: {Editor.CurrentColumn}";
+        }
 
         private static string SampleSource =>
         """

@@ -3173,10 +3173,13 @@ namespace JollyCCompiler.Compiler.CodeGen.X64
                     argument is IdentifierExpression identifier &&
                     (
                         arrays.ContainsKey(identifier.Name) ||
+                        _functionReturnTypes.ContainsKey(identifier.Name) ||
                         (variables.TryGetValue(identifier.Name, out var variable) &&
-                         variable.Type.EndsWith("*", StringComparison.Ordinal)) ||
+                         (variable.Type.EndsWith("*", StringComparison.Ordinal) ||
+                          variable.Type.StartsWith("function*", StringComparison.Ordinal))) ||
                         (parameters.TryGetValue(identifier.Name, out var parameter) &&
-                         parameter.Type.EndsWith("*", StringComparison.Ordinal))
+                         (parameter.Type.EndsWith("*", StringComparison.Ordinal) ||
+                          parameter.Type.StartsWith("function*", StringComparison.Ordinal)))
                     ) ||
                     argument is AddressOfExpression ||
                     argument is ArraySubscriptExpression;
@@ -4351,12 +4354,17 @@ private static void GenerateArrayIncrementDecrement(
                     type = "int";
                     return true;
                 }
+
+                if (_functionReturnTypes.ContainsKey(identifier.Name))
+                {
+                    type = "function*";
+                    return true;
+                }
             }
 
             if (expression is ArraySubscriptExpression subscript)
             {
-                if (subscript.Array is IdentifierExpression arrayIdentifier &&
-                    arrays.TryGetValue(arrayIdentifier.Name, out var arrayInfo))
+                if (subscript.Array is IdentifierExpression arrayIdentifier && arrays.TryGetValue(arrayIdentifier.Name, out var arrayInfo))
                 {
                     type = arrayInfo.Type;
                     return true;
