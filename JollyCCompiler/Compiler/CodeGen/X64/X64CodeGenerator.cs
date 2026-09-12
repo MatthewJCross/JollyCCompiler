@@ -1,4 +1,4 @@
-﻿using JollyCCompiler.Compiler.Lexing;
+using JollyCCompiler.Compiler.Lexing;
 using JollyCCompiler.Compiler.Syntax;
 using System.Diagnostics;
 using System.Reflection.Metadata;
@@ -19,6 +19,8 @@ namespace JollyCCompiler.Compiler.CodeGen.X64
         private static readonly Dictionary<string, (int Length, string Type)> _globalArrays = new(StringComparer.Ordinal);
         private static readonly Dictionary<string, int> _enumConstants = new(StringComparer.Ordinal);
 
+        private static int _stringLiteralCounter;
+
         public X64CodeGenerationResult Generate(ProgramNode program)
         {
             _structs.Clear();
@@ -27,7 +29,7 @@ namespace JollyCCompiler.Compiler.CodeGen.X64
             _globals.Clear();
             _globalArrays.Clear();
             _enumConstants.Clear();
-
+            _stringLiteralCounter = 0;
             foreach (var structDeclaration in program.Structs)
                 _structs[structDeclaration.Name] = structDeclaration;
 
@@ -46,7 +48,6 @@ namespace JollyCCompiler.Compiler.CodeGen.X64
                     if (existing.IsExtern && !global.IsExtern)
                     {
                         _globals[global.Name] = (global.Type, global.IsConst, false);
-
                         if (global.ArrayLength is int arrayLength)
                             _globalArrays[global.Name] = (arrayLength, global.Type);
 
@@ -60,7 +61,6 @@ namespace JollyCCompiler.Compiler.CodeGen.X64
                 }
 
                 _globals[global.Name] = (global.Type, global.IsConst, global.IsExtern);
-
                 if (global.ArrayLength is int length)
                     _globalArrays[global.Name] = (length, global.Type);
             }
@@ -78,21 +78,22 @@ namespace JollyCCompiler.Compiler.CodeGen.X64
 
             var emitter = new X64Emitter();
             var data = new List<X64DataItem>();
-
             foreach (var global in program.Globals)
             {
                 if (global.IsExtern)
                     continue;
 
-                data.Add(CreateGlobalDataItem(global));
+                data.Add(CreateGlobalDataItem(global, data));
             }
 
             var main = program.Functions.FirstOrDefault(f => f.Name == "main");
-
             if (main is null)
                 throw new InvalidOperationException("Program does not contain a main function.");
 
-            var functions = new List<FunctionNode> { main };
+            var functions = new List<FunctionNode>
+            {
+                main
+            };
 
             foreach (var function in program.Functions)
             {
@@ -105,11 +106,8 @@ namespace JollyCCompiler.Compiler.CodeGen.X64
                 var variables = new Dictionary<string, (int Offset, string Type, bool IsConst)>();
                 var arrays = new Dictionary<string, (int Length, string Type)>();
                 var parameters = new Dictionary<string, (int Index, string Type)>();
-
                 CollectParameters(function, parameters);
-
                 var frameSize = CollectVariables(function, variables, arrays);
-
                 if (frameSize > 0)
                     frameSize = ((frameSize + 15) / 16) * 16;
 
@@ -117,12 +115,32 @@ namespace JollyCCompiler.Compiler.CodeGen.X64
             }
 
             var machineCode = emitter.GetCode();
-
             return new X64CodeGenerationResult(machineCode, emitter.Instructions, emitter.Fixups, data, emitter.Labels);
         }
 
-        private static X64DataItem CreateGlobalDataItem(VariableDeclarationStatement global)
+        private static X64DataItem CreateGlobalDataItem(VariableDeclarationStatement global, List<X64DataItem> additionalData)
         {
+            if (global.Initializer is StringExpression pointerStringExpression && global.ArrayLength is null)
+            {
+                if (!global.Type.EndsWith("*", StringComparison.Ordinal))
+                {
+                    throw new NotSupportedException($"String initializer for global '{global.Name}' requires a char pointer or char array.");
+                }
+
+                string baseType = global.Type.TrimEnd('*').Trim();
+                if (!IsCharType(baseType))
+                {
+                    throw new NotSupportedException($"String initializer for global '{global.Name}' requires a char pointer.");
+                }
+
+                string stringSymbol = CreateStringLiteralSymbol();
+                additionalData.Add(CreateStringDataItem(stringSymbol, pointerStringExpression.Value));
+                return new X64DataItem(global.Name, new byte[8], new[]
+                {
+                    new X64DataRelocation(0, stringSymbol)
+                });
+            }
+
             if (global.ArrayLength is int arrayLength)
             {
                 if (arrayLength < 0)
@@ -130,28 +148,39 @@ namespace JollyCCompiler.Compiler.CodeGen.X64
 
                 var elementSize = GetTypeSize(global.Type);
                 var bytes = new byte[checked(elementSize * arrayLength)];
-
                 if (global.Initializer is null)
                     return new X64DataItem(global.Name, bytes);
 
+                if (global.Initializer is StringExpression stringExpression)
+                {
+                    if (!IsCharType(global.Type))
+                        throw new NotSupportedException($"Global string initializer for '{global.Name}' requires a char array.");
+
+                    var stringBytes = Encoding.UTF8.GetBytes(stringExpression.Value);
+                    if (stringBytes.Length + 1 > arrayLength)
+                    {
+                        throw new InvalidOperationException($"String initializer for global array '{global.Name}' is too long. Array has {arrayLength} elements but the string requires " + $"{stringBytes.Length + 1} bytes including the terminating null.");
+                    }
+
+                    Buffer.BlockCopy(stringBytes, 0, bytes, 0, stringBytes.Length);
+                    bytes[stringBytes.Length] = 0;
+                    return new X64DataItem(global.Name, bytes);
+                }
+
                 if (global.Initializer is not InitializerListExpression initializerList)
                 {
-                    throw new NotSupportedException("Global array initializer for '{global.Name}' must be an initializer list.");
+                    throw new NotSupportedException($"Global array initializer for '{global.Name}' must be an initializer list or string literal.");
                 }
 
                 if (initializerList.Elements.Count > arrayLength)
                 {
-                    throw new InvalidOperationException(
-                        $"Too many initializers for global array '{global.Name}'. " +
-                        $"Array has {arrayLength} elements but " +
-                        $"{initializerList.Elements.Count} were provided.");
+                    throw new InvalidOperationException($"Too many initializers for global array '{global.Name}'. Array has {arrayLength} elements but " + $"{initializerList.Elements.Count} were provided.");
                 }
 
                 for (int i = 0; i < initializerList.Elements.Count; i++)
                 {
                     var initializer = initializerList.Elements[i];
                     var elementBytes = new byte[elementSize];
-
                     switch (initializer)
                     {
                         case IntegerExpression integer:
@@ -163,10 +192,7 @@ namespace JollyCCompiler.Compiler.CodeGen.X64
                             break;
 
                         default:
-                            throw new NotSupportedException(
-                                $"Global array initializer for '{global.Name}' " +
-                                $"at index {i} must currently be a constant integer " +
-                                "or floating-point value.");
+                            throw new NotSupportedException($"Global array initializer for '{global.Name}' at index {i} must currently be a constant integer " + "or floating-point value.");
                     }
 
                     Buffer.BlockCopy(elementBytes, 0, bytes, i * elementSize, elementSize);
@@ -177,7 +203,6 @@ namespace JollyCCompiler.Compiler.CodeGen.X64
 
             var size = GetTypeSize(global.Type);
             var scalarBytes = new byte[size];
-
             if (global.Initializer is null)
                 return new X64DataItem(global.Name, scalarBytes);
 
@@ -280,17 +305,39 @@ namespace JollyCCompiler.Compiler.CodeGen.X64
             _ => throw new NotSupportedException($"Cannot determine the size of type '{type}'.")
         };
 
+        private static bool IsCharType(string type)
+        {
+            return type == "char" || type == "unsigned char";
+        }
+
         private static bool IsUnsignedChar(string type) => string.Equals(type, "unsigned char", StringComparison.Ordinal);
+
         private static bool IsUnsignedShort(string type) => string.Equals(type, "unsigned short", StringComparison.Ordinal);
+
         private static bool IsUnsignedInt(string type) => string.Equals(type, "unsigned int", StringComparison.Ordinal);
+
         private static bool IsUnsignedLong(string type) => string.Equals(type, "unsigned long", StringComparison.Ordinal);
 
-        private static void LoadShortFromMemory(X64Emitter emitter, string type) 
-        { 
-            if (IsUnsignedShort(type)) 
-                emitter.EmitBytes(0x0F, 0xB7, 0x00); 
-            else 
-                emitter.EmitBytes(0x0F, 0xBF, 0x00); 
+        private static string CreateStringLiteralSymbol()
+        {
+            return $"$str_{_stringLiteralCounter++}";
+        }
+
+        private static X64DataItem CreateStringDataItem(string symbol, string value)
+        {
+            byte[] stringBytes = Encoding.UTF8.GetBytes(value);
+            byte[] data = new byte[stringBytes.Length + 1];
+            Buffer.BlockCopy(stringBytes, 0, data, 0, stringBytes.Length);
+            data[stringBytes.Length] = 0;
+            return new X64DataItem(symbol, data);
+        }
+
+        private static void LoadShortFromMemory(X64Emitter emitter, string type)
+        {
+            if (IsUnsignedShort(type))
+                emitter.EmitBytes(0x0F, 0xB7, 0x00);
+            else
+                emitter.EmitBytes(0x0F, 0xBF, 0x00);
         }
 
         private static int GetStructSize(string name)
@@ -299,11 +346,9 @@ namespace JollyCCompiler.Compiler.CodeGen.X64
                 throw new InvalidOperationException($"Unknown struct type 'struct {name}'.");
 
             var size = 0;
-
             foreach (var field in declaration.Fields)
             {
                 var fieldSize = GetTypeSize(field.Type);
-
                 if (field.ArrayLength is int length)
                     fieldSize *= length;
 
@@ -313,20 +358,20 @@ namespace JollyCCompiler.Compiler.CodeGen.X64
             return AlignUp(size, 8);
         }
 
-        private static int GetUnionSize(string name) 
+        private static int GetUnionSize(string name)
         {
-            if (!_unions.TryGetValue(name, out var union)) 
-                throw new InvalidOperationException($"Unknown union type '{name}'."); 
-            
-            var size = 0; 
-            foreach (var field in union.Fields) 
-            { 
-                var fieldSize = GetTypeSize(field.Type) * (field.ArrayLength ?? 1); 
-                if (fieldSize > size) 
-                    size = fieldSize; 
+            if (!_unions.TryGetValue(name, out var union))
+                throw new InvalidOperationException($"Unknown union type '{name}'.");
+
+            var size = 0;
+            foreach (var field in union.Fields)
+            {
+                var fieldSize = GetTypeSize(field.Type) * (field.ArrayLength ?? 1);
+                if (fieldSize > size)
+                    size = fieldSize;
             }
 
-            return ((size + 7) / 8) * 8; 
+            return ((size + 7) / 8) * 8;
         }
 
         private static (int Offset, string Type) GetStructField(string structType, string member)
@@ -335,16 +380,13 @@ namespace JollyCCompiler.Compiler.CodeGen.X64
                 throw new InvalidOperationException($"'{structType}' is not a struct type.");
 
             var name = structType[7..];
-
             if (!_structs.TryGetValue(name, out var declaration))
                 throw new InvalidOperationException($"Unknown struct type '{structType}'.");
 
             var offset = 0;
-
             foreach (var field in declaration.Fields)
             {
                 var fieldSize = GetTypeSize(field.Type);
-
                 if (field.ArrayLength is int length)
                     fieldSize *= length;
 
@@ -357,12 +399,13 @@ namespace JollyCCompiler.Compiler.CodeGen.X64
             throw new InvalidOperationException($"Struct '{name}' has no member '{member}'.");
         }
 
-        private static int CollectVariables(FunctionNode function, Dictionary<string, (int Offset, string Type, bool IsConst)> variables, Dictionary<string, (int Length, string Type)> arrays) 
-        { 
-            var nextOffset = 40; 
-            foreach (var statement in function.Body.Statements) 
-                CollectVariablesFromStatement(statement, variables, arrays, ref nextOffset); 
-            return nextOffset; 
+        private static int CollectVariables(FunctionNode function, Dictionary<string, (int Offset, string Type, bool IsConst)> variables, Dictionary<string, (int Length, string Type)> arrays)
+        {
+            var nextOffset = 40;
+            foreach (var statement in function.Body.Statements)
+                CollectVariablesFromStatement(statement, variables, arrays, ref nextOffset);
+
+            return nextOffset;
         }
 
         private static void CollectParameters(FunctionNode function, Dictionary<string, (int Index, string Type)> parameters)
@@ -370,7 +413,6 @@ namespace JollyCCompiler.Compiler.CodeGen.X64
             for (var i = 0; i < function.Parameters.Count; i++)
             {
                 var parameter = function.Parameters[i];
-
                 if (parameters.ContainsKey(parameter.Name))
                     throw new InvalidOperationException($"Duplicate parameter '{parameter.Name}'.");
 
@@ -381,42 +423,52 @@ namespace JollyCCompiler.Compiler.CodeGen.X64
             }
         }
 
-        private static void CollectVariablesFromStatement(StatementNode statement, Dictionary<string, (int Offset, string Type, bool IsConst)> variables, Dictionary<string, (int Length, string Type)> arrays, ref int nextOffset) 
-        { 
-            switch (statement) 
-            { 
-                case VariableDeclarationStatement variable: 
-                    if (!variables.ContainsKey(variable.Name)) 
-                    { 
-                        if (variable.ArrayLength is int arrayLength) 
-                        { 
-                            if (arrayLength <= 0) 
-                                throw new InvalidOperationException($"Array '{variable.Name}' must have a positive size."); 
-                            
-                            if (variable.Initializer is not null) 
-                                throw new NotSupportedException($"Array initializer for '{variable.Name}' is not yet supported."); 
-                            
-                            var elementSize = GetTypeSize(variable.Type); 
-                            var bytes = checked(arrayLength * elementSize); 
-                            var allocationSize = AlignUp(bytes, 8); 
-                            nextOffset += allocationSize; 
-                            variables[variable.Name] = (-nextOffset, variable.Type, variable.IsConst); 
-                            arrays[variable.Name] = (arrayLength, variable.Type); 
-                        } 
-                        else 
-                        { 
-                            var size = Math.Max(8, GetTypeSize(variable.Type)); 
-                            var allocationSize = AlignUp(size, 8); nextOffset += allocationSize; variables[variable.Name] = (-nextOffset, variable.Type, variable.IsConst); 
-                        } 
-                    } 
-                    break; 
+        private static void CollectVariablesFromStatement(StatementNode statement, Dictionary<string, (int Offset, string Type, bool IsConst)> variables, Dictionary<string, (int Length, string Type)> arrays, ref int nextOffset)
+        {
+            switch (statement)
+            {
+                case VariableDeclarationStatement variable:
+                    if (!variables.ContainsKey(variable.Name))
+                    {
+                        if (variable.ArrayLength is int arrayLength)
+                        {
+                            if (arrayLength <= 0)
+                                throw new InvalidOperationException($"Array '{variable.Name}' must have a positive size.");
 
-                case BlockStatement block: foreach (var child in block.Statements) CollectVariablesFromStatement(child, variables, arrays, ref nextOffset); break; 
-                case ForStatement forStatement: if (forStatement.Initializer is not null) CollectVariablesFromStatement(forStatement.Initializer, variables, arrays, ref nextOffset); CollectVariablesFromStatement(forStatement.Body, variables, arrays, ref nextOffset); break; 
-                case WhileStatement whileStatement: CollectVariablesFromStatement(whileStatement.Body, variables, arrays, ref nextOffset); break; 
-                case DoWhileStatement doWhileStatement: CollectVariablesFromStatement(doWhileStatement.Body, variables, arrays, ref nextOffset); break; 
-                case IfStatement ifStatement: CollectVariablesFromStatement(ifStatement.Then, variables, arrays, ref nextOffset); if (ifStatement.Else is not null) CollectVariablesFromStatement(ifStatement.Else, variables, arrays, ref nextOffset); break; 
-                case SwitchStatement switchStatement: foreach (var switchCase in switchStatement.Cases) { foreach (var child in switchCase.Statements) CollectVariablesFromStatement(child, variables, arrays, ref nextOffset); } break; } 
+                            if (variable.Initializer is not null)
+                                throw new NotSupportedException($"Array initializer for '{variable.Name}' is not yet supported.");
+
+                            var elementSize = GetTypeSize(variable.Type);
+                            var bytes = checked(arrayLength * elementSize);
+                            var allocationSize = AlignUp(bytes, 8);
+                            nextOffset += allocationSize;
+                            variables[variable.Name] = (-nextOffset, variable.Type, variable.IsConst);
+                            arrays[variable.Name] = (arrayLength, variable.Type);
+                        }
+                        else
+                        {
+                            var size = Math.Max(8, GetTypeSize(variable.Type));
+                            var allocationSize = AlignUp(size, 8);
+                            nextOffset += allocationSize;
+                            variables[variable.Name] = (-nextOffset, variable.Type, variable.IsConst);
+                        }
+                    }
+                    break;
+
+                case BlockStatement block: foreach (var child in block.Statements)
+                    CollectVariablesFromStatement(child, variables, arrays, ref nextOffset); break;
+                case ForStatement forStatement: if (forStatement.Initializer is not null)
+                    CollectVariablesFromStatement(forStatement.Initializer, variables, arrays, ref nextOffset); CollectVariablesFromStatement(forStatement.Body, variables, arrays, ref nextOffset); break;
+                case WhileStatement whileStatement: CollectVariablesFromStatement(whileStatement.Body, variables, arrays, ref nextOffset); break;
+                case DoWhileStatement doWhileStatement: CollectVariablesFromStatement(doWhileStatement.Body, variables, arrays, ref nextOffset); break;
+                case IfStatement ifStatement: CollectVariablesFromStatement(ifStatement.Then, variables, arrays, ref nextOffset); if (ifStatement.Else is not null)
+                    CollectVariablesFromStatement(ifStatement.Else, variables, arrays, ref nextOffset); break;
+                case SwitchStatement switchStatement: foreach (var switchCase in switchStatement.Cases)
+                    {
+                    foreach (var child in switchCase.Statements)
+                    CollectVariablesFromStatement(child, variables, arrays, ref nextOffset);
+                } break;
+            }
         }
 
         private static void GenerateFunction(FunctionNode function, X64Emitter emitter, List<X64DataItem> data, Dictionary<string, (int Offset, string Type, bool IsConst)> variables, Dictionary<string, (int Length, string Type)> arrays, Dictionary<string, (int Index, string Type)> parameters, int frameSize)
@@ -426,7 +478,6 @@ namespace JollyCCompiler.Compiler.CodeGen.X64
             emitter.PushRbp();
             emitter.MovRbpRsp();
             emitter.SubRsp(frameSize);
-
             foreach (var parameter in parameters)
             {
                 var offset = -(parameter.Value.Index + 1) * 8;
@@ -434,7 +485,6 @@ namespace JollyCCompiler.Compiler.CodeGen.X64
                 var parameterType = parameter.Value.Type;
                 var isPointer = parameterType.EndsWith("*", StringComparison.Ordinal);
                 var parameterSize = GetTypeSize(parameterType);
-
                 if (parameterType == "float")
                 {
                     switch (parameterIndex)
@@ -740,7 +790,6 @@ namespace JollyCCompiler.Compiler.CodeGen.X64
             }
 
             var typeSize = GetTypeSize(statement.Type);
-
             if (statement.Type.EndsWith("*", StringComparison.Ordinal))
                 emitter.MovRbpDisp8Rax(variable.Offset);
             else if (typeSize == 1)
@@ -780,11 +829,8 @@ namespace JollyCCompiler.Compiler.CodeGen.X64
             var conditionLabel = emitter.CreateLabel("for_condition");
             var continueLabel = emitter.CreateLabel("for_continue");
             var endLabel = emitter.CreateLabel("for_end");
-
             _loopLabels.Push((continueLabel, endLabel));
-
             emitter.MarkLabel(conditionLabel);
-
             if (statement.Condition is not null)
             {
                 GenerateExpression(statement.Condition, emitter, data, variables, arrays, parameters);
@@ -793,36 +839,27 @@ namespace JollyCCompiler.Compiler.CodeGen.X64
             }
 
             GenerateStatement(statement.Body, emitter, data, variables, arrays, parameters, frameSize);
-
             emitter.MarkLabel(continueLabel);
-
             if (statement.Increment is not null)
                 GenerateExpression(statement.Increment, emitter, data, variables, arrays, parameters);
 
             emitter.Jmp(conditionLabel);
             emitter.MarkLabel(endLabel);
-
             _loopLabels.Pop();
         }
 
-        private static void GenerateWhileStatement( WhileStatement statement, X64Emitter emitter, List<X64DataItem> data, Dictionary<string, (int Offset, string Type, bool IsConst)> variables, Dictionary<string, (int Length, string Type)> arrays, Dictionary<string, (int Index, string Type)> parameters, int frameSize)
+        private static void GenerateWhileStatement(WhileStatement statement, X64Emitter emitter, List<X64DataItem> data, Dictionary<string, (int Offset, string Type, bool IsConst)> variables, Dictionary<string, (int Length, string Type)> arrays, Dictionary<string, (int Index, string Type)> parameters, int frameSize)
         {
             var conditionLabel = emitter.CreateLabel("while_condition");
             var endLabel = emitter.CreateLabel("while_end");
-
             _loopLabels.Push((conditionLabel, endLabel));
-
             emitter.MarkLabel(conditionLabel);
-
             GenerateExpression(statement.Condition, emitter, data, variables, arrays, parameters);
             emitter.TestEaxEax();
             emitter.Je(endLabel);
-
             GenerateStatement(statement.Body, emitter, data, variables, arrays, parameters, frameSize);
-
             emitter.Jmp(conditionLabel);
             emitter.MarkLabel(endLabel);
-
             _loopLabels.Pop();
         }
 
@@ -830,13 +867,10 @@ namespace JollyCCompiler.Compiler.CodeGen.X64
         {
             var bodyLabel = emitter.CreateLabel("do_while_body");
             var conditionLabel = emitter.CreateLabel("do_while_condition");
-
             emitter.MarkLabel(bodyLabel);
             GenerateStatement(statement.Body, emitter, data, variables, arrays, parameters, frameSize);
-
             emitter.MarkLabel(conditionLabel);
             GenerateExpression(statement.Condition, emitter, data, variables, arrays, parameters);
-
             emitter.CmpEaxImm8(0);
             emitter.Jne(bodyLabel);
         }
@@ -868,8 +902,9 @@ namespace JollyCCompiler.Compiler.CodeGen.X64
                     GenerateFloatingExpression(floating, emitter, data);
                     break;
 
-                case StringExpression:
-                    throw new NotSupportedException("String expressions are only supported as printf format arguments.");
+                case StringExpression stringExpression:
+                    GenerateStringExpression(stringExpression, emitter, data);
+                    break;
 
                 case IdentifierExpression identifier when identifier.Name == "NULL":
                     emitter.MovEax(0);
@@ -915,6 +950,10 @@ namespace JollyCCompiler.Compiler.CodeGen.X64
                     GenerateAssignmentExpression(assignment, emitter, data, variables, arrays, parameters);
                     break;
 
+                case ConditionalExpression conditional:
+                    GenerateConditionalExpression(conditional, emitter, data, variables, arrays, parameters);
+                    break;
+
                 case AddressOfExpression addressOf:
                     GenerateAddressOfExpression(addressOf, emitter, data, variables, arrays, parameters);
                     break;
@@ -942,7 +981,6 @@ namespace JollyCCompiler.Compiler.CodeGen.X64
                 throw new InvalidOperationException("Cannot determine source type of cast.");
 
             GenerateExpression(expression.Operand, emitter, data, variables, arrays, parameters);
-
             if (expression.Type is "int" or "unsigned int")
             {
                 if (sourceType == "float")
@@ -959,13 +997,11 @@ namespace JollyCCompiler.Compiler.CodeGen.X64
 
                 if (sourceType is "long long" or "unsigned long long")
                 {
-                    // Conversion to a 32-bit integer keeps the low 32 bits.
                     return;
                 }
 
                 if (sourceType is "char" or "unsigned char" or "short" or "unsigned short" or "int" or "unsigned int")
                 {
-                    // The source expression already produces the correct value in EAX.
                     return;
                 }
             }
@@ -974,21 +1010,18 @@ namespace JollyCCompiler.Compiler.CodeGen.X64
             {
                 if (sourceType is "char" or "short" or "int")
                 {
-                    // Sign-extend EAX into RAX.
                     emitter.EmitBytes(0x48, 0x98);
                     return;
                 }
 
                 if (sourceType is "unsigned char" or "unsigned short" or "unsigned int")
                 {
-                    // Writing EAX zero-extends into RAX on x64.
                     emitter.EmitBytes(0x89, 0xC0);
                     return;
                 }
 
                 if (sourceType is "long long" or "unsigned long long")
                 {
-                    // Already a 64-bit integer.
                     return;
                 }
             }
@@ -1055,16 +1088,23 @@ namespace JollyCCompiler.Compiler.CodeGen.X64
             if (arrays.ContainsKey(expression.Name))
             {
                 if (!variables.TryGetValue(expression.Name, out var arrayVariable))
+                {
                     throw new InvalidOperationException($"Array '{expression.Name}' has no storage.");
+                }
 
                 emitter.LeaRaxRbpDisp32(arrayVariable.Offset);
                 return;
             }
 
+            if (_globalArrays.TryGetValue(expression.Name, out var globalArray))
+            {
+                emitter.LeaRaxRipRelative(expression.Name);
+                return;
+            }
+
             if (variables.TryGetValue(expression.Name, out var variable))
             {
-                Console.WriteLine($"IDENTIFIER {expression.Name}: type={variable.Type}, offset={variable.Offset}");
-
+                Console.WriteLine($"IDENTIFIER {expression.Name}: type={variable.Type}, " + $"offset={variable.Offset}");
                 if (variable.Type.EndsWith("*", StringComparison.Ordinal))
                 {
                     emitter.MovRaxRbpDisp8(variable.Offset);
@@ -1080,22 +1120,28 @@ namespace JollyCCompiler.Compiler.CodeGen.X64
                 else
                 {
                     var typeSize = GetTypeSize(variable.Type);
-
                     if (typeSize == 1)
                     {
                         emitter.MovAlRbpDisp32(variable.Offset);
-
                         if (IsUnsignedChar(variable.Type))
+                        {
                             emitter.MovzxEaxAl();
+                        }
                         else
+                        {
                             emitter.EmitBytes(0x0F, 0xBE, 0xC0);
+                        }
                     }
                     else if (typeSize == 2)
                     {
                         if (IsUnsignedShort(variable.Type))
+                        {
                             emitter.EmitBytes(0x0F, 0xB7, 0x45, unchecked((byte)variable.Offset));
+                        }
                         else
+                        {
                             emitter.EmitBytes(0x0F, 0xBF, 0x45, unchecked((byte)variable.Offset));
+                        }
                     }
                     else if (typeSize == 4)
                     {
@@ -1117,9 +1163,7 @@ namespace JollyCCompiler.Compiler.CodeGen.X64
             if (parameters.TryGetValue(expression.Name, out var parameter))
             {
                 var offset = -(parameter.Index + 1) * 8;
-
-                Console.WriteLine($"PARAMETER {expression.Name}: type={parameter.Type}, index={parameter.Index}, offset={offset}");
-
+                Console.WriteLine($"PARAMETER {expression.Name}: type={parameter.Type}, " + $"index={parameter.Index}, " + $"offset={offset}");
                 if (parameter.Type.EndsWith("*", StringComparison.Ordinal))
                 {
                     emitter.MovRaxRbpDisp8(offset);
@@ -1135,22 +1179,28 @@ namespace JollyCCompiler.Compiler.CodeGen.X64
                 else
                 {
                     var typeSize = GetTypeSize(parameter.Type);
-
                     if (typeSize == 1)
                     {
                         emitter.MovAlRbpDisp32(offset);
-
                         if (IsUnsignedChar(parameter.Type))
+                        {
                             emitter.MovzxEaxAl();
+                        }
                         else
+                        {
                             emitter.EmitBytes(0x0F, 0xBE, 0xC0);
+                        }
                     }
                     else if (typeSize == 2)
                     {
                         if (IsUnsignedShort(parameter.Type))
+                        {
                             emitter.EmitBytes(0x0F, 0xB7, 0x45, unchecked((byte)offset));
+                        }
                         else
+                        {
                             emitter.EmitBytes(0x0F, 0xBF, 0x45, unchecked((byte)offset));
+                        }
                     }
                     else if (typeSize == 4)
                     {
@@ -1172,9 +1222,7 @@ namespace JollyCCompiler.Compiler.CodeGen.X64
             if (_globals.TryGetValue(expression.Name, out var global))
             {
                 emitter.LeaRaxRipRelative(expression.Name);
-
                 var typeSize = GetTypeSize(global.Type);
-
                 if (typeSize == 1)
                 {
                     emitter.MovzxEaxRaxMemoryByte();
@@ -1235,11 +1283,9 @@ namespace JollyCCompiler.Compiler.CodeGen.X64
             }
 
             var typeSize = GetTypeSize(type);
-
             if (typeSize == 1)
             {
                 emitter.MovAlRbpDisp32(offset);
-
                 if (IsUnsignedChar(type))
                     emitter.MovzxEaxAl();
                 else
@@ -1278,12 +1324,10 @@ namespace JollyCCompiler.Compiler.CodeGen.X64
             var endLabel = emitter.CreateLabel("switch_end");
             var caseLabels = new List<string>();
             string? defaultLabel = null;
-
             foreach (var switchCase in statement.Cases)
             {
                 var label = emitter.CreateLabel(switchCase.Value is null ? "switch_default" : "switch_case");
                 caseLabels.Add(label);
-
                 if (switchCase.Value is null)
                 {
                     if (defaultLabel is not null)
@@ -1294,17 +1338,11 @@ namespace JollyCCompiler.Compiler.CodeGen.X64
             }
 
             GenerateExpression(statement.Expression, emitter, data, variables, arrays, parameters);
-
-            var switchType = TryGetExpressionType(statement.Expression, variables, arrays, parameters, out var expressionType)
-                ? expressionType
-                : "int";
-
+            var switchType = TryGetExpressionType(statement.Expression, variables, arrays, parameters, out var expressionType) ? expressionType : "int";
             var is64BitSwitch = switchType is "long long" or "unsigned long long";
-
             for (var i = 0; i < statement.Cases.Count; i++)
             {
                 var switchCase = statement.Cases[i];
-
                 if (switchCase.Value is null)
                     continue;
 
@@ -1330,11 +1368,9 @@ namespace JollyCCompiler.Compiler.CodeGen.X64
                 emitter.Jmp(endLabel);
 
             _loopLabels.Push((string.Empty, endLabel));
-
             for (var i = 0; i < statement.Cases.Count; i++)
             {
                 emitter.MarkLabel(caseLabels[i]);
-
                 foreach (var child in statement.Cases[i].Statements)
                     GenerateStatement(child, emitter, data, variables, arrays, parameters, frameSize);
             }
@@ -1428,7 +1464,6 @@ namespace JollyCCompiler.Compiler.CodeGen.X64
                         }
 
                         GenerateExpression(member.Object, emitter, data, variables, arrays, parameters);
-
                         if (field.Offset != 0)
                         {
                             emitter.MovEcx(field.Offset);
@@ -1464,9 +1499,7 @@ namespace JollyCCompiler.Compiler.CodeGen.X64
             }
         }
 
-        private static bool TryGetConstantInteger(
-            ExpressionNode expression,
-            out long value)
+        private static bool TryGetConstantInteger(ExpressionNode expression, out long value)
         {
             if (expression is IntegerExpression integer)
             {
@@ -1474,15 +1507,13 @@ namespace JollyCCompiler.Compiler.CodeGen.X64
                 return true;
             }
 
-            if (expression is IdentifierExpression identifier &&
-                _enumConstants.TryGetValue(identifier.Name, out var enumValue))
+            if (expression is IdentifierExpression identifier && _enumConstants.TryGetValue(identifier.Name, out var enumValue))
             {
                 value = enumValue;
                 return true;
             }
 
-            if (expression is UnaryExpression unary &&
-                unary.Operator == TokenKind.Minus)
+            if (expression is UnaryExpression unary && unary.Operator == TokenKind.Minus)
             {
                 if (unary.Operand is IntegerExpression operand)
                 {
@@ -1490,10 +1521,7 @@ namespace JollyCCompiler.Compiler.CodeGen.X64
                     return true;
                 }
 
-                if (unary.Operand is IdentifierExpression enumIdentifier &&
-                    _enumConstants.TryGetValue(
-                        enumIdentifier.Name,
-                        out var negativeEnumValue))
+                if (unary.Operand is IdentifierExpression enumIdentifier && _enumConstants.TryGetValue(enumIdentifier.Name, out var negativeEnumValue))
                 {
                     value = -negativeEnumValue;
                     return true;
@@ -1515,10 +1543,8 @@ namespace JollyCCompiler.Compiler.CodeGen.X64
                 throw new InvalidOperationException("Cannot determine pointer type for dereference.");
 
             GenerateExpression(expression.Operand, emitter, data, variables, arrays, parameters);
-
             var pointeeType = pointerType[..^1];
             var pointeeSize = GetTypeSize(pointeeType);
-
             if (pointeeSize == 1)
             {
                 if (pointeeType == "unsigned char")
@@ -1539,36 +1565,45 @@ namespace JollyCCompiler.Compiler.CodeGen.X64
         private static void GenerateArraySubscriptAddress(ArraySubscriptExpression expression, X64Emitter emitter, List<X64DataItem> data, Dictionary<string, (int Offset, string Type, bool IsConst)> variables, Dictionary<string, (int Length, string Type)> arrays, Dictionary<string, (int Index, string Type)> parameters)
         {
             string elementType;
-
             if (expression.Array is IdentifierExpression identifier && arrays.TryGetValue(identifier.Name, out var array))
             {
                 elementType = array.Type;
-
-                if (!variables.TryGetValue(identifier.Name, out var variable))
-                    throw new InvalidOperationException($"Array '{identifier.Name}' has no stack slot.");
-
-                emitter.LeaRaxRbpDisp32(variable.Offset);
+                if (variables.TryGetValue(identifier.Name, out var arrayVariable))
+                {
+                    emitter.LeaRaxRbpDisp32(arrayVariable.Offset);
+                }
+                else if (_globals.ContainsKey(identifier.Name))
+                {
+                    emitter.LeaRaxRipRelative(identifier.Name);
+                }
+                else
+                {
+                    throw new InvalidOperationException($"Array '{identifier.Name}' has no storage.");
+                }
             }
             else if (TryGetPointerType(expression.Array, variables, arrays, parameters, out var pointerType))
             {
                 elementType = pointerType[..^1];
-
                 GenerateExpression(expression.Array, emitter, data, variables, arrays, parameters);
             }
             else
             {
                 if (!TryGetExpressionType(expression.Array, variables, arrays, parameters, out elementType))
+                {
                     throw new InvalidOperationException("Cannot determine array element type.");
+                }
 
                 GenerateLValueAddress(expression.Array, emitter, data, variables, arrays, parameters);
+                if (elementType.EndsWith("*", StringComparison.Ordinal))
+                {
+                    emitter.MovRaxFromMemory();
+                    elementType = elementType[..^1];
+                }
             }
 
             var elementSize = GetTypeSize(elementType);
-
             emitter.PushRax();
-
             GenerateExpression(expression.Index, emitter, data, variables, arrays, parameters);
-
             if (elementSize == 2)
                 emitter.ImulEaxImm8(2);
             else if (elementSize == 4)
@@ -1588,9 +1623,7 @@ namespace JollyCCompiler.Compiler.CodeGen.X64
         private static void GenerateArraySubscriptExpression(ArraySubscriptExpression expression, X64Emitter emitter, List<X64DataItem> data, Dictionary<string, (int Offset, string Type, bool IsConst)> variables, Dictionary<string, (int Length, string Type)> arrays, Dictionary<string, (int Index, string Type)> parameters)
         {
             GenerateArraySubscriptAddress(expression, emitter, data, variables, arrays, parameters);
-
             string elementType;
-
             if (expression.Array is IdentifierExpression identifier && arrays.TryGetValue(identifier.Name, out var array))
             {
                 elementType = array.Type;
@@ -1605,7 +1638,6 @@ namespace JollyCCompiler.Compiler.CodeGen.X64
             }
 
             var elementSize = GetTypeSize(elementType);
-
             if (elementType == "float")
             {
                 emitter.MovssXmm0RaxMemory();
@@ -1646,19 +1678,15 @@ namespace JollyCCompiler.Compiler.CodeGen.X64
         {
             var elementType = pointerType[..^1];
             var elementSize = GetTypeSize(elementType);
-
             GenerateExpression(expression.Array, emitter, data, variables, arrays, parameters);
             emitter.PushRax();
-
             GenerateExpression(expression.Index, emitter, data, variables, arrays, parameters);
-
             if (elementSize != 1)
                 emitter.ImulEaxImm8((byte)elementSize);
 
             emitter.MovRcxRax();
             emitter.PopRax();
             emitter.AddRaxRcx();
-
             if (elementSize == 1)
             {
                 if (elementType == "unsigned char")
@@ -1713,17 +1741,13 @@ namespace JollyCCompiler.Compiler.CodeGen.X64
 
             var pointeeType = pointerType[..^1];
             var pointeeSize = GetTypeSize(pointeeType);
-
             if (operatorKind == TokenKind.Equals)
             {
                 GenerateExpression(target.Operand, emitter, data, variables, arrays, parameters);
                 emitter.PushRax();
-
                 GenerateExpression(value, emitter, data, variables, arrays, parameters);
                 emitter.MovRdxRax();
-
                 emitter.PopRax();
-
                 if (pointeeSize == 1)
                 {
                     emitter.EmitBytes(0x88, 0x10);
@@ -1751,11 +1775,7 @@ namespace JollyCCompiler.Compiler.CodeGen.X64
                 return;
             }
 
-            if (operatorKind is not TokenKind.PlusEquals &&
-                operatorKind is not TokenKind.MinusEquals &&
-                operatorKind is not TokenKind.StarEquals &&
-                operatorKind is not TokenKind.SlashEquals &&
-                operatorKind is not TokenKind.PercentEquals)
+            if (operatorKind is not TokenKind.PlusEquals && operatorKind is not TokenKind.MinusEquals && operatorKind is not TokenKind.StarEquals && operatorKind is not TokenKind.SlashEquals && operatorKind is not TokenKind.PercentEquals)
             {
                 throw new NotSupportedException($"Assignment operator '{operatorKind}' through a pointer is not supported.");
             }
@@ -1765,7 +1785,6 @@ namespace JollyCCompiler.Compiler.CodeGen.X64
 
             GenerateExpression(target.Operand, emitter, data, variables, arrays, parameters);
             emitter.PushRax();
-
             if (pointeeSize == 1)
             {
                 if (IsUnsignedChar(pointeeType))
@@ -1786,12 +1805,9 @@ namespace JollyCCompiler.Compiler.CodeGen.X64
             }
 
             emitter.PushRax();
-
             GenerateExpression(value, emitter, data, variables, arrays, parameters);
-
             emitter.MovEcxEax();
             emitter.PopRax();
-
             if (operatorKind == TokenKind.PlusEquals)
                 emitter.AddEaxEcx();
             else if (operatorKind == TokenKind.MinusEquals)
@@ -1817,7 +1833,6 @@ namespace JollyCCompiler.Compiler.CodeGen.X64
 
             emitter.MovEcxEax();
             emitter.MovRaxRspDisp32(0);
-
             if (pointeeSize == 1)
                 emitter.EmitBytes(0x88, 0x08);
             else if (pointeeSize == 2)
@@ -1827,29 +1842,29 @@ namespace JollyCCompiler.Compiler.CodeGen.X64
 
             emitter.MovRaxRcx();
             emitter.AddRsp(8);
-
             if (pointeeSize == 1)
                 NormalizeIntegerAssignment(emitter, pointeeType);
             else if (pointeeSize == 2)
                 NormalizeIntegerAssignment(emitter, pointeeType);
         }
 
-        private static void NormalizeIntegerAssignment(X64Emitter emitter, string type) 
+        private static void NormalizeIntegerAssignment(X64Emitter emitter, string type)
         {
-            if (type == "char") 
-            { 
-                emitter.EmitBytes(0x0F, 0xBE, 0xC0); 
-            } 
-            else if (type == "unsigned char") 
-            { 
-                emitter.MovzxEaxAl();
-            } 
-            else if (type == "short")
-            { 
-                emitter.EmitBytes(0x0F, 0xBF, 0xC0); 
+            if (type == "char")
+            {
+                emitter.EmitBytes(0x0F, 0xBE, 0xC0);
             }
-            else if (type == "unsigned short") 
-            { emitter.EmitBytes(0x0F, 0xB7, 0xC0);
+            else if (type == "unsigned char")
+            {
+                emitter.MovzxEaxAl();
+            }
+            else if (type == "short")
+            {
+                emitter.EmitBytes(0x0F, 0xBF, 0xC0);
+            }
+            else if (type == "unsigned short")
+            {
+                emitter.EmitBytes(0x0F, 0xB7, 0xC0);
             }
         }
 
@@ -1876,13 +1891,10 @@ namespace JollyCCompiler.Compiler.CodeGen.X64
                     throw new InvalidOperationException($"Cannot modify const global '{target.Name}'.");
 
                 var globalSize = GetTypeSize(global.Type);
-
                 if (operatorKind == TokenKind.Equals)
                 {
                     emitter.LeaRcxRipRelative(target.Name);
-
                     GenerateExpression(value, emitter, data, variables, arrays, parameters);
-
                     if (globalSize == 1)
                     {
                         emitter.EmitBytes(0x88, 0x01);
@@ -1920,7 +1932,6 @@ namespace JollyCCompiler.Compiler.CodeGen.X64
                     throw new NotSupportedException($"Compound assignment on global type '{global.Type}' is not yet supported.");
 
                 emitter.LeaRaxRipRelative(target.Name);
-
                 if (globalSize == 1)
                 {
                     if (IsUnsignedChar(global.Type))
@@ -1942,22 +1953,17 @@ namespace JollyCCompiler.Compiler.CodeGen.X64
                 }
 
                 emitter.PushRax();
-
                 GenerateExpression(value, emitter, data, variables, arrays, parameters);
-
                 if (globalSize == 8)
                     emitter.MovRcxRax();
                 else
                     emitter.MovEcxEax();
 
                 emitter.PopRax();
-
                 GenerateCompoundAssignmentOperation(operatorKind, emitter, global.Type);
                 NormalizeIntegerAssignment(emitter, global.Type);
-
                 emitter.MovRcxRax();
                 emitter.LeaRaxRipRelative(target.Name);
-
                 if (globalSize == 1)
                     emitter.EmitBytes(0x88, 0x08);
                 else if (globalSize == 2)
@@ -1979,10 +1985,32 @@ namespace JollyCCompiler.Compiler.CodeGen.X64
 
             if (type.EndsWith("*", StringComparison.Ordinal))
             {
-                if (operatorKind != TokenKind.Equals)
-                    throw new NotSupportedException($"Compound assignment on pointer '{target.Name}' is not yet supported.");
+                if (operatorKind == TokenKind.Equals)
+                {
+                    GenerateExpression(value, emitter, data, variables, arrays, parameters);
+                    emitter.MovRbpDisp8Rax(offset);
+                    return;
+                }
 
+                if (operatorKind != TokenKind.PlusEquals && operatorKind != TokenKind.MinusEquals)
+                {
+                    throw new NotSupportedException($"Compound assignment operator '{operatorKind}' is not supported for pointer '{target.Name}'.");
+                }
+
+                var elementSize = GetPointeeSize(type);
+                emitter.MovRaxRbpDisp32(offset);
+                emitter.PushRax();
                 GenerateExpression(value, emitter, data, variables, arrays, parameters);
+                if (elementSize != 1)
+                    emitter.ImulEaxImm8((byte)elementSize);
+
+                emitter.MovEcxEax();
+                emitter.PopRax();
+                if (operatorKind == TokenKind.PlusEquals)
+                    emitter.AddRaxRcx();
+                else
+                    emitter.SubRaxRcx();
+
                 emitter.MovRbpDisp8Rax(offset);
                 return;
             }
@@ -2002,10 +2030,8 @@ namespace JollyCCompiler.Compiler.CodeGen.X64
 
                 emitter.MovssXmm0RbpDisp8(offset);
                 emitter.MovssXmm1Xmm0();
-
                 GenerateExpression(value, emitter, data, variables, arrays, parameters);
                 ConvertFloatingAssignment(sourceType, "float", emitter);
-
                 switch (operatorKind)
                 {
                     case TokenKind.PlusEquals:
@@ -2048,10 +2074,8 @@ namespace JollyCCompiler.Compiler.CodeGen.X64
 
                 emitter.MovsdXmm0RbpDisp8(offset);
                 emitter.MovsdXmm1Xmm0();
-
                 GenerateExpression(value, emitter, data, variables, arrays, parameters);
                 ConvertFloatingAssignment(sourceType, "double", emitter);
-
                 switch (operatorKind)
                 {
                     case TokenKind.PlusEquals:
@@ -2080,7 +2104,6 @@ namespace JollyCCompiler.Compiler.CodeGen.X64
             }
 
             var typeSize = GetTypeSize(type);
-
             if (operatorKind == TokenKind.Equals)
             {
                 if (type.StartsWith("union ", StringComparison.Ordinal))
@@ -2094,7 +2117,6 @@ namespace JollyCCompiler.Compiler.CodeGen.X64
                             throw new InvalidOperationException($"Cannot assign '{sourceType}' to '{type}'.");
 
                         var unionSize = GetTypeSize(type);
-
                         if (unionSize == 8)
                         {
                             emitter.MovRaxRbpDisp32(sourceOffset);
@@ -2112,7 +2134,6 @@ namespace JollyCCompiler.Compiler.CodeGen.X64
                         throw new InvalidOperationException($"Cannot assign '{valueType}' to '{type}'.");
 
                     var expressionSize = GetTypeSize(type);
-
                     if (expressionSize != 8)
                         throw new NotSupportedException($"Union assignment size {expressionSize} is not yet supported.");
 
@@ -2122,11 +2143,8 @@ namespace JollyCCompiler.Compiler.CodeGen.X64
                 }
 
                 string? assignmentSourceType = null;
-
                 TryGetExpressionType(value, variables, arrays, parameters, out assignmentSourceType);
-
                 GenerateExpression(value, emitter, data, variables, arrays, parameters);
-
                 if (typeSize == 1)
                 {
                     emitter.MovRbpDisp32Al(offset);
@@ -2181,19 +2199,15 @@ namespace JollyCCompiler.Compiler.CodeGen.X64
             }
 
             emitter.PushRax();
-
             GenerateExpression(value, emitter, data, variables, arrays, parameters);
-
             if (typeSize == 8)
                 emitter.MovRcxRax();
             else
                 emitter.MovEcxEax();
 
             emitter.PopRax();
-
             GenerateCompoundAssignmentOperation(operatorKind, emitter, type);
             NormalizeIntegerAssignment(emitter, type);
-
             if (typeSize == 1)
                 emitter.MovRbpDisp32Al(offset);
             else if (typeSize == 2)
@@ -2209,18 +2223,16 @@ namespace JollyCCompiler.Compiler.CodeGen.X64
         private static void GenerateArrayAssignmentExpression(ArraySubscriptExpression target, TokenKind operatorKind, ExpressionNode value, X64Emitter emitter, List<X64DataItem> data, Dictionary<string, (int Offset, string Type, bool IsConst)> variables, Dictionary<string, (int Length, string Type)> arrays, Dictionary<string, (int Index, string Type)> parameters)
         {
             string arrayName;
-
             if (target.Array is IdentifierExpression identifier)
             {
                 arrayName = identifier.Name;
             }
             else
             {
-                throw new NotSupportedException("Array assignment currently requires a named array.");
+                throw new NotSupportedException("Array assignment currently requires a named array or pointer.");
             }
 
             string? elementType = null;
-
             if (arrays.TryGetValue(arrayName, out var localArray))
             {
                 elementType = localArray.Type;
@@ -2229,40 +2241,31 @@ namespace JollyCCompiler.Compiler.CodeGen.X64
             {
                 elementType = globalArray.Type;
             }
+            else if (TryGetExpressionType(target.Array, variables, arrays, parameters, out var arrayExpressionType) && arrayExpressionType.EndsWith("*", StringComparison.Ordinal))
+            {
+                elementType = arrayExpressionType[..^1].TrimEnd();
+            }
 
             if (elementType is null)
+            {
                 throw new InvalidOperationException($"Cannot determine array element type for '{arrayName}'.");
+            }
 
             var elementSize = GetTypeSize(elementType);
-
             GenerateArraySubscriptAddress(target, emitter, data, variables, arrays, parameters);
-
             if (elementType == "float" || elementType == "double")
             {
                 emitter.PushRax();
-
                 if (operatorKind == TokenKind.Equals)
                 {
                     GenerateExpression(value, emitter, data, variables, arrays, parameters);
-
-                    if (!TryGetExpressionType(
-                            value,
-                            variables,
-                            arrays,
-                            parameters,
-                            out var sourceType))
+                    if (!TryGetExpressionType(value, variables, arrays, parameters, out var sourceType))
                     {
-                        throw new InvalidOperationException(
-                            "Cannot determine assignment source type.");
+                        throw new InvalidOperationException("Cannot determine assignment source type.");
                     }
 
-                    ConvertFloatingAssignment(
-                        sourceType,
-                        elementType,
-                        emitter);
-
+                    ConvertFloatingAssignment(sourceType, elementType, emitter);
                     emitter.MovRaxRspDisp32(0);
-
                     if (elementType == "float")
                         emitter.MovRaxMemoryXmm0Float();
                     else
@@ -2273,7 +2276,6 @@ namespace JollyCCompiler.Compiler.CodeGen.X64
                 }
 
                 emitter.MovRaxRspDisp32(0);
-
                 if (elementType == "float")
                     emitter.MovssXmm0RaxMemory();
                 else
@@ -2284,30 +2286,13 @@ namespace JollyCCompiler.Compiler.CodeGen.X64
                 else
                     emitter.MovsdXmm1Xmm0();
 
-                GenerateExpression(
-                    value,
-                    emitter,
-                    data,
-                    variables,
-                    arrays,
-                    parameters);
-
-                if (!TryGetExpressionType(
-                        value,
-                        variables,
-                        arrays,
-                        parameters,
-                        out var compoundSourceType))
+                GenerateExpression(value, emitter, data, variables, arrays, parameters);
+                if (!TryGetExpressionType(value, variables, arrays, parameters, out var compoundSourceType))
                 {
-                    throw new InvalidOperationException(
-                        "Cannot determine assignment source type.");
+                    throw new InvalidOperationException("Cannot determine assignment source type.");
                 }
 
-                ConvertFloatingAssignment(
-                    compoundSourceType,
-                    elementType,
-                    emitter);
-
+                ConvertFloatingAssignment(compoundSourceType, elementType, emitter);
                 if (elementType == "float")
                 {
                     switch (operatorKind)
@@ -2329,8 +2314,7 @@ namespace JollyCCompiler.Compiler.CodeGen.X64
                             break;
 
                         default:
-                            throw new NotSupportedException(
-                                $"Compound assignment operator '{operatorKind}' is not supported for float array elements.");
+                            throw new NotSupportedException($"Compound assignment operator '{operatorKind}' is not supported for float array elements.");
                     }
 
                     emitter.MovssXmm0Xmm1();
@@ -2358,8 +2342,7 @@ namespace JollyCCompiler.Compiler.CodeGen.X64
                             break;
 
                         default:
-                            throw new NotSupportedException(
-                                $"Compound assignment operator '{operatorKind}' is not supported for double array elements.");
+                            throw new NotSupportedException($"Compound assignment operator '{operatorKind}' is not supported for double array elements.");
                     }
 
                     emitter.MovsdXmm0Xmm1();
@@ -2372,19 +2355,10 @@ namespace JollyCCompiler.Compiler.CodeGen.X64
             }
 
             emitter.PushRax();
-
             if (operatorKind == TokenKind.Equals)
             {
-                GenerateExpression(
-                    value,
-                    emitter,
-                    data,
-                    variables,
-                    arrays,
-                    parameters);
-
+                GenerateExpression(value, emitter, data, variables, arrays, parameters);
                 emitter.MovRcxRspDisp32(0);
-
                 if (elementSize == 1)
                 {
                     emitter.EmitBytes(0x88, 0x01);
@@ -2392,9 +2366,7 @@ namespace JollyCCompiler.Compiler.CodeGen.X64
                 else if (elementSize == 2)
                 {
                     emitter.EmitBytes(0x66, 0x89, 0x01);
-                    NormalizeIntegerAssignment(
-                        emitter,
-                        elementType);
+                    NormalizeIntegerAssignment(emitter, elementType);
                 }
                 else if (elementSize == 4)
                 {
@@ -2407,8 +2379,7 @@ namespace JollyCCompiler.Compiler.CodeGen.X64
                 }
                 else
                 {
-                    throw new NotSupportedException(
-                        $"Array element type '{elementType}' is not yet supported for indexed stores.");
+                    throw new NotSupportedException($"Array element type '{elementType}' is not yet supported for indexed stores.");
                 }
 
                 emitter.AddRsp(8);
@@ -2426,10 +2397,7 @@ namespace JollyCCompiler.Compiler.CodeGen.X64
             }
             else if (elementSize == 2)
             {
-                if (string.Equals(
-                        elementType,
-                        "unsigned short",
-                        StringComparison.Ordinal))
+                if (string.Equals(elementType, "unsigned short", StringComparison.Ordinal))
                 {
                     emitter.EmitBytes(0x0F, 0xB7, 0x00);
                 }
@@ -2438,30 +2406,24 @@ namespace JollyCCompiler.Compiler.CodeGen.X64
                     emitter.MovsxEaxRaxMemoryWord();
                 }
             }
-            else
+            else if (elementSize == 4)
             {
                 emitter.MovEaxRaxMemory();
             }
+            else
+            {
+                emitter.MovRaxFromMemory();
+            }
 
             emitter.PushRax();
-
-            GenerateExpression(
-                value,
-                emitter,
-                data,
-                variables,
-                arrays,
-                parameters);
-
-            emitter.MovEcxEax();
+            GenerateExpression(value, emitter, data, variables, arrays, parameters);
+            if (elementSize == 8)
+                emitter.MovRcxRax();
+            else
+                emitter.MovEcxEax();
 
             emitter.PopRax();
-
-            GenerateCompoundAssignmentOperation(
-                operatorKind,
-                emitter,
-                elementType);
-
+            GenerateCompoundAssignmentOperation(operatorKind, emitter, elementType);
             if (elementSize == 1)
             {
                 emitter.MovzxEaxAl();
@@ -2474,25 +2436,27 @@ namespace JollyCCompiler.Compiler.CodeGen.X64
                     emitter.EmitBytes(0x0F, 0xBF, 0xC0);
             }
 
-            emitter.MovEcxEax();
+            if (elementSize == 8)
+                emitter.MovRcxRax();
+            else
+                emitter.MovEcxEax();
 
             emitter.MovRaxRspDisp32(0);
-
             emitter.AddRsp(8);
-
             if (elementSize == 1)
                 emitter.EmitBytes(0x88, 0x08);
             else if (elementSize == 2)
                 emitter.EmitBytes(0x66, 0x89, 0x08);
-            else
+            else if (elementSize == 4)
                 emitter.EmitBytes(0x89, 0x08);
+            else
+                emitter.EmitBytes(0x48, 0x89, 0x08);
         }
 
         private static void GenerateCompoundAssignmentOperation(TokenKind operatorKind, X64Emitter emitter, string type)
         {
             var is64Bit = type is "long long" or "unsigned long long";
             var isUnsigned = type is "unsigned int" or "unsigned long" or "unsigned long long";
-
             switch (operatorKind)
             {
                 case TokenKind.PlusEquals:
@@ -2604,7 +2568,6 @@ namespace JollyCCompiler.Compiler.CodeGen.X64
                     else
                     {
                         emitter.ShlEaxCl();
-
                         if (isUnsigned)
                             emitter.MovEaxEax();
                         else
@@ -2639,18 +2602,14 @@ namespace JollyCCompiler.Compiler.CodeGen.X64
             if (expression.Operator is TokenKind.Plus or TokenKind.Minus && TryGetPointerType(expression.Left, variables, arrays, parameters, out var leftPointerType))
             {
                 var elementSize = GetPointeeSize(leftPointerType);
-
                 GenerateExpression(expression.Left, emitter, data, variables, arrays, parameters);
                 emitter.PushRax();
-
                 GenerateExpression(expression.Right, emitter, data, variables, arrays, parameters);
-
                 if (elementSize != 1)
                     emitter.ImulEaxImm8((byte)elementSize);
 
                 emitter.MovEcxEax();
                 emitter.PopRax();
-
                 if (expression.Operator == TokenKind.Plus)
                     emitter.AddRaxRcx();
                 else
@@ -2666,25 +2625,9 @@ namespace JollyCCompiler.Compiler.CodeGen.X64
 
             string leftType = string.Empty;
             string rightType = string.Empty;
-
-            var leftHasType = TryGetExpressionType(
-                expression.Left,
-                variables,
-                arrays,
-                parameters,
-                out leftType);
-
-            var rightHasType = TryGetExpressionType(
-                expression.Right,
-                variables,
-                arrays,
-                parameters,
-                out rightType);
-
-            var commonType = leftHasType && rightHasType
-                ? GetCommonArithmeticType(leftType, rightType)
-                : string.Empty;
-
+            var leftHasType = TryGetExpressionType(expression.Left, variables, arrays, parameters, out leftType);
+            var rightHasType = TryGetExpressionType(expression.Right, variables, arrays, parameters, out rightType);
+            var commonType = leftHasType && rightHasType ? GetCommonArithmeticType(leftType, rightType) : string.Empty;
             if (commonType == "float" || commonType == "double")
             {
                 GenerateFloatingBinaryExpression(expression, commonType, emitter, data, variables, arrays, parameters);
@@ -2693,19 +2636,15 @@ namespace JollyCCompiler.Compiler.CodeGen.X64
 
             var is64BitOperation = commonType is "long long" or "unsigned long long";
             var isUnsignedOperation = commonType is "unsigned int" or "unsigned long" or "unsigned long long";
-
             GenerateExpression(expression.Left, emitter, data, variables, arrays, parameters);
             emitter.PushRax();
-
             GenerateExpression(expression.Right, emitter, data, variables, arrays, parameters);
-
             if (is64BitOperation)
                 emitter.MovRcxRax();
             else
                 emitter.MovEcxEax();
 
             emitter.PopRax();
-
             switch (expression.Operator)
             {
                 case TokenKind.Plus:
@@ -2840,7 +2779,7 @@ namespace JollyCCompiler.Compiler.CodeGen.X64
                         }
                     }
 
-                    break;                    
+                    break;
 
                 default:
                     throw new NotSupportedException($"Operator '{expression.Operator}' is not yet supported by the x64 backend.");
@@ -2850,37 +2789,18 @@ namespace JollyCCompiler.Compiler.CodeGen.X64
         private static void GenerateFloatingBinaryExpression(BinaryExpression expression, string commonType, X64Emitter emitter, List<X64DataItem> data, Dictionary<string, (int Offset, string Type, bool IsConst)> variables, Dictionary<string, (int Length, string Type)> arrays, Dictionary<string, (int Index, string Type)> parameters)
         {
             var isDouble = commonType == "double";
-
-            GenerateFloatingOperand(
-                expression.Right,
-                commonType,
-                emitter,
-                data,
-                variables,
-                arrays,
-                parameters);
-
+            GenerateFloatingOperand(expression.Right, commonType, emitter, data, variables, arrays, parameters);
             if (isDouble)
                 emitter.MovqRaxXmm0();
             else
                 emitter.MovdEaxXmm0();
 
             emitter.PushRax();
-
-            GenerateFloatingOperand(
-                expression.Left,
-                commonType,
-                emitter,
-                data,
-                variables,
-                arrays,
-                parameters);
-
+            GenerateFloatingOperand(expression.Left, commonType, emitter, data, variables, arrays, parameters);
             if (isDouble)
             {
                 emitter.MovRaxRspDisp32(0);
                 emitter.MovqXmm1Rax();
-
                 switch (expression.Operator)
                 {
                     case TokenKind.Plus:
@@ -2907,7 +2827,6 @@ namespace JollyCCompiler.Compiler.CodeGen.X64
             {
                 emitter.MovRaxRspDisp32(0);
                 emitter.MovdXmm1Eax();
-
                 switch (expression.Operator)
                 {
                     case TokenKind.Plus:
@@ -2927,8 +2846,7 @@ namespace JollyCCompiler.Compiler.CodeGen.X64
                         break;
 
                     default:
-                        throw new NotSupportedException(
-                            $"Floating-point operator '{expression.Operator}' is not yet supported.");
+                        throw new NotSupportedException($"Floating-point operator '{expression.Operator}' is not yet supported.");
                 }
             }
 
@@ -2941,7 +2859,6 @@ namespace JollyCCompiler.Compiler.CodeGen.X64
                 throw new InvalidOperationException("Cannot determine floating-point operand type.");
 
             GenerateExpression(expression, emitter, data, variables, arrays, parameters);
-
             if (commonType == "double")
             {
                 if (sourceType == "float")
@@ -3006,8 +2923,7 @@ namespace JollyCCompiler.Compiler.CodeGen.X64
                     return;
                 }
 
-                if (sourceType is "char" or "short" or "int" or "long"
-                    or "unsigned char" or "unsigned short")
+                if (sourceType is "char" or "short" or "int" or "long" or "unsigned char" or "unsigned short")
                 {
                     emitter.Cvtsi2ssXmm0Eax();
                     return;
@@ -3028,8 +2944,7 @@ namespace JollyCCompiler.Compiler.CodeGen.X64
                     return;
                 }
 
-                if (sourceType is "char" or "short" or "int" or "long"
-                    or "unsigned char" or "unsigned short")
+                if (sourceType is "char" or "short" or "int" or "long" or "unsigned char" or "unsigned short")
                 {
                     emitter.Cvtsi2sdXmm0Eax();
                     return;
@@ -3057,40 +2972,37 @@ namespace JollyCCompiler.Compiler.CodeGen.X64
             var callStackSize = emitter.GetCallStackSize(argumentCount);
             var temporaryBytes = argumentCount * 8;
             var totalBytes = callStackSize + temporaryBytes;
-
             totalBytes = (totalBytes + 15) & ~15;
-
             emitter.SubRsp(totalBytes);
-
             var temporaryBase = callStackSize;
-
             for (var i = 0; i < argumentCount; i++)
             {
                 var argument = call.Arguments[i];
                 var temporaryOffset = temporaryBase + (i * 8);
-
-                if (argument is IdentifierExpression identifier &&
-                    arrays.TryGetValue(identifier.Name, out _))
+                if (argument is IdentifierExpression identifier)
                 {
-                    if (!variables.TryGetValue(identifier.Name, out var arrayVariable))
-                        throw new InvalidOperationException($"Array '{identifier.Name}' has no stack slot.");
+                    if (arrays.TryGetValue(identifier.Name, out _))
+                    {
+                        if (!variables.TryGetValue(identifier.Name, out var arrayVariable))
+                            throw new InvalidOperationException($"Array '{identifier.Name}' has no stack slot.");
 
-                    emitter.LeaRaxRbpDisp32(arrayVariable.Offset);
-                    emitter.MovRspDisp32Rax(temporaryOffset);
-                    continue;
+                        emitter.LeaRaxRbpDisp32(arrayVariable.Offset);
+                        emitter.MovRspDisp32Rax(temporaryOffset);
+                        continue;
+                    }
+
+                    if (_globalArrays.ContainsKey(identifier.Name))
+                    {
+                        emitter.LeaRaxRipRelative(identifier.Name);
+                        emitter.MovRspDisp32Rax(temporaryOffset);
+                        continue;
+                    }
                 }
 
                 if (!TryGetExpressionType(argument, variables, arrays, parameters, out var argumentType))
                     throw new InvalidOperationException("Cannot determine function argument type.");
 
-                GenerateExpression(
-                    argument,
-                    emitter,
-                    data,
-                    variables,
-                    arrays,
-                    parameters);
-
+                GenerateExpression(argument, emitter, data, variables, arrays, parameters);
                 if (argumentType == "float")
                 {
                     emitter.MovdEaxXmm0();
@@ -3111,14 +3023,12 @@ namespace JollyCCompiler.Compiler.CodeGen.X64
             {
                 var argument = call.Arguments[i];
                 var temporaryOffset = temporaryBase + (i * 8);
-
                 if (!TryGetExpressionType(argument, variables, arrays, parameters, out var argumentType))
                     throw new InvalidOperationException("Cannot determine function argument type.");
 
                 if (argumentType == "float")
                 {
                     emitter.MovRaxRspDisp32(temporaryOffset);
-
                     switch (i)
                     {
                         case 0:
@@ -3144,7 +3054,6 @@ namespace JollyCCompiler.Compiler.CodeGen.X64
                 if (argumentType == "double")
                 {
                     emitter.MovRaxRspDisp32(temporaryOffset);
-
                     switch (i)
                     {
                         case 0:
@@ -3168,22 +3077,7 @@ namespace JollyCCompiler.Compiler.CodeGen.X64
                 }
 
                 emitter.MovRaxRspDisp32(temporaryOffset);
-
-                var isPointerArgument =
-                    argument is IdentifierExpression identifier &&
-                    (
-                        arrays.ContainsKey(identifier.Name) ||
-                        _functionReturnTypes.ContainsKey(identifier.Name) ||
-                        (variables.TryGetValue(identifier.Name, out var variable) &&
-                         (variable.Type.EndsWith("*", StringComparison.Ordinal) ||
-                          variable.Type.StartsWith("function*", StringComparison.Ordinal))) ||
-                        (parameters.TryGetValue(identifier.Name, out var parameter) &&
-                         (parameter.Type.EndsWith("*", StringComparison.Ordinal) ||
-                          parameter.Type.StartsWith("function*", StringComparison.Ordinal)))
-                    ) ||
-                    argument is AddressOfExpression ||
-                    argument is ArraySubscriptExpression;
-
+                var isPointerArgument = argument is StringExpression || ( argument is IdentifierExpression identifier && ( arrays.ContainsKey(identifier.Name) || _globalArrays.ContainsKey(identifier.Name) || _functionReturnTypes.ContainsKey(identifier.Name) || (variables.TryGetValue(identifier.Name, out var variable) && (variable.Type.EndsWith("*", StringComparison.Ordinal) || variable.Type.StartsWith("function*", StringComparison.Ordinal))) || (parameters.TryGetValue(identifier.Name, out var parameter) && (parameter.Type.EndsWith("*", StringComparison.Ordinal) || parameter.Type.StartsWith("function*", StringComparison.Ordinal))) ) ) || argument is AddressOfExpression || argument is ArraySubscriptExpression;
                 if (isPointerArgument)
                 {
                     if (i < 4)
@@ -3193,9 +3087,7 @@ namespace JollyCCompiler.Compiler.CodeGen.X64
                 }
                 else
                 {
-                    var is64BitArgument =
-                        argumentType is "long long" or "unsigned long long";
-
+                    var is64BitArgument = argumentType is "long long" or "unsigned long long";
                     if (i < 4)
                     {
                         if (is64BitArgument)
@@ -3242,9 +3134,7 @@ namespace JollyCCompiler.Compiler.CodeGen.X64
 
             var symbol = $"$str{data.Count}";
             var bytes = Encoding.UTF8.GetBytes(formatString.Value + "\0");
-
             data.Add(new X64DataItem(symbol, bytes));
-
             var argumentCount = call.Arguments.Count;
             var valueArgumentCount = argumentCount - 1;
             var stackArgumentCount = Math.Max(0, argumentCount - 4);
@@ -3252,20 +3142,14 @@ namespace JollyCCompiler.Compiler.CodeGen.X64
             var stackArgumentBytes = stackArgumentCount * 8;
             var temporaryBytes = valueArgumentCount * 8;
             var totalBytes = shadowSpace + stackArgumentBytes + temporaryBytes;
-
             totalBytes = (totalBytes + 15) & ~15;
-
             emitter.SubRsp(totalBytes);
-
             var temporaryBase = shadowSpace + stackArgumentBytes;
-
             for (var i = 1; i < argumentCount; i++)
             {
                 GenerateExpression(call.Arguments[i], emitter, data, variables, arrays, parameters);
-
                 var temporaryOffset = temporaryBase + ((i - 1) * 8);
                 var isPointer = IsPointerExpression(call.Arguments[i], parameters);
-
                 if (isPointer)
                     emitter.MovRspDisp32Rax(temporaryOffset);
                 else
@@ -3273,12 +3157,10 @@ namespace JollyCCompiler.Compiler.CodeGen.X64
             }
 
             emitter.LeaRcxRipRelative(symbol);
-
             for (var i = 1; i < argumentCount; i++)
             {
                 var temporaryOffset = temporaryBase + ((i - 1) * 8);
                 var isPointer = IsPointerExpression(call.Arguments[i], parameters);
-
                 if (isPointer)
                     emitter.MovRaxRspDisp32(temporaryOffset);
                 else
@@ -3320,10 +3202,17 @@ namespace JollyCCompiler.Compiler.CodeGen.X64
             emitter.AddRsp(totalBytes);
         }
 
+        private static void GenerateStringExpression(StringExpression expression, X64Emitter emitter, List<X64DataItem> data)
+        {
+            var symbol = $"$str{data.Count}";
+            var bytes = Encoding.UTF8.GetBytes(expression.Value + "\0");
+            data.Add(new X64DataItem(symbol, bytes));
+            emitter.LeaRaxRipRelative(symbol);
+        }
+
         private static bool IsPointerExpression(ExpressionNode expression, Dictionary<string, (int Index, string Type)> parameters)
         {
-            if (expression is IdentifierExpression identifier &&
-                parameters.TryGetValue(identifier.Name, out var parameter))
+            if (expression is IdentifierExpression identifier && parameters.TryGetValue(identifier.Name, out var parameter))
             {
                 return parameter.Type.EndsWith("*", StringComparison.Ordinal);
             }
@@ -3336,22 +3225,16 @@ namespace JollyCCompiler.Compiler.CodeGen.X64
 
         private static void GenerateComparison(BinaryExpression expression, X64Emitter emitter, List<X64DataItem> data, Dictionary<string, (int Offset, string Type, bool IsConst)> variables, Dictionary<string, (int Length, string Type)> arrays, Dictionary<string, (int Index, string Type)> parameters)
         {
-            var commonType = TryGetExpressionType(expression.Left, variables, arrays, parameters, out var leftType) &&
-                             TryGetExpressionType(expression.Right, variables, arrays, parameters, out var rightType)
-                ? GetCommonArithmeticType(leftType, rightType)
-                : string.Empty;
-
+            var commonType = TryGetExpressionType(expression.Left, variables, arrays, parameters, out var leftType) && TryGetExpressionType(expression.Right, variables, arrays, parameters, out var rightType) ? GetCommonArithmeticType(leftType, rightType) : string.Empty;
             if (commonType is "float" or "double")
             {
                 GenerateFloatingOperand(expression.Right, commonType, emitter, data, variables, arrays, parameters);
-
                 if (commonType == "double")
                     emitter.MovsdXmm1Xmm0();
                 else
                     emitter.MovssXmm1Xmm0();
 
                 GenerateFloatingOperand(expression.Left, commonType, emitter, data, variables, arrays, parameters);
-
                 if (commonType == "double")
                     emitter.UcomisdXmm0Xmm1();
                 else
@@ -3399,19 +3282,15 @@ namespace JollyCCompiler.Compiler.CodeGen.X64
                 emitter.MarkLabel(floatingFalseLabel);
                 emitter.MovEax(0);
                 emitter.Jmp(floatingEndLabel);
-
                 emitter.MarkLabel(floatingTrueLabel);
                 emitter.MovEax(1);
-
                 emitter.MarkLabel(floatingEndLabel);
                 return;
             }
 
             var is64BitComparison = commonType is "long long" or "unsigned long long";
             var useUnsignedComparison = commonType is "unsigned int" or "unsigned long" or "unsigned long long";
-
             GenerateExpression(expression.Left, emitter, data, variables, arrays, parameters);
-
             if (is64BitComparison)
             {
                 if (TryGetExpressionType(expression.Left, variables, arrays, parameters, out var leftOperandType))
@@ -3419,9 +3298,7 @@ namespace JollyCCompiler.Compiler.CodeGen.X64
             }
 
             emitter.PushRax();
-
             GenerateExpression(expression.Right, emitter, data, variables, arrays, parameters);
-
             if (is64BitComparison)
             {
                 if (TryGetExpressionType(expression.Right, variables, arrays, parameters, out var rightOperandType))
@@ -3433,8 +3310,7 @@ namespace JollyCCompiler.Compiler.CodeGen.X64
             else
                 emitter.MovEcxEax();
 
-            emitter.PopRax(); 
-
+            emitter.PopRax();
             if (is64BitComparison)
                 emitter.CmpRaxRcx();
             else
@@ -3442,7 +3318,6 @@ namespace JollyCCompiler.Compiler.CodeGen.X64
 
             var trueLabel = $"$cmp_true_{emitter.Offset}";
             var endLabel = $"$cmp_end_{emitter.Offset}";
-
             switch (expression.Operator)
             {
                 case TokenKind.EqualEqual:
@@ -3482,16 +3357,27 @@ namespace JollyCCompiler.Compiler.CodeGen.X64
                     break;
 
                 default:
-                    throw new NotSupportedException(
-                        $"Operator '{expression.Operator}' is not a comparison operator.");
+                    throw new NotSupportedException($"Operator '{expression.Operator}' is not a comparison operator.");
             }
 
             emitter.MovEax(0);
             emitter.Jmp(endLabel);
-
             emitter.MarkLabel(trueLabel);
             emitter.MovEax(1);
+            emitter.MarkLabel(endLabel);
+        }
 
+        private static void GenerateConditionalExpression(ConditionalExpression expression, X64Emitter emitter, List<X64DataItem> data, Dictionary<string, (int Offset, string Type, bool IsConst)> variables, Dictionary<string, (int Length, string Type)> arrays, Dictionary<string, (int Index, string Type)> parameters)
+        {
+            GenerateExpression(expression.Condition, emitter, data, variables, arrays, parameters);
+            var falseLabel = emitter.CreateLabel("conditional_false");
+            var endLabel = emitter.CreateLabel("conditional_end");
+            emitter.TestEaxEax();
+            emitter.Je(falseLabel);
+            GenerateExpression(expression.WhenTrue, emitter, data, variables, arrays, parameters);
+            emitter.Jmp(endLabel);
+            emitter.MarkLabel(falseLabel);
+            GenerateExpression(expression.WhenFalse, emitter, data, variables, arrays, parameters);
             emitter.MarkLabel(endLabel);
         }
 
@@ -3499,21 +3385,16 @@ namespace JollyCCompiler.Compiler.CodeGen.X64
         {
             var falseLabel = emitter.CreateLabel("and_false");
             var endLabel = emitter.CreateLabel("and_end");
-
             GenerateExpression(expression.Left, emitter, data, variables, arrays, parameters);
             emitter.TestEaxEax();
             emitter.Je(falseLabel);
-
             GenerateExpression(expression.Right, emitter, data, variables, arrays, parameters);
             emitter.TestEaxEax();
             emitter.Je(falseLabel);
-
             emitter.MovEax(1);
             emitter.Jmp(endLabel);
-
             emitter.MarkLabel(falseLabel);
             emitter.MovEax(0);
-
             emitter.MarkLabel(endLabel);
         }
 
@@ -3521,21 +3402,16 @@ namespace JollyCCompiler.Compiler.CodeGen.X64
         {
             var trueLabel = emitter.CreateLabel("or_true");
             var endLabel = emitter.CreateLabel("or_end");
-
             GenerateExpression(expression.Left, emitter, data, variables, arrays, parameters);
             emitter.TestEaxEax();
             emitter.Jne(trueLabel);
-
             GenerateExpression(expression.Right, emitter, data, variables, arrays, parameters);
             emitter.TestEaxEax();
             emitter.Jne(trueLabel);
-
             emitter.MovEax(0);
             emitter.Jmp(endLabel);
-
             emitter.MarkLabel(trueLabel);
             emitter.MovEax(1);
-
             emitter.MarkLabel(endLabel);
         }
 
@@ -3548,12 +3424,10 @@ namespace JollyCCompiler.Compiler.CodeGen.X64
             }
 
             GenerateExpression(expression.Operand, emitter, data, variables, arrays, parameters);
-
             switch (expression.Operator)
             {
                 case TokenKind.Minus:
-                    if (TryGetExpressionType(expression.Operand, variables, arrays, parameters, out var operandType) &&
-                        operandType is "long long" or "unsigned long long")
+                    if (TryGetExpressionType(expression.Operand, variables, arrays, parameters, out var operandType) && operandType is "long long" or "unsigned long long")
                     {
                         emitter.NegRax();
                     }
@@ -3580,8 +3454,7 @@ namespace JollyCCompiler.Compiler.CodeGen.X64
                     break;
 
                 case TokenKind.Tilde:
-                    if (TryGetExpressionType(expression.Operand, variables, arrays, parameters, out var bitwiseOperandType) &&
-                        bitwiseOperandType is "long long" or "unsigned long long")
+                    if (TryGetExpressionType(expression.Operand, variables, arrays, parameters, out var bitwiseOperandType) && bitwiseOperandType is "long long" or "unsigned long long")
                     {
                         emitter.NotRax();
                     }
@@ -3616,19 +3489,16 @@ namespace JollyCCompiler.Compiler.CodeGen.X64
                 {
                     var elementSize = GetPointeeSize(type);
                     emitter.MovRaxRbpDisp8(offset);
-
                     if (expression.IsPostfix)
                         emitter.PushRax();
 
                     emitter.MovEcx(elementSize);
-
                     if (expression.Operator == TokenKind.PlusPlus)
                         emitter.AddRaxRcx();
                     else
                         emitter.SubRaxRcx();
 
                     emitter.MovRbpDisp8Rax(offset);
-
                     if (expression.IsPostfix)
                         emitter.PopRax();
 
@@ -3636,11 +3506,9 @@ namespace JollyCCompiler.Compiler.CodeGen.X64
                 }
 
                 var typeSize = GetTypeSize(type);
-
                 if (typeSize == 1)
                 {
                     emitter.MovAlRbpDisp32(offset);
-
                     if (IsUnsignedChar(type))
                         emitter.MovzxEaxAl();
                     else
@@ -3670,7 +3538,6 @@ namespace JollyCCompiler.Compiler.CodeGen.X64
                     emitter.PushRax();
 
                 emitter.MovEcx(1);
-
                 if (expression.Operator == TokenKind.PlusPlus)
                 {
                     if (typeSize == 8)
@@ -3689,14 +3556,12 @@ namespace JollyCCompiler.Compiler.CodeGen.X64
                 if (typeSize == 1)
                 {
                     emitter.MovRbpDisp32Al(offset);
-
                     if (!expression.IsPostfix)
                         NormalizeIntegerAssignment(emitter, type);
                 }
                 else if (typeSize == 2)
                 {
                     emitter.EmitBytes(0x66, 0x89, 0x45, unchecked((byte)offset));
-
                     if (!expression.IsPostfix)
                         NormalizeIntegerAssignment(emitter, type);
                 }
@@ -3728,13 +3593,11 @@ namespace JollyCCompiler.Compiler.CodeGen.X64
 
                 var pointeeType = pointerType[..^1];
                 var pointeeSize = GetTypeSize(pointeeType);
-
                 if (pointeeSize != 1 && pointeeSize != 2 && pointeeSize != 4 && pointeeSize != 8)
                     throw new NotSupportedException($"Increment/decrement through pointer type '{pointerType}' is not yet supported.");
 
                 GenerateExpression(dereference.Operand, emitter, data, variables, arrays, parameters);
                 emitter.PushRax();
-
                 if (pointeeSize == 1)
                 {
                     emitter.MovzxEaxRaxMemoryByte();
@@ -3756,7 +3619,6 @@ namespace JollyCCompiler.Compiler.CodeGen.X64
                     emitter.PushRax();
 
                 emitter.MovEcx(1);
-
                 if (pointeeSize == 8)
                 {
                     if (expression.Operator == TokenKind.PlusPlus)
@@ -3774,11 +3636,9 @@ namespace JollyCCompiler.Compiler.CodeGen.X64
 
                 NormalizeIntegerAssignment(emitter, pointeeType);
                 emitter.MovRcxRax();
-
                 if (expression.IsPostfix)
                 {
                     emitter.MovRaxRspDisp32(8);
-
                     if (pointeeSize == 1)
                         emitter.EmitBytes(0x88, 0x08);
                     else if (pointeeSize == 2)
@@ -3794,7 +3654,6 @@ namespace JollyCCompiler.Compiler.CodeGen.X64
                 else
                 {
                     emitter.PopRax();
-
                     if (pointeeSize == 1)
                         emitter.EmitBytes(0x88, 0x08);
                     else if (pointeeSize == 2)
@@ -3830,15 +3689,12 @@ namespace JollyCCompiler.Compiler.CodeGen.X64
             }
 
             var typeSize = GetTypeSize(type);
-
             if (typeSize != 1 && typeSize != 2 && typeSize != 4 && typeSize != 8)
             {
                 throw new NotSupportedException($"Increment/decrement on global type '{type}' is not yet supported.");
             }
 
-            // Load the current value.
             emitter.LeaRaxRipRelative(name);
-
             if (typeSize == 1)
             {
                 if (IsUnsignedChar(type))
@@ -3859,12 +3715,10 @@ namespace JollyCCompiler.Compiler.CodeGen.X64
                 emitter.MovRaxFromMemory();
             }
 
-            // Preserve the old value for postfix ++/--.
             if (expression.IsPostfix)
                 emitter.PushRax();
 
             emitter.MovEcx(1);
-
             if (expression.Operator == TokenKind.PlusPlus)
             {
                 if (typeSize == 8)
@@ -3881,12 +3735,8 @@ namespace JollyCCompiler.Compiler.CodeGen.X64
             }
 
             NormalizeIntegerAssignment(emitter, type);
-
-            // Keep the new value in RCX while obtaining the global address.
             emitter.MovRcxRax();
             emitter.LeaRaxRipRelative(name);
-
-            // Store the new value.
             if (typeSize == 1)
             {
                 emitter.EmitBytes(0x88, 0x08);
@@ -3904,36 +3754,25 @@ namespace JollyCCompiler.Compiler.CodeGen.X64
                 emitter.EmitBytes(0x48, 0x89, 0x08);
             }
 
-            // For postfix ++/-- return the original value.
             if (expression.IsPostfix)
                 emitter.PopRax();
             else
                 emitter.MovRaxRcx();
         }
 
-private static void GenerateArrayIncrementDecrement(
-    ArraySubscriptExpression subscript,
-    UnaryExpression expression,
-    X64Emitter emitter,
-    List<X64DataItem> data,
-    Dictionary<string, (int Offset, string Type, bool IsConst)> variables,
-    Dictionary<string, (int Length, string Type)> arrays,
-    Dictionary<string, (int Index, string Type)> parameters)
+        private static void GenerateArrayIncrementDecrement(ArraySubscriptExpression subscript, UnaryExpression expression, X64Emitter emitter, List<X64DataItem> data, Dictionary<string, (int Offset, string Type, bool IsConst)> variables, Dictionary<string, (int Length, string Type)> arrays, Dictionary<string, (int Index, string Type)> parameters)
         {
             string arrayName;
-
             if (subscript.Array is IdentifierExpression identifier)
             {
                 arrayName = identifier.Name;
             }
             else
             {
-                throw new NotSupportedException(
-                    "Array increment/decrement currently requires a named array.");
+                throw new NotSupportedException("Array increment/decrement currently requires a named array.");
             }
 
             string? elementType = null;
-
             if (arrays.TryGetValue(arrayName, out var localArray))
             {
                 elementType = localArray.Type;
@@ -3945,31 +3784,17 @@ private static void GenerateArrayIncrementDecrement(
 
             if (elementType is null)
             {
-                throw new InvalidOperationException(
-                    $"Cannot determine array element type for '{arrayName}'.");
+                throw new InvalidOperationException($"Cannot determine array element type for '{arrayName}'.");
             }
 
             var elementSize = GetTypeSize(elementType);
-
-            if (elementSize != 1 &&
-                elementSize != 2 &&
-                elementSize != 4 &&
-                elementSize != 8)
+            if (elementSize != 1 && elementSize != 2 && elementSize != 4 && elementSize != 8)
             {
-                throw new NotSupportedException(
-                    $"Increment/decrement on array element type '{elementType}' is not yet supported.");
+                throw new NotSupportedException($"Increment/decrement on array element type '{elementType}' is not yet supported.");
             }
 
-            GenerateArraySubscriptAddress(
-                subscript,
-                emitter,
-                data,
-                variables,
-                arrays,
-                parameters);
-
+            GenerateArraySubscriptAddress(subscript, emitter, data, variables, arrays, parameters);
             emitter.PushRax();
-
             if (elementSize == 1)
             {
                 if (elementType == "unsigned char")
@@ -3997,7 +3822,6 @@ private static void GenerateArrayIncrementDecrement(
                 emitter.PushRax();
 
             emitter.MovEcx(1);
-
             if (expression.Operator == TokenKind.PlusPlus)
             {
                 if (elementSize == 8)
@@ -4015,9 +3839,7 @@ private static void GenerateArrayIncrementDecrement(
 
             if (elementSize == 1)
             {
-                NormalizeIntegerAssignment(
-                    emitter,
-                    elementType);
+                NormalizeIntegerAssignment(emitter, elementType);
             }
             else if (elementSize == 2)
             {
@@ -4030,9 +3852,7 @@ private static void GenerateArrayIncrementDecrement(
             if (expression.IsPostfix)
             {
                 emitter.MovRcxRax();
-
                 emitter.MovRaxRspDisp32(8);
-
                 if (elementSize == 1)
                     emitter.EmitBytes(0x88, 0x08);
                 else if (elementSize == 2)
@@ -4048,7 +3868,6 @@ private static void GenerateArrayIncrementDecrement(
             else
             {
                 emitter.MovRcxRspDisp32(0);
-
                 if (elementSize == 1)
                     emitter.EmitBytes(0x88, 0x01);
                 else if (elementSize == 2)
@@ -4067,13 +3886,11 @@ private static void GenerateArrayIncrementDecrement(
             var member = GetMemberInfo(target, variables, arrays, parameters);
             var memberType = member.Type;
             var memberSize = GetTypeSize(memberType);
-
             if (memberSize != 1 && memberSize != 2 && memberSize != 4 && memberSize != 8)
                 throw new NotSupportedException($"Increment/decrement on struct member type '{memberType}' is not yet supported.");
 
             GenerateLValueAddress(target, emitter, data, variables, arrays, parameters);
             emitter.PushRax();
-
             if (memberSize == 1)
             {
                 if (memberType == "unsigned char")
@@ -4092,7 +3909,6 @@ private static void GenerateArrayIncrementDecrement(
                 emitter.MovEaxRaxMemory();
             else
                 emitter.MovRaxFromMemory();
-
             if (expression.IsPostfix)
                 emitter.PushRax();
 
@@ -4100,7 +3916,6 @@ private static void GenerateArrayIncrementDecrement(
             {
                 var elementSize = GetPointeeSize(memberType);
                 emitter.MovEcx(elementSize);
-
                 if (expression.Operator == TokenKind.PlusPlus)
                     emitter.AddRaxRcx();
                 else
@@ -4109,7 +3924,6 @@ private static void GenerateArrayIncrementDecrement(
             else
             {
                 emitter.MovEcx(1);
-
                 if (expression.Operator == TokenKind.PlusPlus)
                 {
                     if (memberSize == 8)
@@ -4127,11 +3941,9 @@ private static void GenerateArrayIncrementDecrement(
             }
 
             emitter.MovRcxRax();
-
             if (expression.IsPostfix)
             {
                 emitter.MovRaxRspDisp32(8);
-
                 if (memberSize == 1)
                     emitter.EmitBytes(0x88, 0x08);
                 else if (memberSize == 2)
@@ -4147,7 +3959,6 @@ private static void GenerateArrayIncrementDecrement(
             else
             {
                 emitter.PopRax();
-
                 if (memberSize == 1)
                     emitter.EmitBytes(0x88, 0x08);
                 else if (memberSize == 2)
@@ -4165,20 +3976,15 @@ private static void GenerateArrayIncrementDecrement(
         {
             var elseLabel = emitter.CreateLabel("if_else");
             var endLabel = emitter.CreateLabel("if_end");
-
             GenerateExpression(statement.Condition, emitter, data, variables, arrays, parameters);
             emitter.TestEaxEax();
             emitter.Je(elseLabel);
-
             GenerateStatement(statement.Then, emitter, data, variables, arrays, parameters, frameSize);
-
             if (statement.Else is not null)
             {
                 emitter.Jmp(endLabel);
                 emitter.MarkLabel(elseLabel);
-
                 GenerateStatement(statement.Else, emitter, data, variables, arrays, parameters, frameSize);
-
                 emitter.MarkLabel(endLabel);
             }
             else
@@ -4231,6 +4037,12 @@ private static void GenerateArrayIncrementDecrement(
                         return true;
                     }
 
+                    if (_globals.TryGetValue(identifier.Name, out var global) && global.Type.EndsWith("*", StringComparison.Ordinal))
+                    {
+                        type = global.Type;
+                        return true;
+                    }
+
                     break;
 
                 case AddressOfExpression addressOf:
@@ -4246,7 +4058,6 @@ private static void GenerateArrayIncrementDecrement(
                     if (TryGetPointerType(dereference.Operand, variables, arrays, parameters, out var pointerType))
                     {
                         type = pointerType[..^1];
-
                         if (type.EndsWith("*", StringComparison.Ordinal))
                             return true;
                     }
@@ -4254,8 +4065,7 @@ private static void GenerateArrayIncrementDecrement(
                     break;
 
                 case CallExpression call:
-                    if (_functionReturnTypes.TryGetValue(call.Name, out var returnType) &&
-                        returnType.EndsWith("*", StringComparison.Ordinal))
+                    if (_functionReturnTypes.TryGetValue(call.Name, out var returnType) && returnType.EndsWith("*", StringComparison.Ordinal))
                     {
                         type = returnType;
                         return true;
@@ -4296,15 +4106,16 @@ private static void GenerateArrayIncrementDecrement(
 
                     break;
 
-                case BinaryExpression binary when binary.Operator is TokenKind.Plus or TokenKind.Minus:
+                case BinaryExpression binary when
+                    binary.Operator is TokenKind.Plus or TokenKind.Minus:
+
                     if (TryGetPointerType(binary.Left, variables, arrays, parameters, out var leftPointerType))
                     {
                         type = leftPointerType;
                         return true;
                     }
 
-                    if (binary.Operator == TokenKind.Plus &&
-                        TryGetPointerType(binary.Right, variables, arrays, parameters, out var rightPointerType))
+                    if (binary.Operator == TokenKind.Plus && TryGetPointerType(binary.Right, variables, arrays, parameters, out var rightPointerType))
                     {
                         type = rightPointerType;
                         return true;
@@ -4322,8 +4133,7 @@ private static void GenerateArrayIncrementDecrement(
             if (TryGetPointerType(expression, variables, arrays, parameters, out type))
                 return true;
 
-            if (expression is CallExpression call &&
-                _functionReturnTypes.TryGetValue(call.Name, out var returnType))
+            if (expression is CallExpression call && _functionReturnTypes.TryGetValue(call.Name, out var returnType))
             {
                 type = returnType;
                 return true;
@@ -4370,12 +4180,7 @@ private static void GenerateArrayIncrementDecrement(
                     return true;
                 }
 
-                if (TryGetPointerType(
-                        subscript.Array,
-                        variables,
-                        arrays,
-                        parameters,
-                        out var pointerType))
+                if (TryGetPointerType(subscript.Array, variables, arrays, parameters, out var pointerType))
                 {
                     type = pointerType[..^1];
                     return true;
@@ -4383,12 +4188,7 @@ private static void GenerateArrayIncrementDecrement(
 
                 if (subscript.Array is MemberAccessExpression arrayMember)
                 {
-                    if (!TryGetExpressionType(
-                            arrayMember.Object,
-                            variables,
-                            arrays,
-                            parameters,
-                            out var objectType))
+                    if (!TryGetExpressionType(arrayMember.Object, variables, arrays, parameters, out var objectType))
                     {
                         type = string.Empty;
                         return false;
@@ -4407,10 +4207,7 @@ private static void GenerateArrayIncrementDecrement(
 
                     if (objectType.StartsWith("union ", StringComparison.Ordinal))
                     {
-                        var field = GetUnionField(
-                            objectType,
-                            arrayMember.Member);
-
+                        var field = GetUnionField(objectType, arrayMember.Member);
                         if (field.ArrayLength is not null)
                         {
                             type = field.Type;
@@ -4419,10 +4216,7 @@ private static void GenerateArrayIncrementDecrement(
                     }
                     else if (objectType.StartsWith("struct ", StringComparison.Ordinal))
                     {
-                        var field = GetStructField(
-                            objectType,
-                            arrayMember.Member);
-
+                        var field = GetStructField(objectType, arrayMember.Member);
                         type = field.Type;
                         return true;
                     }
@@ -4431,12 +4225,7 @@ private static void GenerateArrayIncrementDecrement(
 
             if (expression is MemberAccessExpression member)
             {
-                if (!TryGetExpressionType(
-                        member.Object,
-                        variables,
-                        arrays,
-                        parameters,
-                        out var objectType))
+                if (!TryGetExpressionType(member.Object, variables, arrays, parameters, out var objectType))
                 {
                     type = string.Empty;
                     return false;
@@ -4455,19 +4244,19 @@ private static void GenerateArrayIncrementDecrement(
 
                 if (objectType.StartsWith("union ", StringComparison.Ordinal))
                 {
-                    var unionField = GetUnionField(
-                        objectType,
-                        member.Member);
-
+                    var unionField = GetUnionField(objectType, member.Member);
                     type = unionField.Type;
                     return true;
                 }
 
-                var structField = GetStructField(
-                    objectType,
-                    member.Member);
-
+                var structField = GetStructField(objectType, member.Member);
                 type = structField.Type;
+                return true;
+            }
+
+            if (expression is StringExpression)
+            {
+                type = "char*";
                 return true;
             }
 
@@ -4491,22 +4280,12 @@ private static void GenerateArrayIncrementDecrement(
 
             if (expression is UnaryExpression unary)
             {
-                return TryGetExpressionType(
-                    unary.Operand,
-                    variables,
-                    arrays,
-                    parameters,
-                    out type);
+                return TryGetExpressionType(unary.Operand, variables, arrays, parameters, out type);
             }
 
             if (expression is DereferenceExpression dereference)
             {
-                if (!TryGetExpressionType(
-                        dereference.Operand,
-                        variables,
-                        arrays,
-                        parameters,
-                        out var pointerType))
+                if (!TryGetExpressionType(dereference.Operand, variables, arrays, parameters, out var pointerType))
                 {
                     type = string.Empty;
                     return false;
@@ -4524,37 +4303,15 @@ private static void GenerateArrayIncrementDecrement(
 
             if (expression is BinaryExpression binary)
             {
-                if (binary.Operator is
-                    TokenKind.EqualEqual or
-                    TokenKind.NotEqual or
-                    TokenKind.Less or
-                    TokenKind.LessEqual or
-                    TokenKind.Greater or
-                    TokenKind.GreaterEqual or
-                    TokenKind.AndAnd or
-                    TokenKind.OrOr)
+                if (binary.Operator is TokenKind.EqualEqual or TokenKind.NotEqual or TokenKind.Less or TokenKind.LessEqual or TokenKind.Greater or TokenKind.GreaterEqual or TokenKind.AndAnd or TokenKind.OrOr)
                 {
                     type = "int";
                     return true;
                 }
 
-                if (TryGetExpressionType(
-                        binary.Left,
-                        variables,
-                        arrays,
-                        parameters,
-                        out var leftType) &&
-                    TryGetExpressionType(
-                        binary.Right,
-                        variables,
-                        arrays,
-                        parameters,
-                        out var rightType))
+                if (TryGetExpressionType(binary.Left, variables, arrays, parameters, out var leftType) && TryGetExpressionType(binary.Right, variables, arrays, parameters, out var rightType))
                 {
-                    type = GetCommonArithmeticType(
-                        leftType,
-                        rightType);
-
+                    type = GetCommonArithmeticType(leftType, rightType);
                     return true;
                 }
             }
@@ -4623,7 +4380,6 @@ private static void GenerateArrayIncrementDecrement(
                 throw new InvalidOperationException($"'{pointerType}' is not a pointer type.");
 
             var baseType = pointerType[..^1];
-
             return GetTypeSize(baseType);
         }
 
@@ -4632,11 +4388,9 @@ private static void GenerateArrayIncrementDecrement(
             if (expression.Object is CallExpression call && _functionReturnTypes.TryGetValue(call.Name, out var returnType) && returnType.StartsWith("union ", StringComparison.Ordinal) && !returnType.EndsWith("*", StringComparison.Ordinal))
             {
                 GenerateExpression(call, emitter, data, variables, arrays, parameters);
-
                 var returnedUnionSize = GetTypeSize(returnType);
                 var returnedMember = GetMemberInfo(expression, variables, arrays, parameters);
                 var returnedMemberSize = GetTypeSize(returnedMember.Type);
-
                 if (returnedUnionSize != 8)
                     throw new NotSupportedException($"Union return size {returnedUnionSize} is not yet supported for direct member access.");
 
@@ -4655,6 +4409,7 @@ private static void GenerateArrayIncrementDecrement(
                         emitter.EmitBytes(0x0F, 0xB7, 0xC0);
                     else
                         emitter.EmitBytes(0x0F, 0xBF, 0xC0);
+
                     return;
                 }
 
@@ -4672,10 +4427,8 @@ private static void GenerateArrayIncrementDecrement(
             }
 
             GenerateLValueAddress(expression, emitter, data, variables, arrays, parameters);
-
             var member = GetMemberInfo(expression, variables, arrays, parameters);
             var memberSize = GetTypeSize(member.Type);
-
             if (memberSize == 1)
             {
                 if (member.Type == "unsigned char")
@@ -4702,7 +4455,6 @@ private static void GenerateArrayIncrementDecrement(
         {
             var member = GetMemberInfo(target, variables, arrays, parameters);
             var memberSize = GetTypeSize(member.Type);
-
             if (member.Type.EndsWith("*", StringComparison.Ordinal))
             {
                 if (operatorKind != TokenKind.Equals)
@@ -4710,13 +4462,10 @@ private static void GenerateArrayIncrementDecrement(
 
                 GenerateLValueAddress(target, emitter, data, variables, arrays, parameters);
                 emitter.PushRax();
-
                 GenerateExpression(value, emitter, data, variables, arrays, parameters);
                 emitter.MovRcxRax();
-
                 emitter.PopRax();
                 emitter.EmitBytes(0x48, 0x89, 0x08);
-
                 return;
             }
 
@@ -4724,18 +4473,14 @@ private static void GenerateArrayIncrementDecrement(
             {
                 GenerateLValueAddress(target, emitter, data, variables, arrays, parameters);
                 emitter.PushRax();
-
                 if (operatorKind == TokenKind.Equals)
                 {
                     GenerateExpression(value, emitter, data, variables, arrays, parameters);
-
                     if (!TryGetExpressionType(value, variables, arrays, parameters, out var sourceType))
                         throw new InvalidOperationException("Cannot determine assignment source type.");
 
                     ConvertFloatingAssignment(sourceType, member.Type, emitter);
-
                     emitter.MovRaxRspDisp32(0);
-
                     if (member.Type == "float")
                         emitter.MovRaxMemoryXmm0Float();
                     else
@@ -4746,7 +4491,6 @@ private static void GenerateArrayIncrementDecrement(
                 }
 
                 emitter.MovRaxRspDisp32(0);
-
                 if (member.Type == "float")
                     emitter.MovssXmm0RaxMemory();
                 else
@@ -4758,12 +4502,10 @@ private static void GenerateArrayIncrementDecrement(
                     emitter.MovsdXmm1Xmm0();
 
                 GenerateExpression(value, emitter, data, variables, arrays, parameters);
-
                 if (!TryGetExpressionType(value, variables, arrays, parameters, out var compoundSourceType))
                     throw new InvalidOperationException("Cannot determine assignment source type.");
 
                 ConvertFloatingAssignment(compoundSourceType, member.Type, emitter);
-
                 if (member.Type == "float")
                 {
                     switch (operatorKind)
@@ -4785,8 +4527,7 @@ private static void GenerateArrayIncrementDecrement(
                             break;
 
                         default:
-                            throw new NotSupportedException(
-                                $"Compound assignment operator '{operatorKind}' is not supported for float struct members.");
+                            throw new NotSupportedException($"Compound assignment operator '{operatorKind}' is not supported for float struct members.");
                     }
 
                     emitter.MovssXmm0Xmm1();
@@ -4814,8 +4555,7 @@ private static void GenerateArrayIncrementDecrement(
                             break;
 
                         default:
-                            throw new NotSupportedException(
-                                $"Compound assignment operator '{operatorKind}' is not supported for double struct members.");
+                            throw new NotSupportedException($"Compound assignment operator '{operatorKind}' is not supported for double struct members.");
                     }
 
                     emitter.MovsdXmm0Xmm1();
@@ -4834,12 +4574,9 @@ private static void GenerateArrayIncrementDecrement(
             {
                 GenerateLValueAddress(target, emitter, data, variables, arrays, parameters);
                 emitter.PushRax();
-
                 GenerateExpression(value, emitter, data, variables, arrays, parameters);
                 emitter.MovRcxRax();
-
                 emitter.PopRax();
-
                 if (memberSize == 1)
                     emitter.EmitBytes(0x88, 0x08);
                 else if (memberSize == 2)
@@ -4860,7 +4597,6 @@ private static void GenerateArrayIncrementDecrement(
 
             GenerateLValueAddress(target, emitter, data, variables, arrays, parameters);
             emitter.PushRax();
-
             if (memberSize == 1)
                 emitter.MovzxEaxRaxMemoryByte();
             else if (memberSize == 2)
@@ -4874,18 +4610,13 @@ private static void GenerateArrayIncrementDecrement(
                 emitter.MovEaxRaxMemory();
 
             emitter.PushRax();
-
             GenerateExpression(value, emitter, data, variables, arrays, parameters);
             emitter.MovEcxEax();
-
             emitter.PopRax();
-
             GenerateCompoundAssignmentOperation(operatorKind, emitter, member.Type);
-
             emitter.MovEcxEax();
             emitter.MovRaxRspDisp32(0);
             emitter.AddRsp(8);
-
             if (memberSize == 1)
                 emitter.EmitBytes(0x88, 0x08);
             else if (memberSize == 2)
@@ -4953,4 +4684,3 @@ private static void GenerateArrayIncrementDecrement(
         }
     }
 }
-

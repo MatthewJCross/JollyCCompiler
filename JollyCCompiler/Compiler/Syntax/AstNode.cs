@@ -22,7 +22,7 @@ namespace JollyCCompiler.Compiler.Syntax
     public sealed record UnaryExpression(TokenKind Operator, ExpressionNode Operand, bool IsPostfix = false) : ExpressionNode;
     public sealed record CallExpression(string Name, IReadOnlyList<ExpressionNode> Arguments) : ExpressionNode;
     public sealed record AssignmentExpression(ExpressionNode Target, TokenKind Operator, ExpressionNode Value) : ExpressionNode;
-    public sealed record WhileStatement(ExpressionNode Condition, StatementNode Body) : StatementNode;
+    public sealed record ConditionalExpression(ExpressionNode Condition, ExpressionNode WhenTrue, ExpressionNode WhenFalse) : ExpressionNode; public sealed record WhileStatement(ExpressionNode Condition, StatementNode Body) : StatementNode;
     public sealed record DoWhileStatement(StatementNode Body, ExpressionNode Condition) : StatementNode;
     public sealed record IfStatement(ExpressionNode Condition, StatementNode Then, StatementNode? Else) : StatementNode;
     public sealed record SwitchStatement(ExpressionNode Expression, IReadOnlyList<SwitchCase> Cases, StatementNode? Default = null) : StatementNode;

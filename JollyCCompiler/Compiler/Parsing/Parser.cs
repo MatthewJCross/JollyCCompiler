@@ -933,6 +933,7 @@ namespace JollyCCompiler.Compiler.Parsing
             }
 
             int? arrayLength = null;
+            bool isUnspecifiedArray = false;
 
             if (Current.Kind == TokenKind.LeftBracket)
             {
@@ -951,6 +952,10 @@ namespace JollyCCompiler.Compiler.Parsing
                         ErrorAt(lengthToken, $"Invalid array size '{lengthToken.Text}'.");
                     }
                 }
+                else
+                {
+                    isUnspecifiedArray = true;
+                }
 
                 Expect(TokenKind.RightBracket, "Expected ']' after array declaration.");
             }
@@ -963,12 +968,37 @@ namespace JollyCCompiler.Compiler.Parsing
                 initializer = ParseInitializer();
             }
 
+            if (isUnspecifiedArray)
+            {
+                if (initializer is StringExpression stringExpression &&
+                    type is "char" or "unsigned char")
+                {
+                    arrayLength = stringExpression.Value.Length + 1;
+                }
+                else if (initializer is InitializerListExpression initializerList)
+                {
+                    arrayLength = initializerList.Elements.Count;
+                }
+                else
+                {
+                    ErrorAt(
+                        Previous,
+                        $"Array '{name}' has no size and its initializer does not provide a known array length.");
+                }
+            }
+
             if (isConst && initializer is null)
                 Error("A const variable must be initialized.");
 
             Expect(TokenKind.Semicolon, "Expected ';' after variable declaration.");
 
-            return new VariableDeclarationStatement(type, name, initializer, arrayLength, isConst, isExtern);
+            return new VariableDeclarationStatement(
+                type,
+                name,
+                initializer,
+                arrayLength,
+                isConst,
+                isExtern);
         }
 
         private ExpressionNode ParseInitializer()
@@ -1153,7 +1183,7 @@ namespace JollyCCompiler.Compiler.Parsing
 
         private ExpressionNode ParseAssignment()
         {
-            var left = ParseLogicalOr();
+            var left = ParseConditional();
 
             if (Current.Kind is TokenKind.Equals
                 or TokenKind.PlusEquals
@@ -1170,11 +1200,18 @@ namespace JollyCCompiler.Compiler.Parsing
                 var operatorToken = Current;
                 var operatorKind = Current.Kind;
                 Advance();
+
                 var right = ParseAssignment();
 
-                if (left is not IdentifierExpression and not ArraySubscriptExpression and not DereferenceExpression and not MemberAccessExpression)
+                if (left is not IdentifierExpression
+                    and not ArraySubscriptExpression
+                    and not DereferenceExpression
+                    and not MemberAccessExpression)
                 {
-                    ErrorAt(operatorToken, "The left side of an assignment must be a variable, array element, dereferenced pointer, or struct member.");
+                    ErrorAt(
+                        operatorToken,
+                        "The left side of an assignment must be a variable, array element, dereferenced pointer, or struct member.");
+
                     return right;
                 }
 
@@ -1187,6 +1224,29 @@ namespace JollyCCompiler.Compiler.Parsing
         private static bool IsDereferenceExpression(ExpressionNode expression)
         {
             return expression is UnaryExpression unary && unary.Operator == TokenKind.Star;
+        }
+
+        private ExpressionNode ParseConditional()
+        {
+            var condition = ParseLogicalOr();
+
+            if (Current.Kind != TokenKind.Question)
+                return condition;
+
+            Advance();
+
+            var whenTrue = ParseExpression();
+
+            Expect(
+                TokenKind.Colon,
+                "Expected ':' in conditional expression.");
+
+            var whenFalse = ParseConditional();
+
+            return new ConditionalExpression(
+                condition,
+                whenTrue,
+                whenFalse);
         }
 
         private ExpressionNode ParseLogicalOr()

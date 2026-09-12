@@ -116,6 +116,7 @@ public sealed class Lexer
                 ',' => TokenKind.Comma,
                 ';' => TokenKind.Semicolon,
                 ':' => TokenKind.Colon,
+                '?' => TokenKind.Question,
 
                 '&' => TokenKind.Ampersand,
                 '|' => TokenKind.Pipe,
