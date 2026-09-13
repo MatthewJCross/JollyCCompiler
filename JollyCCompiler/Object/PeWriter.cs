@@ -50,14 +50,6 @@ namespace JollyCCompiler.Object
             uint textVirtualSize = (uint)text.Length;
             uint rdataRva = AlignUp(TextRva + textVirtualSize, SectionAlignment);
             byte[] rdata = BuildRDataSection(result, rdataRva, out Dictionary<string, uint> dataSymbolRvas, out List<uint> baseRelocationRvas);
-            Debug.WriteLine($"TEXT RVA: 0x{TextRva:X}");
-            Debug.WriteLine($"TEXT SIZE: 0x{text.Length:X}");
-            Debug.WriteLine($"RDATA RVA: 0x{rdataRva:X}");
-            Debug.WriteLine($"RDATA SIZE: 0x{rdata.Length:X}");
-            foreach (var symbol in dataSymbolRvas)
-            {
-                Debug.WriteLine($"RDATA SYMBOL: {symbol.Key} = RVA 0x{symbol.Value:X}");
-            }
 
             uint idataRva = AlignUp(rdataRva + (uint)Math.Max(1, rdata.Length), SectionAlignment);
             byte[] idata = BuildImportSection(idataRva, out uint getCommandLineIatRva, out uint commandLineToArgvIatRva, out uint localAllocIatRva, out uint localFreeIatRva, out uint wideCharToMultiByteIatRva, out uint printfIatRva, out uint exitProcessIatRva);
@@ -98,7 +90,6 @@ namespace JollyCCompiler.Object
                     uint instructionRva = TextRva + (uint)entryStubSize + (uint)fixup.Offset;
                     uint nextInstructionRva = instructionRva + 4;
                     int displacement = checked( (int)( (long)targetRva - nextInstructionRva));
-                    Debug.WriteLine($"RIP FIXUP: symbol={fixup.Symbol}, fixupOffset=0x{fixup.Offset:X}, " + $"instructionRva=0x{instructionRva:X}, " + $"nextRva=0x{nextInstructionRva:X}, " + $"targetRva=0x{targetRva:X}, " + $"displacement={displacement}");
                     WriteInt32(text, entryStubSize + fixup.Offset, displacement);
                 }
                 else if (fixup.Kind == X64FixupKind.Relative32)
@@ -120,47 +111,30 @@ namespace JollyCCompiler.Object
                 }
             }
 
-            if (dataSymbolRvas.TryGetValue("$str5", out uint str5Rva))
-            {
-                int str5Offset = checked( (int)(str5Rva - rdataRva));
-                Debug.WriteLine($"FINAL STR5 RVA: 0x{str5Rva:X}");
-                Debug.WriteLine($"STR5 OFFSET IN RDATA: 0x{str5Offset:X}");
-                if (str5Offset >= 0 && str5Offset + 6 <= rdata.Length)
-                {
-                    Debug.WriteLine($"STR5 BYTES: " + BitConverter.ToString(rdata, str5Offset, 6));
-                }
-            }
+            //if (dataSymbolRvas.TryGetValue("$str5", out uint str5Rva))
+            //{
+            //    int str5Offset = checked( (int)(str5Rva - rdataRva));
+            //}
 
-            if (dataSymbolRvas.TryGetValue("$str6", out uint str6Rva))
-            {
-                int str6Offset = checked( (int)(str6Rva - rdataRva));
-                Debug.WriteLine($"FINAL STR6 RVA: 0x{str6Rva:X}");
-                Debug.WriteLine($"STR6 OFFSET IN RDATA: 0x{str6Offset:X}");
-                if (str6Offset >= 0 && str6Offset + 6 <= rdata.Length)
-                {
-                    Debug.WriteLine($"STR6 BYTES: " + BitConverter.ToString(rdata, str6Offset, 6));
-                }
-            }
+            //if (dataSymbolRvas.TryGetValue("$str6", out uint str6Rva))
+            //{
+            //    int str6Offset = checked( (int)(str6Rva - rdataRva));
+            //}
 
-            if (dataSymbolRvas.ContainsKey("$str5"))
-            {
-                foreach (var fixup in result.Fixups)
-                {
-                    if (!string.Equals(fixup.Symbol, "$str5", StringComparison.Ordinal))
-                    {
-                        continue;
-                    }
+            //if (dataSymbolRvas.ContainsKey("$str5"))
+            //{
+            //    foreach (var fixup in result.Fixups)
+            //    {
+            //        if (!string.Equals(fixup.Symbol, "$str5", StringComparison.Ordinal))
+            //        {
+            //            continue;
+            //        }
 
-                    int finalFixupOffset = entryStubSize + fixup.Offset;
-                    if (finalFixupOffset >= 0 && finalFixupOffset + 4 <= text.Length)
-                    {
-                        Debug.WriteLine($"FINAL STR5 FIXUP OFFSET: 0x{finalFixupOffset:X}");
-                        Debug.WriteLine($"FINAL STR5 DISP BYTES: " + BitConverter.ToString(text, finalFixupOffset, 4));
-                    }
+            //        int finalFixupOffset = entryStubSize + fixup.Offset;
 
-                    break;
-                }
-            }
+            //        break;
+            //    }
+            //}
 
             uint textRawSize = AlignUp((uint)text.Length, FileAlignment);
             uint rdataRawSize = AlignUp((uint)Math.Max(1, rdata.Length), FileAlignment);

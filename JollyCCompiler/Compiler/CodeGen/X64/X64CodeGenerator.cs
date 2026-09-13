@@ -345,17 +345,36 @@ namespace JollyCCompiler.Compiler.CodeGen.X64
             if (!_structs.TryGetValue(name, out var declaration))
                 throw new InvalidOperationException($"Unknown struct type 'struct {name}'.");
 
-            var size = 0;
+            var offset = 0;
+
             foreach (var field in declaration.Fields)
             {
-                var fieldSize = GetTypeSize(field.Type);
-                if (field.ArrayLength is int length)
-                    fieldSize *= length;
+                var fieldAlignment = GetTypeAlignment(field.Type);
+                var fieldSize = GetTypeSize(field.Type) * (field.ArrayLength ?? 1);
 
-                size += fieldSize;
+                offset = AlignUp(offset, fieldAlignment);
+                offset += fieldSize;
             }
 
-            return AlignUp(size, 8);
+            return AlignUp(offset, GetStructAlignment(name));
+        }
+
+        private static int GetStructAlignment(string name)
+        {
+            if (!_structs.TryGetValue(name, out var declaration))
+                throw new InvalidOperationException($"Unknown struct type 'struct {name}'.");
+
+            var alignment = 8;
+
+            foreach (var field in declaration.Fields)
+            {
+                var fieldAlignment = GetTypeAlignment(field.Type);
+
+                if (fieldAlignment > alignment)
+                    alignment = fieldAlignment;
+            }
+
+            return alignment;
         }
 
         private static int GetUnionSize(string name)
@@ -364,14 +383,68 @@ namespace JollyCCompiler.Compiler.CodeGen.X64
                 throw new InvalidOperationException($"Unknown union type '{name}'.");
 
             var size = 0;
+            var alignment = 1;
+
             foreach (var field in union.Fields)
             {
                 var fieldSize = GetTypeSize(field.Type) * (field.ArrayLength ?? 1);
+                var fieldAlignment = GetTypeAlignment(field.Type);
+
                 if (fieldSize > size)
                     size = fieldSize;
+
+                if (fieldAlignment > alignment)
+                    alignment = fieldAlignment;
             }
 
-            return ((size + 7) / 8) * 8;
+            return AlignUp(size, alignment);
+        }
+
+        private static int GetUnionAlignment(string name)
+        {
+            if (!_unions.TryGetValue(name, out var union))
+                throw new InvalidOperationException($"Unknown union type '{name}'.");
+
+            var alignment = 1;
+
+            foreach (var field in union.Fields)
+            {
+                var fieldAlignment = GetTypeAlignment(field.Type);
+
+                if (fieldAlignment > alignment)
+                    alignment = fieldAlignment;
+            }
+
+            return alignment;
+        }
+
+        private static int GetTypeAlignment(string type)
+        {
+            if (type is "char" or "unsigned char")
+                return 1;
+
+            if (type is "short" or "unsigned short")
+                return 2;
+
+            if (type is "int" or "unsigned int" or "long" or "unsigned long" or "float")
+                return 4;
+
+            if (type is "long long" or "unsigned long long" or "double")
+                return 8;
+
+            if (type.EndsWith("*", StringComparison.Ordinal) || type.StartsWith("function*(", StringComparison.Ordinal))
+                return 8;
+
+            if (type.StartsWith("enum ", StringComparison.Ordinal))
+                return 4;
+
+            if (type.StartsWith("struct ", StringComparison.Ordinal))
+                return GetStructAlignment(type[7..]);
+
+            if (type.StartsWith("union ", StringComparison.Ordinal))
+                return GetUnionAlignment(type[6..]);
+
+            throw new NotSupportedException($"Cannot determine the alignment of type '{type}'.");
         }
 
         private static (int Offset, string Type) GetStructField(string structType, string member)
@@ -380,15 +453,18 @@ namespace JollyCCompiler.Compiler.CodeGen.X64
                 throw new InvalidOperationException($"'{structType}' is not a struct type.");
 
             var name = structType[7..];
+
             if (!_structs.TryGetValue(name, out var declaration))
                 throw new InvalidOperationException($"Unknown struct type '{structType}'.");
 
             var offset = 0;
+
             foreach (var field in declaration.Fields)
             {
-                var fieldSize = GetTypeSize(field.Type);
-                if (field.ArrayLength is int length)
-                    fieldSize *= length;
+                var fieldAlignment = GetTypeAlignment(field.Type);
+                var fieldSize = GetTypeSize(field.Type) * (field.ArrayLength ?? 1);
+
+                offset = AlignUp(offset, fieldAlignment);
 
                 if (field.Name == member)
                     return (offset, field.Type);
@@ -851,15 +927,55 @@ namespace JollyCCompiler.Compiler.CodeGen.X64
                 if (statement.Initializer is null)
                 {
                     emitter.MovRax(0);
+
+                    if (unionSize >= 1)
+                        emitter.MovRbpDisp32Al(variable.Offset);
+
+                    if (unionSize >= 2)
+                        emitter.EmitBytes(0x66, 0x89, 0x45, unchecked((byte)(variable.Offset + 2)));
+
+                    if (unionSize >= 4)
+                        emitter.MovRbpDisp32Eax(variable.Offset);
+
+                    if (unionSize >= 8)
+                        emitter.MovRbpDisp8Rax(variable.Offset);
+
+                    return;
                 }
-                else if (statement.Initializer is InitializerListExpression)
+
+                if (statement.Initializer is InitializerListExpression unionInitializer)
                 {
-                    throw new NotSupportedException($"Union initializer list for '{statement.Name}' is not yet supported.");
+                    if (unionInitializer.Elements.Count == 0)
+                        return;
+
+                    var firstElement = unionInitializer.Elements[0];
+                    GenerateExpression(firstElement, emitter, data, variables, arrays, parameters);
+
+                    if (unionSize <= 1)
+                    {
+                        emitter.MovRbpDisp32Al(variable.Offset);
+                    }
+                    else if (unionSize <= 2)
+                    {
+                        emitter.EmitBytes(0x66, 0x89, 0x45, unchecked((byte)variable.Offset));
+                    }
+                    else if (unionSize <= 4)
+                    {
+                        emitter.MovRbpDisp32Eax(variable.Offset);
+                    }
+                    else if (unionSize <= 8)
+                    {
+                        emitter.MovRbpDisp8Rax(variable.Offset);
+                    }
+                    else
+                    {
+                        emitter.MovRbpDisp8Rax(variable.Offset);
+                    }
+
+                    return;
                 }
-                else
-                {
-                    GenerateExpression(statement.Initializer, emitter, data, variables, arrays, parameters);
-                }
+
+                GenerateExpression(statement.Initializer, emitter, data, variables, arrays, parameters);
 
                 if (unionSize == 1)
                     emitter.MovRbpDisp32Al(variable.Offset);
@@ -870,7 +986,7 @@ namespace JollyCCompiler.Compiler.CodeGen.X64
                 else if (unionSize == 8)
                     emitter.MovRbpDisp8Rax(variable.Offset);
                 else
-                    throw new NotSupportedException($"Initialization of union type '{statement.Type}' with size {unionSize} is not yet supported.");
+                    throw new NotSupportedException($"Initialization of union type '{statement.Type}' from an expression with size {unionSize} is not yet supported.");
 
                 return;
             }
@@ -1112,6 +1228,25 @@ namespace JollyCCompiler.Compiler.CodeGen.X64
                 throw new InvalidOperationException("Cannot determine source type of cast.");
 
             GenerateExpression(expression.Operand, emitter, data, variables, arrays, parameters);
+
+            var sourceIsPointer = sourceType.EndsWith("*", StringComparison.Ordinal);
+            var targetIsPointer = expression.Type.EndsWith("*", StringComparison.Ordinal);
+
+            if (sourceIsPointer && (expression.Type is "long long" or "unsigned long long"))
+                return;
+
+            if ((sourceType is "long long" or "unsigned long long") && targetIsPointer)
+                return;
+
+            if (sourceIsPointer && expression.Type is "int" or "unsigned int")
+                return;
+
+            if ((sourceType is "int" or "unsigned int") && targetIsPointer)
+            {
+                emitter.EmitBytes(0x48, 0x89, 0xC0);
+                return;
+            }
+
             if (expression.Type is "int" or "unsigned int")
             {
                 if (sourceType == "float")
@@ -1696,9 +1831,11 @@ namespace JollyCCompiler.Compiler.CodeGen.X64
         private static void GenerateArraySubscriptAddress(ArraySubscriptExpression expression, X64Emitter emitter, List<X64DataItem> data, Dictionary<string, (int Offset, string Type, bool IsConst)> variables, Dictionary<string, (int Length, string Type)> arrays, Dictionary<string, (int Index, string Type)> parameters)
         {
             string elementType;
+
             if (expression.Array is IdentifierExpression identifier && arrays.TryGetValue(identifier.Name, out var array))
             {
                 elementType = array.Type;
+
                 if (variables.TryGetValue(identifier.Name, out var arrayVariable))
                 {
                     emitter.LeaRaxRbpDisp32(arrayVariable.Offset);
@@ -1712,29 +1849,69 @@ namespace JollyCCompiler.Compiler.CodeGen.X64
                     throw new InvalidOperationException($"Array '{identifier.Name}' has no storage.");
                 }
             }
+            else if (expression.Array is MemberAccessExpression member)
+            {
+                var memberInfo = GetMemberInfo(member, variables, arrays, parameters);
+                elementType = memberInfo.Type;
+
+                if (memberInfo.Type.EndsWith("*", StringComparison.Ordinal))
+                {
+                    GenerateLValueAddress(member, emitter, data, variables, arrays, parameters);
+                    emitter.MovRaxFromMemory();
+                    elementType = memberInfo.Type[..^1].TrimEnd();
+                }
+                else
+                {
+                    GenerateLValueAddress(member, emitter, data, variables, arrays, parameters);
+                }
+            }
             else if (TryGetPointerType(expression.Array, variables, arrays, parameters, out var pointerType))
             {
-                elementType = pointerType[..^1];
+                elementType = pointerType[..^1].TrimEnd();
                 GenerateExpression(expression.Array, emitter, data, variables, arrays, parameters);
             }
             else
             {
                 if (!TryGetExpressionType(expression.Array, variables, arrays, parameters, out elementType))
-                {
                     throw new InvalidOperationException("Cannot determine array element type.");
-                }
 
                 GenerateLValueAddress(expression.Array, emitter, data, variables, arrays, parameters);
+
                 if (elementType.EndsWith("*", StringComparison.Ordinal))
                 {
                     emitter.MovRaxFromMemory();
-                    elementType = elementType[..^1];
+                    elementType = elementType[..^1].TrimEnd();
                 }
             }
 
             var elementSize = GetTypeSize(elementType);
+
             emitter.PushRax();
             GenerateExpression(expression.Index, emitter, data, variables, arrays, parameters);
+
+            if (elementSize == 2)
+                emitter.ImulEaxImm8(2);
+            else if (elementSize == 4)
+                emitter.ImulEaxImm8(4);
+            else if (elementSize == 8)
+                emitter.ImulEaxImm8(8);
+            else if (elementSize == 16)
+                emitter.ImulEaxImm8(16);
+            else if (elementSize != 1)
+                throw new NotSupportedException($"Array element size '{elementSize}' is not supported for indexed addressing.");
+
+            emitter.MovEcxEax();
+            emitter.PopRax();
+            emitter.AddRaxRcx();
+        }
+
+        private static void GenerateIndexedAddressFromBase(ExpressionNode index, string elementType, X64Emitter emitter, List<X64DataItem> data, Dictionary<string, (int Offset, string Type, bool IsConst)> variables, Dictionary<string, (int Length, string Type)> arrays, Dictionary<string, (int Index, string Type)> parameters)
+        {
+            var elementSize = GetTypeSize(elementType);
+
+            emitter.PushRax();
+            GenerateExpression(index, emitter, data, variables, arrays, parameters);
+
             if (elementSize == 2)
                 emitter.ImulEaxImm8(2);
             else if (elementSize == 4)
@@ -2022,10 +2199,38 @@ namespace JollyCCompiler.Compiler.CodeGen.X64
                     throw new InvalidOperationException($"Cannot modify const global '{target.Name}'.");
 
                 var globalSize = GetTypeSize(global.Type);
+
                 if (operatorKind == TokenKind.Equals)
                 {
+                    if (global.Type.StartsWith("struct ", StringComparison.Ordinal))
+                    {
+                        if (globalSize != 8)
+                            throw new NotSupportedException($"Struct assignment for global type '{global.Type}' with size {globalSize} is not yet supported.");
+
+                        emitter.LeaRcxRipRelative(target.Name);
+
+                        if (value is IdentifierExpression source)
+                        {
+                            if (!TryGetScalarStorageOffset(source.Name, variables, arrays, parameters, out var sourceOffset, out var sourceType, out _))
+                                throw new InvalidOperationException($"Variable '{source.Name}' has no assignable storage.");
+
+                            if (!string.Equals(global.Type, sourceType, StringComparison.Ordinal))
+                                throw new InvalidOperationException($"Cannot assign '{sourceType}' to '{global.Type}'.");
+
+                            emitter.MovRaxRbpDisp32(sourceOffset);
+                        }
+                        else
+                        {
+                            GenerateExpression(value, emitter, data, variables, arrays, parameters);
+                        }
+
+                        emitter.EmitBytes(0x48, 0x89, 0x01);
+                        return;
+                    }
+
                     emitter.LeaRcxRipRelative(target.Name);
                     GenerateExpression(value, emitter, data, variables, arrays, parameters);
+
                     if (globalSize == 1)
                     {
                         emitter.EmitBytes(0x88, 0x01);
@@ -2063,6 +2268,7 @@ namespace JollyCCompiler.Compiler.CodeGen.X64
                     throw new NotSupportedException($"Compound assignment on global type '{global.Type}' is not yet supported.");
 
                 emitter.LeaRaxRipRelative(target.Name);
+
                 if (globalSize == 1)
                 {
                     if (IsUnsignedChar(global.Type))
@@ -2085,6 +2291,7 @@ namespace JollyCCompiler.Compiler.CodeGen.X64
 
                 emitter.PushRax();
                 GenerateExpression(value, emitter, data, variables, arrays, parameters);
+
                 if (globalSize == 8)
                     emitter.MovRcxRax();
                 else
@@ -2095,6 +2302,7 @@ namespace JollyCCompiler.Compiler.CodeGen.X64
                 NormalizeIntegerAssignment(emitter, global.Type);
                 emitter.MovRcxRax();
                 emitter.LeaRaxRipRelative(target.Name);
+
                 if (globalSize == 1)
                     emitter.EmitBytes(0x88, 0x08);
                 else if (globalSize == 2)
@@ -2114,6 +2322,35 @@ namespace JollyCCompiler.Compiler.CodeGen.X64
             if (isConst)
                 throw new InvalidOperationException($"Cannot modify const variable '{target.Name}'.");
 
+            if (type.StartsWith("struct ", StringComparison.Ordinal) && operatorKind == TokenKind.Equals)
+            {
+                var structSize = GetTypeSize(type);
+
+                if (value is IdentifierExpression source)
+                {
+                    if (!TryGetScalarStorageOffset(source.Name, variables, arrays, parameters, out var sourceOffset, out var sourceType, out _))
+                        throw new InvalidOperationException($"Variable '{source.Name}' has no assignable storage.");
+
+                    if (!string.Equals(type, sourceType, StringComparison.Ordinal))
+                        throw new InvalidOperationException($"Cannot assign '{sourceType}' to '{type}'.");
+
+                    CopyStackMemory(sourceOffset, offset, structSize, emitter);
+                    return;
+                }
+
+                if (structSize == 8)
+                {
+                    if (TryGetExpressionType(value, variables, arrays, parameters, out var valueType) && !string.Equals(type, valueType, StringComparison.Ordinal))
+                        throw new InvalidOperationException($"Cannot assign '{valueType}' to '{type}'.");
+
+                    GenerateExpression(value, emitter, data, variables, arrays, parameters);
+                    emitter.MovRbpDisp8Rax(offset);
+                    return;
+                }
+
+                throw new NotSupportedException($"Struct assignment from expression for type '{type}' with size {structSize} is not yet supported.");
+            }
+
             if (type.EndsWith("*", StringComparison.Ordinal))
             {
                 if (operatorKind == TokenKind.Equals)
@@ -2124,19 +2361,19 @@ namespace JollyCCompiler.Compiler.CodeGen.X64
                 }
 
                 if (operatorKind != TokenKind.PlusEquals && operatorKind != TokenKind.MinusEquals)
-                {
                     throw new NotSupportedException($"Compound assignment operator '{operatorKind}' is not supported for pointer '{target.Name}'.");
-                }
 
                 var elementSize = GetPointeeSize(type);
                 emitter.MovRaxRbpDisp32(offset);
                 emitter.PushRax();
                 GenerateExpression(value, emitter, data, variables, arrays, parameters);
+
                 if (elementSize != 1)
                     emitter.ImulEaxImm8((byte)elementSize);
 
                 emitter.MovEcxEax();
                 emitter.PopRax();
+
                 if (operatorKind == TokenKind.PlusEquals)
                     emitter.AddRaxRcx();
                 else
@@ -2163,6 +2400,7 @@ namespace JollyCCompiler.Compiler.CodeGen.X64
                 emitter.MovssXmm1Xmm0();
                 GenerateExpression(value, emitter, data, variables, arrays, parameters);
                 ConvertFloatingAssignment(sourceType, "float", emitter);
+
                 switch (operatorKind)
                 {
                     case TokenKind.PlusEquals:
@@ -2207,6 +2445,7 @@ namespace JollyCCompiler.Compiler.CodeGen.X64
                 emitter.MovsdXmm1Xmm0();
                 GenerateExpression(value, emitter, data, variables, arrays, parameters);
                 ConvertFloatingAssignment(sourceType, "double", emitter);
+
                 switch (operatorKind)
                 {
                     case TokenKind.PlusEquals:
@@ -2235,6 +2474,7 @@ namespace JollyCCompiler.Compiler.CodeGen.X64
             }
 
             var typeSize = GetTypeSize(type);
+
             if (operatorKind == TokenKind.Equals)
             {
                 if (type.StartsWith("union ", StringComparison.Ordinal))
@@ -2248,6 +2488,7 @@ namespace JollyCCompiler.Compiler.CodeGen.X64
                             throw new InvalidOperationException($"Cannot assign '{sourceType}' to '{type}'.");
 
                         var unionSize = GetTypeSize(type);
+
                         if (unionSize == 8)
                         {
                             emitter.MovRaxRbpDisp32(sourceOffset);
@@ -2265,6 +2506,7 @@ namespace JollyCCompiler.Compiler.CodeGen.X64
                         throw new InvalidOperationException($"Cannot assign '{valueType}' to '{type}'.");
 
                     var expressionSize = GetTypeSize(type);
+
                     if (expressionSize != 8)
                         throw new NotSupportedException($"Union assignment size {expressionSize} is not yet supported.");
 
@@ -2276,6 +2518,7 @@ namespace JollyCCompiler.Compiler.CodeGen.X64
                 string? assignmentSourceType = null;
                 TryGetExpressionType(value, variables, arrays, parameters, out assignmentSourceType);
                 GenerateExpression(value, emitter, data, variables, arrays, parameters);
+
                 if (typeSize == 1)
                 {
                     emitter.MovRbpDisp32Al(offset);
@@ -2331,6 +2574,7 @@ namespace JollyCCompiler.Compiler.CodeGen.X64
 
             emitter.PushRax();
             GenerateExpression(value, emitter, data, variables, arrays, parameters);
+
             if (typeSize == 8)
                 emitter.MovRcxRax();
             else
@@ -2339,6 +2583,7 @@ namespace JollyCCompiler.Compiler.CodeGen.X64
             emitter.PopRax();
             GenerateCompoundAssignmentOperation(operatorKind, emitter, type);
             NormalizeIntegerAssignment(emitter, type);
+
             if (typeSize == 1)
                 emitter.MovRbpDisp32Al(offset);
             else if (typeSize == 2)
@@ -2351,52 +2596,88 @@ namespace JollyCCompiler.Compiler.CodeGen.X64
                 throw new NotSupportedException($"Compound assignment on type '{type}' is not yet supported.");
         }
 
+        private static void CopyStackMemory(int sourceOffset, int destinationOffset, int size, X64Emitter emitter)
+        {
+            var copied = 0;
+
+            while (size - copied >= 8)
+            {
+                emitter.MovRaxRbpDisp32(sourceOffset + copied);
+                emitter.MovRbpDisp8Rax(destinationOffset + copied);
+                copied += 8;
+            }
+
+            if (size - copied >= 4)
+            {
+                emitter.MovEaxRbpDisp32(sourceOffset + copied);
+                emitter.MovRbpDisp32Eax(destinationOffset + copied);
+                copied += 4;
+            }
+
+            if (size - copied >= 2)
+            {
+                emitter.EmitBytes(0x66, 0x8B, 0x85, unchecked((byte)(sourceOffset + copied)));
+                emitter.EmitBytes(0x66, 0x89, 0x85, unchecked((byte)(destinationOffset + copied)));
+                copied += 2;
+            }
+
+            if (size - copied >= 1)
+            {
+                emitter.MovAlRbpDisp32(sourceOffset + copied);
+                emitter.MovRbpDisp32Al(destinationOffset + copied);
+            }
+        }
+
         private static void GenerateArrayAssignmentExpression(ArraySubscriptExpression target, TokenKind operatorKind, ExpressionNode value, X64Emitter emitter, List<X64DataItem> data, Dictionary<string, (int Offset, string Type, bool IsConst)> variables, Dictionary<string, (int Length, string Type)> arrays, Dictionary<string, (int Index, string Type)> parameters)
         {
-            string arrayName;
+            string? arrayName = null;
+            string? elementType = null;
+
             if (target.Array is IdentifierExpression identifier)
             {
                 arrayName = identifier.Name;
-            }
-            else
-            {
-                throw new NotSupportedException("Array assignment currently requires a named array or pointer.");
-            }
 
-            string? elementType = null;
-            if (arrays.TryGetValue(arrayName, out var localArray))
-            {
-                elementType = localArray.Type;
+                if (arrays.TryGetValue(arrayName, out var localArray))
+                    elementType = localArray.Type;
+                else if (_globalArrays.TryGetValue(arrayName, out var globalArray))
+                    elementType = globalArray.Type;
+                else if (TryGetExpressionType(target.Array, variables, arrays, parameters, out var arrayExpressionType) && arrayExpressionType.EndsWith("*", StringComparison.Ordinal))
+                    elementType = arrayExpressionType[..^1].TrimEnd();
             }
-            else if (_globalArrays.TryGetValue(arrayName, out var globalArray))
+            else if (target.Array is MemberAccessExpression member)
             {
-                elementType = globalArray.Type;
+                var memberInfo = GetMemberInfo(member, variables, arrays, parameters);
+                elementType = memberInfo.Type;
+
+                if (elementType.EndsWith("*", StringComparison.Ordinal))
+                    elementType = elementType[..^1].TrimEnd();
             }
-            else if (TryGetExpressionType(target.Array, variables, arrays, parameters, out var arrayExpressionType) && arrayExpressionType.EndsWith("*", StringComparison.Ordinal))
+            else if (TryGetExpressionType(target.Array, variables, arrays, parameters, out var expressionType) && expressionType.EndsWith("*", StringComparison.Ordinal))
             {
-                elementType = arrayExpressionType[..^1].TrimEnd();
+                elementType = expressionType[..^1].TrimEnd();
             }
 
             if (elementType is null)
-            {
-                throw new InvalidOperationException($"Cannot determine array element type for '{arrayName}'.");
-            }
+                throw new InvalidOperationException($"Cannot determine array element type for '{target.Array.GetType().Name}'.");
 
             var elementSize = GetTypeSize(elementType);
+
             GenerateArraySubscriptAddress(target, emitter, data, variables, arrays, parameters);
+
             if (elementType == "float" || elementType == "double")
             {
                 emitter.PushRax();
+
                 if (operatorKind == TokenKind.Equals)
                 {
                     GenerateExpression(value, emitter, data, variables, arrays, parameters);
+
                     if (!TryGetExpressionType(value, variables, arrays, parameters, out var sourceType))
-                    {
                         throw new InvalidOperationException("Cannot determine assignment source type.");
-                    }
 
                     ConvertFloatingAssignment(sourceType, elementType, emitter);
                     emitter.MovRaxRspDisp32(0);
+
                     if (elementType == "float")
                         emitter.MovRaxMemoryXmm0Float();
                     else
@@ -2407,6 +2688,7 @@ namespace JollyCCompiler.Compiler.CodeGen.X64
                 }
 
                 emitter.MovRaxRspDisp32(0);
+
                 if (elementType == "float")
                     emitter.MovssXmm0RaxMemory();
                 else
@@ -2418,12 +2700,12 @@ namespace JollyCCompiler.Compiler.CodeGen.X64
                     emitter.MovsdXmm1Xmm0();
 
                 GenerateExpression(value, emitter, data, variables, arrays, parameters);
+
                 if (!TryGetExpressionType(value, variables, arrays, parameters, out var compoundSourceType))
-                {
                     throw new InvalidOperationException("Cannot determine assignment source type.");
-                }
 
                 ConvertFloatingAssignment(compoundSourceType, elementType, emitter);
+
                 if (elementType == "float")
                 {
                     switch (operatorKind)
@@ -2486,10 +2768,12 @@ namespace JollyCCompiler.Compiler.CodeGen.X64
             }
 
             emitter.PushRax();
+
             if (operatorKind == TokenKind.Equals)
             {
                 GenerateExpression(value, emitter, data, variables, arrays, parameters);
                 emitter.MovRcxRspDisp32(0);
+
                 if (elementSize == 1)
                 {
                     emitter.EmitBytes(0x88, 0x01);
@@ -2518,9 +2802,7 @@ namespace JollyCCompiler.Compiler.CodeGen.X64
             }
 
             if (elementSize != 1 && elementSize != 2 && elementSize != 4 && elementSize != 8)
-            {
                 throw new NotSupportedException($"Compound assignment on array element type '{elementType}' is not yet supported.");
-            }
 
             if (elementSize == 1)
             {
@@ -2529,13 +2811,9 @@ namespace JollyCCompiler.Compiler.CodeGen.X64
             else if (elementSize == 2)
             {
                 if (string.Equals(elementType, "unsigned short", StringComparison.Ordinal))
-                {
                     emitter.EmitBytes(0x0F, 0xB7, 0x00);
-                }
                 else
-                {
                     emitter.MovsxEaxRaxMemoryWord();
-                }
             }
             else if (elementSize == 4)
             {
@@ -2548,6 +2826,7 @@ namespace JollyCCompiler.Compiler.CodeGen.X64
 
             emitter.PushRax();
             GenerateExpression(value, emitter, data, variables, arrays, parameters);
+
             if (elementSize == 8)
                 emitter.MovRcxRax();
             else
@@ -2555,6 +2834,7 @@ namespace JollyCCompiler.Compiler.CodeGen.X64
 
             emitter.PopRax();
             GenerateCompoundAssignmentOperation(operatorKind, emitter, elementType);
+
             if (elementSize == 1)
             {
                 emitter.MovzxEaxAl();
@@ -2574,6 +2854,7 @@ namespace JollyCCompiler.Compiler.CodeGen.X64
 
             emitter.MovRaxRspDisp32(0);
             emitter.AddRsp(8);
+
             if (elementSize == 1)
                 emitter.EmitBytes(0x88, 0x08);
             else if (elementSize == 2)
