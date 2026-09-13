@@ -20,7 +20,7 @@ namespace JollyCCompiler.Compiler.Syntax
     public sealed record InitializerListExpression(IReadOnlyList<ExpressionNode> Elements) : ExpressionNode;
     public sealed record BinaryExpression(ExpressionNode Left, TokenKind Operator, ExpressionNode Right) : ExpressionNode;
     public sealed record UnaryExpression(TokenKind Operator, ExpressionNode Operand, bool IsPostfix = false) : ExpressionNode;
-    public sealed record CallExpression(string Name, IReadOnlyList<ExpressionNode> Arguments) : ExpressionNode;
+    public sealed record CallExpression(ExpressionNode Function, IReadOnlyList<ExpressionNode> Arguments) : ExpressionNode;
     public sealed record AssignmentExpression(ExpressionNode Target, TokenKind Operator, ExpressionNode Value) : ExpressionNode;
     public sealed record ConditionalExpression(ExpressionNode Condition, ExpressionNode WhenTrue, ExpressionNode WhenFalse) : ExpressionNode; public sealed record WhileStatement(ExpressionNode Condition, StatementNode Body) : StatementNode;
     public sealed record DoWhileStatement(StatementNode Body, ExpressionNode Condition) : StatementNode;
@@ -40,4 +40,5 @@ namespace JollyCCompiler.Compiler.Syntax
     public sealed record CastExpression(string Type, ExpressionNode Operand) : ExpressionNode;
     public sealed record EnumMemberNode(string Name, int Value) : AstNode;
     public sealed record EnumDeclarationNode(string? Name, IReadOnlyList<EnumMemberNode> Members) : AstNode;
+    public sealed record CommaExpression(IReadOnlyList<ExpressionNode> Expressions) : ExpressionNode;
 }

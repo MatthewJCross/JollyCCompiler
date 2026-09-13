@@ -416,12 +416,34 @@ namespace JollyCCompiler.Compiler.Parsing
                 {
                     Advance();
 
+                    var negative = false;
+
+                    if (Current.Kind == TokenKind.Minus)
+                    {
+                        negative = true;
+                        Advance();
+                    }
+
                     var valueToken = Expect(TokenKind.IntegerLiteral, "Expected integer value for enum member.");
 
                     if (valueToken.Kind != TokenKind.IntegerLiteral)
                         return null;
 
-                    value = int.Parse(valueToken.Text);
+                    if (!TryParseIntegerLiteral(valueToken.Text, out var parsedValue, out _))
+                    {
+                        ErrorAt(valueToken, $"Invalid integer value '{valueToken.Text}' for enum member.");
+                        return null;
+                    }
+
+                    try
+                    {
+                        value = checked((int)(negative ? -parsedValue : parsedValue));
+                    }
+                    catch (OverflowException)
+                    {
+                        ErrorAt(valueToken, $"Enum value '{valueToken.Text}' is outside the valid int range.");
+                        return null;
+                    }
                 }
 
                 if (_enumConstants.ContainsKey(memberName.Text))
@@ -433,10 +455,7 @@ namespace JollyCCompiler.Compiler.Parsing
                     _enumConstants[memberName.Text] = value;
                 }
 
-                members.Add(
-                    new EnumMemberNode(
-                        memberName.Text,
-                        value));
+                members.Add(new EnumMemberNode(memberName.Text, value));
 
                 nextValue = value + 1;
 
@@ -507,81 +526,79 @@ namespace JollyCCompiler.Compiler.Parsing
 
             if (Current.Kind != TokenKind.RightParen)
             {
-                while (true)
+                if (Current.Kind == TokenKind.Void)
                 {
-                    var parameterType = ParseType();
-
-                    if (parameterType is null)
-                        return null;
-
-                    string parameterName;
-
-                    if (IsFunctionPointerDeclarator())
-                    {
-                        var functionPointerType = ParseFunctionPointerType(
-                            parameterType,
-                            out parameterName);
-
-                        if (functionPointerType is null)
-                            return null;
-
-                        parameterType = functionPointerType;
-                    }
-                    else
-                    {
-                        var parameterNameToken = Expect(
-                            TokenKind.Identifier,
-                            "Expected parameter name.");
-
-                        if (parameterNameToken.Kind != TokenKind.Identifier)
-                            return null;
-
-                        parameterName = parameterNameToken.Text;
-
-                        if (Current.Kind == TokenKind.LeftBracket)
-                        {
-                            Advance();
-
-                            if (Current.Kind == TokenKind.IntegerLiteral)
-                                Advance();
-
-                            Expect(
-                                TokenKind.RightBracket,
-                                "Expected ']' after array parameter.");
-
-                            parameterType += "*";
-                        }
-                    }
-
-                    parameters.Add(
-                        new ParameterNode(
-                            parameterType,
-                            parameterName));
-
-                    if (Current.Kind != TokenKind.Comma)
-                        break;
-
                     Advance();
 
-                    if (Current.Kind == TokenKind.RightParen)
+                    if (Current.Kind != TokenKind.RightParen)
                     {
-                        Error("Expected parameter after ','.");
-                        break;
+                        Error("Expected ')' after 'void' in parameter list.");
+                        return null;
+                    }
+                }
+                else
+                {
+                    while (true)
+                    {
+                        var parameterType = ParseType();
+
+                        if (parameterType is null)
+                            return null;
+
+                        string parameterName;
+
+                        if (IsFunctionPointerDeclarator())
+                        {
+                            var functionPointerType = ParseFunctionPointerType(parameterType, out parameterName);
+
+                            if (functionPointerType is null)
+                                return null;
+
+                            parameterType = functionPointerType;
+                        }
+                        else
+                        {
+                            var parameterNameToken = Expect(TokenKind.Identifier, "Expected parameter name.");
+
+                            if (parameterNameToken.Kind != TokenKind.Identifier)
+                                return null;
+
+                            parameterName = parameterNameToken.Text;
+
+                            if (Current.Kind == TokenKind.LeftBracket)
+                            {
+                                Advance();
+
+                                if (Current.Kind == TokenKind.IntegerLiteral)
+                                    Advance();
+
+                                Expect(TokenKind.RightBracket, "Expected ']' after array parameter.");
+
+                                parameterType += "*";
+                            }
+                        }
+
+                        parameters.Add(new ParameterNode(parameterType, parameterName));
+
+                        if (Current.Kind != TokenKind.Comma)
+                            break;
+
+                        Advance();
+
+                        if (Current.Kind == TokenKind.RightParen)
+                        {
+                            Error("Expected parameter after ','.");
+                            break;
+                        }
                     }
                 }
             }
 
-            Expect(
-                TokenKind.RightParen,
-                "Expected ')' after parameters.");
+            Expect(TokenKind.RightParen, "Expected ')' after parameters.");
 
             var body = ParseBlock();
 
-            return new FunctionNode(
-                returnType,
-                name.Text,
-                parameters,
-                body);
+            return new FunctionNode(returnType, name.Text, parameters, body);
         }
 
         private string? ParseType()
@@ -1178,7 +1195,18 @@ namespace JollyCCompiler.Compiler.Parsing
 
         private ExpressionNode ParseExpression()
         {
-            return ParseAssignment();
+            var expressions = new List<ExpressionNode> { ParseAssignment() };
+
+            while (Current.Kind == TokenKind.Comma)
+            {
+                Advance();
+                expressions.Add(ParseAssignment());
+            }
+
+            if (expressions.Count == 1)
+                return expressions[0];
+
+            return new CommaExpression(expressions);
         }
 
         private ExpressionNode ParseAssignment()
@@ -1506,33 +1534,76 @@ namespace JollyCCompiler.Compiler.Parsing
 
             while (true)
             {
-                if (Current.Kind is TokenKind.Dot or TokenKind.Arrow)
+                if (Current.Kind == TokenKind.LeftParen)
                 {
-                    var operatorKind = Current.Kind;
-                    var throughPointer = operatorKind == TokenKind.Arrow;
                     Advance();
-                    var member = Expect(TokenKind.Identifier, throughPointer ? "Expected member name after '->'." : "Expected member name after '.'.");
-                    if (member.Kind != TokenKind.Identifier)
-                        return expression;
 
-                    expression = new MemberAccessExpression(expression, member.Text, throughPointer);
+                    var arguments = new List<ExpressionNode>();
+
+                    if (Current.Kind != TokenKind.RightParen)
+                    {
+                        while (true)
+                        {
+                            arguments.Add(ParseAssignment());
+
+                            if (Current.Kind != TokenKind.Comma)
+                                break;
+
+                            Advance();
+
+                            if (Current.Kind == TokenKind.RightParen)
+                            {
+                                Error("Expected expression after ','.");
+                                break;
+                            }
+                        }
+                    }
+
+                    Expect(TokenKind.RightParen, "Expected ')' after function arguments.");
+                    expression = new CallExpression(expression, arguments);
                     continue;
                 }
 
                 if (Current.Kind == TokenKind.LeftBracket)
                 {
                     Advance();
+
                     var index = ParseExpression();
-                    Expect(TokenKind.RightBracket, "Expected ']' after array subscript.");
+
+                    Expect(TokenKind.RightBracket, "Expected ']' after array index.");
                     expression = new ArraySubscriptExpression(expression, index);
                     continue;
                 }
 
-                if (Current.Kind is TokenKind.PlusPlus or TokenKind.MinusMinus)
+                if (Current.Kind == TokenKind.Dot)
                 {
-                    var operatorKind = Current.Kind;
                     Advance();
-                    expression = new UnaryExpression(operatorKind, expression, true);
+
+                    var member = Expect(TokenKind.Identifier, "Expected member name after '.'.");
+                    expression = new MemberAccessExpression(expression, member.Text);
+                    continue;
+                }
+
+                if (Current.Kind == TokenKind.Arrow)
+                {
+                    Advance();
+
+                    var member = Expect(TokenKind.Identifier, "Expected member name after '->'.");
+                    expression = new MemberAccessExpression(expression, member.Text, true);
+                    continue;
+                }
+
+                if (Current.Kind == TokenKind.PlusPlus)
+                {
+                    Advance();
+                    expression = new UnaryExpression(TokenKind.PlusPlus, expression, true);
+                    continue;
+                }
+
+                if (Current.Kind == TokenKind.MinusMinus)
+                {
+                    Advance();
+                    expression = new UnaryExpression(TokenKind.MinusMinus, expression, true);
                     continue;
                 }
 
@@ -1581,10 +1652,6 @@ namespace JollyCCompiler.Compiler.Parsing
             if (Current.Kind == TokenKind.Identifier)
             {
                 var identifier = Advance();
-
-                if (Current.Kind == TokenKind.LeftParen)
-                    return ParseCall(identifier);
-
                 return new IdentifierExpression(identifier.Text);
             }
 
@@ -1903,7 +1970,7 @@ namespace JollyCCompiler.Compiler.Parsing
             {
                 while (true)
                 {
-                    arguments.Add(ParseExpression());
+                    arguments.Add(ParseAssignment());
 
                     if (Current.Kind != TokenKind.Comma)
                         break;
@@ -1920,7 +1987,7 @@ namespace JollyCCompiler.Compiler.Parsing
 
             Expect(TokenKind.RightParen, "Expected ')' after function arguments.");
 
-            return new CallExpression(identifier.Text, arguments);
+            return new CallExpression(new IdentifierExpression(identifier.Text), arguments);
         }
 
         private SwitchStatement ParseSwitch() 

@@ -435,9 +435,6 @@ namespace JollyCCompiler.Compiler.CodeGen.X64
                             if (arrayLength <= 0)
                                 throw new InvalidOperationException($"Array '{variable.Name}' must have a positive size.");
 
-                            if (variable.Initializer is not null)
-                                throw new NotSupportedException($"Array initializer for '{variable.Name}' is not yet supported.");
-
                             var elementSize = GetTypeSize(variable.Type);
                             var bytes = checked(arrayLength * elementSize);
                             var allocationSize = AlignUp(bytes, 8);
@@ -455,19 +452,38 @@ namespace JollyCCompiler.Compiler.CodeGen.X64
                     }
                     break;
 
-                case BlockStatement block: foreach (var child in block.Statements)
-                    CollectVariablesFromStatement(child, variables, arrays, ref nextOffset); break;
-                case ForStatement forStatement: if (forStatement.Initializer is not null)
-                    CollectVariablesFromStatement(forStatement.Initializer, variables, arrays, ref nextOffset); CollectVariablesFromStatement(forStatement.Body, variables, arrays, ref nextOffset); break;
-                case WhileStatement whileStatement: CollectVariablesFromStatement(whileStatement.Body, variables, arrays, ref nextOffset); break;
-                case DoWhileStatement doWhileStatement: CollectVariablesFromStatement(doWhileStatement.Body, variables, arrays, ref nextOffset); break;
-                case IfStatement ifStatement: CollectVariablesFromStatement(ifStatement.Then, variables, arrays, ref nextOffset); if (ifStatement.Else is not null)
-                    CollectVariablesFromStatement(ifStatement.Else, variables, arrays, ref nextOffset); break;
-                case SwitchStatement switchStatement: foreach (var switchCase in switchStatement.Cases)
+                case BlockStatement block:
+                    foreach (var child in block.Statements)
+                        CollectVariablesFromStatement(child, variables, arrays, ref nextOffset);
+                    break;
+
+                case ForStatement forStatement:
+                    if (forStatement.Initializer is not null)
+                        CollectVariablesFromStatement(forStatement.Initializer, variables, arrays, ref nextOffset);
+                    CollectVariablesFromStatement(forStatement.Body, variables, arrays, ref nextOffset);
+                    break;
+
+                case WhileStatement whileStatement:
+                    CollectVariablesFromStatement(whileStatement.Body, variables, arrays, ref nextOffset);
+                    break;
+
+                case DoWhileStatement doWhileStatement:
+                    CollectVariablesFromStatement(doWhileStatement.Body, variables, arrays, ref nextOffset);
+                    break;
+
+                case IfStatement ifStatement:
+                    CollectVariablesFromStatement(ifStatement.Then, variables, arrays, ref nextOffset);
+                    if (ifStatement.Else is not null)
+                        CollectVariablesFromStatement(ifStatement.Else, variables, arrays, ref nextOffset);
+                    break;
+
+                case SwitchStatement switchStatement:
+                    foreach (var switchCase in switchStatement.Cases)
                     {
-                    foreach (var child in switchCase.Statements)
-                    CollectVariablesFromStatement(child, variables, arrays, ref nextOffset);
-                } break;
+                        foreach (var child in switchCase.Statements)
+                            CollectVariablesFromStatement(child, variables, arrays, ref nextOffset);
+                    }
+                    break;
             }
         }
 
@@ -721,11 +737,102 @@ namespace JollyCCompiler.Compiler.CodeGen.X64
             if (!variables.TryGetValue(statement.Name, out var variable))
                 throw new InvalidOperationException($"Variable '{statement.Name}' has no stack slot.");
 
-            if (statement.ArrayLength is int)
+            if (statement.ArrayLength is int arrayLength)
             {
-                if (statement.Initializer is not null)
-                    throw new NotSupportedException($"Array initializer for '{statement.Name}' is not yet supported.");
+                if (statement.Initializer is not InitializerListExpression initializerList)
+                {
+                    if (statement.Initializer is not null)
+                        throw new NotSupportedException($"Array initializer for '{statement.Name}' must be an initializer list.");
 
+                    return;
+                }
+
+                if (initializerList.Elements.Count > arrayLength)
+                    throw new InvalidOperationException($"Too many initializers for array '{statement.Name}'.");
+
+                var elementSize = GetTypeSize(statement.Type);
+
+                for (var index = 0; index < arrayLength; index++)
+                {
+                    var elementOffset = variable.Offset + (index * elementSize);
+
+                    if (index < initializerList.Elements.Count)
+                    {
+                        var element = initializerList.Elements[index];
+
+                        if (statement.Type == "float")
+                        {
+                            GenerateFloatingOperand(element, "float", emitter, data, variables, arrays, parameters);
+                            emitter.MovRbpDisp8Xmm0(elementOffset);
+                        }
+                        else if (statement.Type == "double")
+                        {
+                            GenerateFloatingOperand(element, "double", emitter, data, variables, arrays, parameters);
+                            emitter.MovRbpDisp8Xmm0Double(elementOffset);
+                        }
+                        else
+                        {
+                            GenerateExpression(element, emitter, data, variables, arrays, parameters);
+
+                            if (statement.Type.EndsWith("*", StringComparison.Ordinal))
+                                emitter.MovRbpDisp8Rax(elementOffset);
+                            else if (elementSize == 1)
+                                emitter.MovRbpDisp32Al(elementOffset);
+                            else if (elementSize == 2)
+                                emitter.EmitBytes(0x66, 0x89, 0x45, unchecked((byte)elementOffset));
+                            else if (elementSize == 4)
+                                emitter.MovRbpDisp32Eax(elementOffset);
+                            else if (elementSize == 8)
+                                emitter.MovRbpDisp8Rax(elementOffset);
+                            else
+                                throw new NotSupportedException($"Initialization of array element type '{statement.Type}' is not yet supported.");
+                        }
+                    }
+                    else
+                    {
+                        if (statement.Type == "float")
+                        {
+                            emitter.MovEax(0);
+                            emitter.MovdXmm0Eax();
+                            emitter.MovRbpDisp8Xmm0(elementOffset);
+                        }
+                        else if (statement.Type == "double")
+                        {
+                            emitter.MovRax(0);
+                            emitter.MovqXmm0Rax();
+                            emitter.MovRbpDisp8Xmm0Double(elementOffset);
+                        }
+                        else
+                        {
+                            emitter.MovRax(0);
+
+                            if (statement.Type.EndsWith("*", StringComparison.Ordinal))
+                                emitter.MovRbpDisp8Rax(elementOffset);
+                            else if (elementSize == 1)
+                                emitter.MovRbpDisp32Al(elementOffset);
+                            else if (elementSize == 2)
+                                emitter.EmitBytes(0x66, 0x89, 0x45, unchecked((byte)elementOffset));
+                            else if (elementSize == 4)
+                                emitter.MovRbpDisp32Eax(elementOffset);
+                            else if (elementSize == 8)
+                                emitter.MovRbpDisp8Rax(elementOffset);
+                            else
+                                throw new NotSupportedException($"Initialization of array element type '{statement.Type}' is not yet supported.");
+                        }
+                    }
+                }
+
+                return;
+            }
+
+            if (statement.Type.EndsWith("*", StringComparison.Ordinal))
+            {
+                if (statement.Initializer is null)
+                    emitter.MovRax(0);
+                else
+                    GenerateExpression(statement.Initializer, emitter, data, variables, arrays, parameters);
+
+                emitter.MovRbpDisp8Rax(variable.Offset);
                 return;
             }
 
@@ -739,8 +846,31 @@ namespace JollyCCompiler.Compiler.CodeGen.X64
 
             if (statement.Type.StartsWith("union ", StringComparison.Ordinal))
             {
-                if (statement.Initializer is not null)
-                    throw new NotSupportedException($"Union initializer for '{statement.Name}' is not yet supported.");
+                var unionSize = GetTypeSize(statement.Type);
+
+                if (statement.Initializer is null)
+                {
+                    emitter.MovRax(0);
+                }
+                else if (statement.Initializer is InitializerListExpression)
+                {
+                    throw new NotSupportedException($"Union initializer list for '{statement.Name}' is not yet supported.");
+                }
+                else
+                {
+                    GenerateExpression(statement.Initializer, emitter, data, variables, arrays, parameters);
+                }
+
+                if (unionSize == 1)
+                    emitter.MovRbpDisp32Al(variable.Offset);
+                else if (unionSize == 2)
+                    emitter.EmitBytes(0x66, 0x89, 0x45, unchecked((byte)variable.Offset));
+                else if (unionSize == 4)
+                    emitter.MovRbpDisp32Eax(variable.Offset);
+                else if (unionSize == 8)
+                    emitter.MovRbpDisp8Rax(variable.Offset);
+                else
+                    throw new NotSupportedException($"Initialization of union type '{statement.Type}' with size {unionSize} is not yet supported.");
 
                 return;
             }
@@ -779,10 +909,7 @@ namespace JollyCCompiler.Compiler.CodeGen.X64
 
             if (statement.Initializer is null)
             {
-                if (statement.Type.EndsWith("*", StringComparison.Ordinal))
-                    emitter.MovRax(0);
-                else
-                    emitter.MovEax(0);
+                emitter.MovEax(0);
             }
             else
             {
@@ -790,9 +917,8 @@ namespace JollyCCompiler.Compiler.CodeGen.X64
             }
 
             var typeSize = GetTypeSize(statement.Type);
-            if (statement.Type.EndsWith("*", StringComparison.Ordinal))
-                emitter.MovRbpDisp8Rax(variable.Offset);
-            else if (typeSize == 1)
+
+            if (typeSize == 1)
                 emitter.MovRbpDisp32Al(variable.Offset);
             else if (typeSize == 2)
                 emitter.EmitBytes(0x66, 0x89, 0x45, unchecked((byte)variable.Offset));
@@ -968,6 +1094,11 @@ namespace JollyCCompiler.Compiler.CodeGen.X64
 
                 case CastExpression cast:
                     GenerateCastExpression(cast, emitter, data, variables, arrays, parameters);
+                    break;
+
+                case CommaExpression comma:
+                    for (var i = 0; i < comma.Expressions.Count; i++)
+                        GenerateExpression(comma.Expressions[i], emitter, data, variables, arrays, parameters);
                     break;
 
                 default:
@@ -2962,7 +3093,7 @@ namespace JollyCCompiler.Compiler.CodeGen.X64
 
         private static void GenerateCallExpression(CallExpression call, X64Emitter emitter, List<X64DataItem> data, Dictionary<string, (int Offset, string Type, bool IsConst)> variables, Dictionary<string, (int Length, string Type)> arrays, Dictionary<string, (int Index, string Type)> parameters)
         {
-            if (call.Name == "printf")
+            if (call.Function is IdentifierExpression printfIdentifier && printfIdentifier.Name == "printf")
             {
                 GeneratePrintfCall(call, emitter, data, variables, arrays, parameters);
                 return;
@@ -2974,26 +3105,29 @@ namespace JollyCCompiler.Compiler.CodeGen.X64
             var totalBytes = callStackSize + temporaryBytes;
             totalBytes = (totalBytes + 15) & ~15;
             emitter.SubRsp(totalBytes);
+
             var temporaryBase = callStackSize;
+
             for (var i = 0; i < argumentCount; i++)
             {
                 var argument = call.Arguments[i];
                 var temporaryOffset = temporaryBase + (i * 8);
-                if (argument is IdentifierExpression identifier)
+
+                if (argument is IdentifierExpression argumentIdentifier)
                 {
-                    if (arrays.TryGetValue(identifier.Name, out _))
+                    if (arrays.TryGetValue(argumentIdentifier.Name, out _))
                     {
-                        if (!variables.TryGetValue(identifier.Name, out var arrayVariable))
-                            throw new InvalidOperationException($"Array '{identifier.Name}' has no stack slot.");
+                        if (!variables.TryGetValue(argumentIdentifier.Name, out var arrayVariable))
+                            throw new InvalidOperationException($"Array '{argumentIdentifier.Name}' has no stack slot.");
 
                         emitter.LeaRaxRbpDisp32(arrayVariable.Offset);
                         emitter.MovRspDisp32Rax(temporaryOffset);
                         continue;
                     }
 
-                    if (_globalArrays.ContainsKey(identifier.Name))
+                    if (_globalArrays.ContainsKey(argumentIdentifier.Name))
                     {
-                        emitter.LeaRaxRipRelative(identifier.Name);
+                        emitter.LeaRaxRipRelative(argumentIdentifier.Name);
                         emitter.MovRspDisp32Rax(temporaryOffset);
                         continue;
                     }
@@ -3003,6 +3137,7 @@ namespace JollyCCompiler.Compiler.CodeGen.X64
                     throw new InvalidOperationException("Cannot determine function argument type.");
 
                 GenerateExpression(argument, emitter, data, variables, arrays, parameters);
+
                 if (argumentType == "float")
                 {
                     emitter.MovdEaxXmm0();
@@ -3023,12 +3158,14 @@ namespace JollyCCompiler.Compiler.CodeGen.X64
             {
                 var argument = call.Arguments[i];
                 var temporaryOffset = temporaryBase + (i * 8);
+
                 if (!TryGetExpressionType(argument, variables, arrays, parameters, out var argumentType))
                     throw new InvalidOperationException("Cannot determine function argument type.");
 
                 if (argumentType == "float")
                 {
                     emitter.MovRaxRspDisp32(temporaryOffset);
+
                     switch (i)
                     {
                         case 0:
@@ -3054,6 +3191,7 @@ namespace JollyCCompiler.Compiler.CodeGen.X64
                 if (argumentType == "double")
                 {
                     emitter.MovRaxRspDisp32(temporaryOffset);
+
                     switch (i)
                     {
                         case 0:
@@ -3077,7 +3215,34 @@ namespace JollyCCompiler.Compiler.CodeGen.X64
                 }
 
                 emitter.MovRaxRspDisp32(temporaryOffset);
-                var isPointerArgument = argument is StringExpression || ( argument is IdentifierExpression identifier && ( arrays.ContainsKey(identifier.Name) || _globalArrays.ContainsKey(identifier.Name) || _functionReturnTypes.ContainsKey(identifier.Name) || (variables.TryGetValue(identifier.Name, out var variable) && (variable.Type.EndsWith("*", StringComparison.Ordinal) || variable.Type.StartsWith("function*", StringComparison.Ordinal))) || (parameters.TryGetValue(identifier.Name, out var parameter) && (parameter.Type.EndsWith("*", StringComparison.Ordinal) || parameter.Type.StartsWith("function*", StringComparison.Ordinal))) ) ) || argument is AddressOfExpression || argument is ArraySubscriptExpression;
+
+                var isPointerArgument =
+                    argument is StringExpression ||
+                    (
+                        argument is IdentifierExpression pointerIdentifier &&
+                        (
+                            arrays.ContainsKey(pointerIdentifier.Name) ||
+                            _globalArrays.ContainsKey(pointerIdentifier.Name) ||
+                            _functionReturnTypes.ContainsKey(pointerIdentifier.Name) ||
+                            (
+                                variables.TryGetValue(pointerIdentifier.Name, out var variable) &&
+                                (
+                                    variable.Type.EndsWith("*", StringComparison.Ordinal) ||
+                                    variable.Type.StartsWith("function*", StringComparison.Ordinal)
+                                )
+                            ) ||
+                            (
+                                parameters.TryGetValue(pointerIdentifier.Name, out var parameter) &&
+                                (
+                                    parameter.Type.EndsWith("*", StringComparison.Ordinal) ||
+                                    parameter.Type.StartsWith("function*", StringComparison.Ordinal)
+                                )
+                            )
+                        )
+                    ) ||
+                    argument is AddressOfExpression ||
+                    argument is ArraySubscriptExpression;
+
                 if (isPointerArgument)
                 {
                     if (i < 4)
@@ -3087,7 +3252,8 @@ namespace JollyCCompiler.Compiler.CodeGen.X64
                 }
                 else
                 {
-                    var is64BitArgument = argumentType is "long long" or "unsigned long long";
+                    var is64BitArgument = argumentType is "long long" or "unsigned long long" || GetTypeSize(argumentType) == 8;
+
                     if (i < 4)
                     {
                         if (is64BitArgument)
@@ -3105,20 +3271,14 @@ namespace JollyCCompiler.Compiler.CodeGen.X64
                 }
             }
 
-            if (variables.TryGetValue(call.Name, out var functionPointer))
+            if (call.Function is IdentifierExpression functionIdentifier && _functionReturnTypes.ContainsKey(functionIdentifier.Name))
             {
-                emitter.MovRaxRbpDisp8(functionPointer.Offset);
-                emitter.CallRax();
-            }
-            else if (parameters.TryGetValue(call.Name, out var functionPointerParameter))
-            {
-                var parameterOffset = -(functionPointerParameter.Index + 1) * 8;
-                emitter.MovRaxRbpDisp8(parameterOffset);
-                emitter.CallRax();
+                emitter.CallRelative($"$fn_{functionIdentifier.Name}");
             }
             else
             {
-                emitter.CallRelative($"$fn_{call.Name}");
+                GenerateExpression(call.Function, emitter, data, variables, arrays, parameters);
+                emitter.CallRax();
             }
 
             emitter.AddRsp(totalBytes);
@@ -4045,6 +4205,10 @@ namespace JollyCCompiler.Compiler.CodeGen.X64
 
                     break;
 
+                case StringExpression:
+                    type = "char*";
+                    return true;
+
                 case AddressOfExpression addressOf:
                     if (TryGetExpressionType(addressOf.Operand, variables, arrays, parameters, out var operandType))
                     {
@@ -4058,6 +4222,7 @@ namespace JollyCCompiler.Compiler.CodeGen.X64
                     if (TryGetPointerType(dereference.Operand, variables, arrays, parameters, out var pointerType))
                     {
                         type = pointerType[..^1];
+
                         if (type.EndsWith("*", StringComparison.Ordinal))
                             return true;
                     }
@@ -4065,9 +4230,9 @@ namespace JollyCCompiler.Compiler.CodeGen.X64
                     break;
 
                 case CallExpression call:
-                    if (_functionReturnTypes.TryGetValue(call.Name, out var returnType) && returnType.EndsWith("*", StringComparison.Ordinal))
+                    if (TryGetFunctionReturnType(call.Function, variables, arrays, parameters, out var callReturnType) && callReturnType.EndsWith("*", StringComparison.Ordinal))
                     {
-                        type = returnType;
+                        type = callReturnType;
                         return true;
                     }
 
@@ -4087,6 +4252,7 @@ namespace JollyCCompiler.Compiler.CodeGen.X64
                         if (objectType.StartsWith("union ", StringComparison.Ordinal))
                         {
                             var unionField = GetUnionField(objectType, member.Member);
+
                             if (unionField.Type.EndsWith("*", StringComparison.Ordinal))
                             {
                                 type = unionField.Type;
@@ -4096,6 +4262,7 @@ namespace JollyCCompiler.Compiler.CodeGen.X64
                         else if (objectType.StartsWith("struct ", StringComparison.Ordinal))
                         {
                             var structField = GetStructField(objectType, member.Member);
+
                             if (structField.Type.EndsWith("*", StringComparison.Ordinal))
                             {
                                 type = structField.Type;
@@ -4106,9 +4273,7 @@ namespace JollyCCompiler.Compiler.CodeGen.X64
 
                     break;
 
-                case BinaryExpression binary when
-                    binary.Operator is TokenKind.Plus or TokenKind.Minus:
-
+                case BinaryExpression binary when binary.Operator is TokenKind.Plus or TokenKind.Minus:
                     if (TryGetPointerType(binary.Left, variables, arrays, parameters, out var leftPointerType))
                     {
                         type = leftPointerType;
@@ -4133,9 +4298,9 @@ namespace JollyCCompiler.Compiler.CodeGen.X64
             if (TryGetPointerType(expression, variables, arrays, parameters, out type))
                 return true;
 
-            if (expression is CallExpression call && _functionReturnTypes.TryGetValue(call.Name, out var returnType))
+            if (expression is CallExpression call && TryGetFunctionReturnType(call.Function, variables, arrays, parameters, out var callReturnType))
             {
-                type = returnType;
+                type = callReturnType;
                 return true;
             }
 
@@ -4208,6 +4373,7 @@ namespace JollyCCompiler.Compiler.CodeGen.X64
                     if (objectType.StartsWith("union ", StringComparison.Ordinal))
                     {
                         var field = GetUnionField(objectType, arrayMember.Member);
+
                         if (field.ArrayLength is not null)
                         {
                             type = field.Type;
@@ -4316,8 +4482,64 @@ namespace JollyCCompiler.Compiler.CodeGen.X64
                 }
             }
 
+            if (expression is CommaExpression comma && comma.Expressions.Count > 0)
+                return TryGetExpressionType(comma.Expressions[^1], variables, arrays, parameters, out type);
+
             type = string.Empty;
             return false;
+        }
+
+        private static bool TryGetFunctionReturnType(ExpressionNode function, Dictionary<string, (int Offset, string Type, bool IsConst)> variables, Dictionary<string, (int Length, string Type)> arrays, Dictionary<string, (int Index, string Type)> parameters, out string returnType)
+        {
+            if (function is IdentifierExpression identifier)
+            {
+                if (_functionReturnTypes.TryGetValue(identifier.Name, out var directReturnType))
+                {
+                    returnType = directReturnType;
+                    return true;
+                }
+
+                if (variables.TryGetValue(identifier.Name, out var variable) && TryGetFunctionReturnTypeFromType(variable.Type, out returnType))
+                    return true;
+
+                if (parameters.TryGetValue(identifier.Name, out var parameter) && TryGetFunctionReturnTypeFromType(parameter.Type, out returnType))
+                    return true;
+
+                if (_globals.TryGetValue(identifier.Name, out var global) && TryGetFunctionReturnTypeFromType(global.Type, out returnType))
+                    return true;
+            }
+
+            if (TryGetExpressionType(function, variables, arrays, parameters, out var functionType))
+            {
+                if (TryGetFunctionReturnTypeFromType(functionType, out returnType))
+                    return true;
+            }
+
+            returnType = string.Empty;
+            return false;
+        }
+
+        private static bool TryGetFunctionReturnTypeFromType(string type, out string returnType)
+        {
+            const string prefix = "function*(";
+
+            if (!type.StartsWith(prefix, StringComparison.Ordinal))
+            {
+                returnType = string.Empty;
+                return false;
+            }
+
+            var returnStart = prefix.Length;
+            var returnEnd = type.IndexOf(')', returnStart);
+
+            if (returnEnd < 0)
+            {
+                returnType = string.Empty;
+                return false;
+            }
+
+            returnType = type[returnStart..returnEnd];
+            return true;
         }
 
         private static string GetCommonArithmeticType(string leftType, string rightType)
@@ -4385,12 +4607,13 @@ namespace JollyCCompiler.Compiler.CodeGen.X64
 
         private static void GenerateMemberAccessExpression(MemberAccessExpression expression, X64Emitter emitter, List<X64DataItem> data, Dictionary<string, (int Offset, string Type, bool IsConst)> variables, Dictionary<string, (int Length, string Type)> arrays, Dictionary<string, (int Index, string Type)> parameters)
         {
-            if (expression.Object is CallExpression call && _functionReturnTypes.TryGetValue(call.Name, out var returnType) && returnType.StartsWith("union ", StringComparison.Ordinal) && !returnType.EndsWith("*", StringComparison.Ordinal))
+            if (expression.Object is CallExpression call && call.Function is IdentifierExpression functionIdentifier && _functionReturnTypes.TryGetValue(functionIdentifier.Name, out var returnType) && returnType.StartsWith("union ", StringComparison.Ordinal) && !returnType.EndsWith("*", StringComparison.Ordinal))
             {
                 GenerateExpression(call, emitter, data, variables, arrays, parameters);
                 var returnedUnionSize = GetTypeSize(returnType);
                 var returnedMember = GetMemberInfo(expression, variables, arrays, parameters);
                 var returnedMemberSize = GetTypeSize(returnedMember.Type);
+
                 if (returnedUnionSize != 8)
                     throw new NotSupportedException($"Union return size {returnedUnionSize} is not yet supported for direct member access.");
 
@@ -4414,14 +4637,10 @@ namespace JollyCCompiler.Compiler.CodeGen.X64
                 }
 
                 if (returnedMemberSize == 4)
-                {
                     return;
-                }
 
                 if (returnedMemberSize == 8)
-                {
                     return;
-                }
 
                 throw new NotSupportedException($"Union member type '{returnedMember.Type}' is not yet supported for direct returned-union member access.");
             }
@@ -4429,6 +4648,7 @@ namespace JollyCCompiler.Compiler.CodeGen.X64
             GenerateLValueAddress(expression, emitter, data, variables, arrays, parameters);
             var member = GetMemberInfo(expression, variables, arrays, parameters);
             var memberSize = GetTypeSize(member.Type);
+
             if (memberSize == 1)
             {
                 if (member.Type == "unsigned char")

@@ -93,7 +93,10 @@ namespace JollyCCompiler.Compiler.Syntax
                     break;
 
                 case CallExpression call:
-                    Line(builder, indent, $"Call {call.Name}");
+                    if (call.Function is IdentifierExpression functionIdentifier)
+                        Line(builder, indent, $"Call {functionIdentifier.Name}");
+                    else
+                        Line(builder, indent, "Call");
 
                     foreach (var argument in call.Arguments)
                         PrintExpression(argument, builder, indent + 1);
