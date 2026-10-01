@@ -69,6 +69,23 @@ public sealed class Lexer
                 continue;
             }
 
+            if (Current == '.' && Peek() == '.' && Peek(2) == '.')
+            {
+                tokens.Add(new Token(TokenKind.Ellipsis, "...", line, column));
+                Advance();
+                Advance();
+                Advance();
+                continue;
+            }
+
+            if (Current == '#' && Peek() == '#')
+            {
+                tokens.Add(new Token(TokenKind.HashHash, "##", line, column));
+                Advance();
+                Advance();
+                continue;
+            }
+
             var text = Current.ToString();
 
             TokenKind? kind = Current switch
@@ -117,6 +134,7 @@ public sealed class Lexer
                 ';' => TokenKind.Semicolon,
                 ':' => TokenKind.Colon,
                 '?' => TokenKind.Question,
+                '#' => TokenKind.Hash,
 
                 '&' => TokenKind.Ampersand,
                 '|' => TokenKind.Pipe,

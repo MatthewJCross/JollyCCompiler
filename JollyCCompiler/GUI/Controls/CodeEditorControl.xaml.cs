@@ -73,6 +73,19 @@ namespace JollyCCompiler.GUI.Controls
             "false"
         };
 
+        private static readonly HashSet<string> PreprocessorDirectives = new(StringComparer.Ordinal)
+        {
+            "define",
+            "undef",
+            "ifdef",
+            "ifndef",
+            "else",
+            "elif",
+            "endif",
+            "if",
+            "include"
+        };
+
         public CodeEditorControl()
         {
             InitializeComponent();
@@ -670,6 +683,33 @@ namespace JollyCCompiler.GUI.Controls
             int position = 0;
             while (position < text.Length)
             {
+                if (text[position] == '#' && (position == 0 || string.IsNullOrWhiteSpace(text[..position])))
+                {
+                    int directiveStart = position;
+                    int directiveEnd = position + 1;
+
+                    while (directiveEnd < text.Length && char.IsWhiteSpace(text[directiveEnd]))
+                    {
+                        directiveEnd++;
+                    }
+
+                    int nameStart = directiveEnd;
+
+                    while (directiveEnd < text.Length && (char.IsLetterOrDigit(text[directiveEnd]) || text[directiveEnd] == '_'))
+                    {
+                        directiveEnd++;
+                    }
+
+                    string directiveName = text.Substring(nameStart, directiveEnd - nameStart);
+
+                    if (PreprocessorDirectives.Contains(directiveName))
+                    {
+                        AddRun(paragraph, text.Substring(directiveStart, directiveEnd - directiveStart), "#C586C0");
+                        position = directiveEnd;
+                        continue;
+                    }
+                }
+
                 if (text[position] == '/' && position + 1 < text.Length && text[position + 1] == '/')
                 {
                     AddRun(paragraph, text[position..], "#6A9955");

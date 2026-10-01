@@ -3646,9 +3646,71 @@ namespace JollyCCompiler.Compiler.CodeGen.X64
         private static void GenerateStringExpression(StringExpression expression, X64Emitter emitter, List<X64DataItem> data)
         {
             var symbol = $"$str{data.Count}";
-            var bytes = Encoding.UTF8.GetBytes(expression.Value + "\0");
+            var value = DecodeStringLiteral(expression.Value);
+            var bytes = Encoding.UTF8.GetBytes(value + "\0");
             data.Add(new X64DataItem(symbol, bytes));
             emitter.LeaRaxRipRelative(symbol);
+        }
+
+        private static string DecodeStringLiteral(string value)
+        {
+            if (value.Length >= 2 && value[0] == '"' && value[^1] == '"')
+                value = value[1..^1];
+
+            var builder = new StringBuilder();
+
+            for (var i = 0; i < value.Length; i++)
+            {
+                if (value[i] != '\\' || i + 1 >= value.Length)
+                {
+                    builder.Append(value[i]);
+                    continue;
+                }
+
+                i++;
+
+                switch (value[i])
+                {
+                    case 'n':
+                        builder.Append('\n');
+                        break;
+                    case 'r':
+                        builder.Append('\r');
+                        break;
+                    case 't':
+                        builder.Append('\t');
+                        break;
+                    case 'b':
+                        builder.Append('\b');
+                        break;
+                    case 'f':
+                        builder.Append('\f');
+                        break;
+                    case 'v':
+                        builder.Append('\v');
+                        break;
+                    case 'a':
+                        builder.Append('\a');
+                        break;
+                    case '\\':
+                        builder.Append('\\');
+                        break;
+                    case '"':
+                        builder.Append('"');
+                        break;
+                    case '\'':
+                        builder.Append('\'');
+                        break;
+                    case '0':
+                        builder.Append('\0');
+                        break;
+                    default:
+                        builder.Append(value[i]);
+                        break;
+                }
+            }
+
+            return builder.ToString();
         }
 
         private static bool IsPointerExpression(ExpressionNode expression, Dictionary<string, (int Index, string Type)> parameters)
@@ -5131,6 +5193,13 @@ namespace JollyCCompiler.Compiler.CodeGen.X64
             if (expression.Type is not null)
             {
                 emitter.MovEax(GetTypeSize(expression.Type));
+                return;
+            }
+
+            if (expression.Expression is StringExpression stringExpression)
+            {
+                var value = DecodeStringLiteral(stringExpression.Value);
+                emitter.MovEax(Encoding.UTF8.GetByteCount(value) + 1);
                 return;
             }
 

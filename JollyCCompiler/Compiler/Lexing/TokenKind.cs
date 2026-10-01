@@ -80,6 +80,9 @@
         RightBracket,
         Dot,
         Arrow,
+        Hash,
+        HashHash,
+        Ellipsis,
 
         AndAnd,
         OrOr,
