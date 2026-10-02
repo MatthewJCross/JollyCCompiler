@@ -4552,6 +4552,15 @@ namespace JollyCCompiler.Compiler.CodeGen.X64
                     type = "char*";
                     return true;
 
+                case CastExpression cast:
+                    if (cast.Type.EndsWith("*", StringComparison.Ordinal))
+                    {
+                        type = cast.Type;
+                        return true;
+                    }
+
+                    break;
+
                 case AddressOfExpression addressOf:
                     if (TryGetExpressionType(addressOf.Operand, variables, arrays, parameters, out var operandType))
                     {

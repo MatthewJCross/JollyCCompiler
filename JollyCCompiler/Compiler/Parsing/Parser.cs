@@ -1652,7 +1652,7 @@ namespace JollyCCompiler.Compiler.Parsing
             if (Current.Kind == TokenKind.Identifier)
             {
                 var identifier = Advance();
-                return new IdentifierExpression(identifier.Text);
+                return new IdentifierExpression(identifier.Text, identifier.Line, identifier.Column);
             }
 
             if (Current.Kind == TokenKind.LeftParen)
@@ -1987,7 +1987,7 @@ namespace JollyCCompiler.Compiler.Parsing
 
             Expect(TokenKind.RightParen, "Expected ')' after function arguments.");
 
-            return new CallExpression(new IdentifierExpression(identifier.Text), arguments);
+            return new CallExpression(new IdentifierExpression(identifier.Text, identifier.Line, identifier.Column), arguments);
         }
 
         private SwitchStatement ParseSwitch() 

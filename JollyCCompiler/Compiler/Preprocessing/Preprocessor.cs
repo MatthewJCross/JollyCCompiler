@@ -739,7 +739,7 @@ namespace JollyCCompiler.Compiler.Preprocessing
             List<string>? parameters = null;
             var isVariadic = false;
 
-            if (index < tokens.Count && tokens[index].Kind == TokenKind.LeftParen && tokens[index].Line == nameToken.Line)
+            if (index < tokens.Count && tokens[index].Kind == TokenKind.LeftParen && tokens[index].Line == nameToken.Line && tokens[index].Column == nameToken.Column + nameToken.Text.Length)
             {
                 parameters = new List<string>();
                 index++;

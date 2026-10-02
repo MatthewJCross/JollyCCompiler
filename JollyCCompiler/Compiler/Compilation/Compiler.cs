@@ -1,7 +1,7 @@
 ﻿using JollyCCompiler.Compiler.Diagnostics;
-using JollyCCompiler.Compiler.Lexing;
 using JollyCCompiler.Compiler.Parsing;
 using JollyCCompiler.Compiler.Preprocessing;
+using JollyCCompiler.Compiler.Semantic;
 
 namespace JollyCCompiler.Compiler.Compilation
 {
@@ -42,6 +42,14 @@ namespace JollyCCompiler.Compiler.Compilation
             diagnostics.AddRange(parser.Diagnostics);
 
             if (diagnostics.Any(d => d.Severity == DiagnosticSeverity.Error))
+                return new CompilationResult(null, processedTokens, diagnostics);
+
+            var semanticAnalyzer = new SemanticAnalyzer();
+            var semanticSuccess = semanticAnalyzer.Analyze(program);
+
+            diagnostics.AddRange(semanticAnalyzer.Diagnostics);
+
+            if (!semanticSuccess || diagnostics.Any(d => d.Severity == DiagnosticSeverity.Error))
                 return new CompilationResult(null, processedTokens, diagnostics);
 
             return new CompilationResult(program, processedTokens, diagnostics);

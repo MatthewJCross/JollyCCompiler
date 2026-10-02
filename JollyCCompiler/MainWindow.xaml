@@ -86,6 +86,32 @@
                         </DataGrid.Columns>
                     </DataGrid>
                 </TabItem>
+
+                <TabItem Header="Native 6502">
+                    <Grid>
+                        <Grid.RowDefinitions>
+                            <RowDefinition Height="Auto"/>
+                            <RowDefinition Height="*"/>
+                        </Grid.RowDefinitions>
+                        <Border Grid.Row="0" Padding="8" BorderBrush="Gray" BorderThickness="0,0,0,1">
+                            <StackPanel Orientation="Horizontal">
+                                <TextBlock Text="Origin: " FontFamily="Consolas" FontWeight="Bold"/>
+                                <TextBlock x:Name="Mos6502OriginText" Text="----" FontFamily="Consolas" Margin="4,0,20,0"/>
+                                <TextBlock Text="Main: " FontFamily="Consolas" FontWeight="Bold"/>
+                                <TextBlock x:Name="Mos6502MainAddressText" Text="----" FontFamily="Consolas" Margin="4,0,20,0"/>
+                                <TextBlock Text="Code Size: " FontFamily="Consolas" FontWeight="Bold"/>
+                                <TextBlock x:Name="Mos6502CodeSizeText" Text="0" FontFamily="Consolas"/>
+                            </StackPanel>
+                        </Border>
+                        <DataGrid x:Name="Mos6502CodeGrid" Grid.Row="1" AutoGenerateColumns="False" IsReadOnly="True" CanUserAddRows="False" HeadersVisibility="Column" FontFamily="Consolas" FontSize="13">
+                            <DataGrid.Columns>
+                                <DataGridTextColumn Header="Offset" Binding="{Binding Offset}" Width="100"/>
+                                <DataGridTextColumn Header="Bytes" Binding="{Binding BytesText}" Width="250"/>
+                                <DataGridTextColumn Header="Assembly" Binding="{Binding Assembly}" Width="*"/>
+                            </DataGrid.Columns>
+                        </DataGrid>
+                    </Grid>
+                </TabItem>
             </TabControl>
         </Grid>
     </DockPanel>
