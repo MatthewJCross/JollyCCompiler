@@ -8,16 +8,29 @@ namespace JollyCCompiler.Compiler.Semantic
         private readonly List<Diagnostic> _diagnostics = new();
         private readonly HashSet<string> _globals = new(StringComparer.Ordinal);
         private readonly HashSet<string> _functions = new(StringComparer.Ordinal);
+        private readonly HashSet<string> _runtimeFunctions = new(StringComparer.Ordinal);
         private readonly HashSet<string> _enumConstants = new(StringComparer.Ordinal);
 
         public IReadOnlyList<Diagnostic> Diagnostics => _diagnostics;
 
         public bool Analyze(ProgramNode program)
         {
+            return Analyze(program, null);
+        }
+
+        public bool Analyze(ProgramNode program, IEnumerable<string>? runtimeFunctions)
+        {
             _diagnostics.Clear();
             _globals.Clear();
             _functions.Clear();
+            _runtimeFunctions.Clear();
             _enumConstants.Clear();
+
+            if (runtimeFunctions is not null)
+            {
+                foreach (var runtimeFunction in runtimeFunctions)
+                    _runtimeFunctions.Add(runtimeFunction);
+            }
 
             CollectGlobalNames(program);
             CollectFunctionNames(program);
@@ -279,6 +292,9 @@ namespace JollyCCompiler.Compiler.Semantic
                 return;
 
             if (_functions.Contains(identifier.Name))
+                return;
+
+            if (_runtimeFunctions.Contains(identifier.Name))
                 return;
 
             if (_enumConstants.Contains(identifier.Name))

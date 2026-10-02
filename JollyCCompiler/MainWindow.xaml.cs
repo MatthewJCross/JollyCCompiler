@@ -7,7 +7,6 @@ using JollyCCompiler.Project;
 using Microsoft.Win32;
 using System.Diagnostics;
 using System.IO;
-using System.Net.Sockets;
 using System.Text;
 using System.Text.Json;
 using System.Windows;
@@ -686,7 +685,8 @@ namespace JollyCCompiler
                 }
 
                 var compiler = new CCompiler();
-                var result = compiler.CompileProject(sourceFiles);
+                var runtimeFunctions = _project.Target == ProjectTarget.X64 ? new[] { "printf" } : Array.Empty<string>();
+                var result = compiler.CompileProject(sourceFiles, runtimeFunctions);
 
                 TokenList.Items.Clear();
 
@@ -863,95 +863,20 @@ namespace JollyCCompiler
 
             try
             {
-                if (TrySendProgramToVice(_compiledOutputPath))
-                {
-                    StatusText.Text = $"Loaded {Path.GetFileName(_compiledOutputPath)} into VICE.";
-                    return;
-                }
-
                 if (_viceProcess is not null && !_viceProcess.HasExited)
                 {
-                    MessageBox.Show(this, "VICE is already running, but its binary monitor is not available.\n\nStart VICE from JollyC Compiler so that JollyC can load programs into it.", "Run C64", MessageBoxButton.OK, MessageBoxImage.Information);
+                    MessageBox.Show(this, "VICE is already running. Close the current VICE instance before running a newly compiled program.", "Run C64", MessageBoxButton.OK, MessageBoxImage.Information);
                     return;
                 }
 
                 StartViceProcess(_compiledOutputPath);
 
-                if (!WaitForViceBinaryMonitor(5000))
-                {
-                    throw new InvalidOperationException("VICE started, but its binary monitor did not become available.");
-                }
-
-                if (!TrySendProgramToVice(_compiledOutputPath))
-                {
-                    throw new InvalidOperationException("VICE started, but the compiled program could not be sent to it.");
-                }
-
-                StatusText.Text = $"Loaded {Path.GetFileName(_compiledOutputPath)} into VICE.";
+                StatusText.Text = $"Started VICE with {Path.GetFileName(_compiledOutputPath)}.";
             }
             catch (Exception ex)
             {
-                MessageBox.Show(this, $"Failed to run C64 program.\n\n{ex.Message}", "Run C64", MessageBoxButton.OK, MessageBoxImage.Error);
+                MessageBox.Show(this, $"Failed to run C64 program.\n\n{ex}", "Run C64", MessageBoxButton.OK, MessageBoxImage.Error);
             }
-        }
-
-        private bool TrySendProgramToVice(string programPath)
-        {
-            try
-            {
-                using var client = new TcpClient();
-                client.NoDelay = true;
-                client.SendTimeout = 3000;
-                client.ReceiveTimeout = 3000;
-                client.Connect(ViceBinaryMonitorHost, ViceBinaryMonitorPort);
-
-                using var stream = client.GetStream();
-
-                SendViceAutostartCommand(stream, programPath);
-
-                return true;
-            }
-            catch (SocketException)
-            {
-                return false;
-            }
-            catch (IOException)
-            {
-                return false;
-            }
-        }
-
-        private static void SendViceAutostartCommand(NetworkStream stream, string programPath)
-        {
-            var fileName = Encoding.UTF8.GetBytes(Path.GetFullPath(programPath));
-
-            if (fileName.Length > byte.MaxValue)
-            {
-                throw new InvalidOperationException("The VICE program path is too long for the binary monitor protocol.");
-            }
-
-            var bodyLength = checked(5 + fileName.Length);
-            var packet = new byte[11 + bodyLength];
-
-            packet[0] = 0x02;
-            packet[1] = 0x02;
-
-            BitConverter.GetBytes(bodyLength).CopyTo(packet, 2);
-            BitConverter.GetBytes(1u).CopyTo(packet, 6);
-
-            packet[10] = 0xDD;
-
-            packet[11] = 0x01;
-
-            packet[12] = 0x00;
-            packet[13] = 0x00;
-
-            packet[14] = checked((byte)fileName.Length);
-
-            Array.Copy(fileName, 0, packet, 15, fileName.Length);
-
-            stream.Write(packet, 0, packet.Length);
-            stream.Flush();
         }
 
         private void StartViceProcess(string programPath)
@@ -966,7 +891,7 @@ namespace JollyCCompiler
             var startInfo = new ProcessStartInfo
             {
                 FileName = _project.VicePath,
-                Arguments = $"-binarymonitor -binarymonitoraddress ip4://{ViceBinaryMonitorHost}:{ViceBinaryMonitorPort}",
+                Arguments = $"\"{programPath}\"",
                 WorkingDirectory = workingDirectory,
                 UseShellExecute = false
             };
@@ -977,27 +902,6 @@ namespace JollyCCompiler
             {
                 throw new InvalidOperationException("VICE could not be started.");
             }
-        }
-
-        private static bool WaitForViceBinaryMonitor(int timeoutMilliseconds)
-        {
-            var stopwatch = Stopwatch.StartNew();
-
-            while (stopwatch.ElapsedMilliseconds < timeoutMilliseconds)
-            {
-                try
-                {
-                    using var client = new TcpClient();
-                    client.Connect(ViceBinaryMonitorHost, ViceBinaryMonitorPort);
-                    return true;
-                }
-                catch (SocketException)
-                {
-                    Thread.Sleep(100);
-                }
-            }
-
-            return false;
         }
 
         private void RunX64()

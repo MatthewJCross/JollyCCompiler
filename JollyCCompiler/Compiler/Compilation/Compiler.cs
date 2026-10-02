@@ -34,7 +34,7 @@ namespace JollyCCompiler.Compiler.Compilation
             return new CompilationResult(translationUnit.Program, translationUnit.Tokens, diagnostics);
         }
 
-        public ProjectCompilationResult CompileProject(IReadOnlyList<ProjectSourceFile> sourceFiles)
+        public ProjectCompilationResult CompileProject(IReadOnlyList<ProjectSourceFile> sourceFiles, IEnumerable<string>? runtimeFunctions = null)
         {
             if (sourceFiles is null)
                 throw new ArgumentNullException(nameof(sourceFiles));
@@ -57,7 +57,7 @@ namespace JollyCCompiler.Compiler.Compilation
             var program = MergeTranslationUnits(translationUnits);
 
             var semanticAnalyzer = new SemanticAnalyzer();
-            var semanticSuccess = semanticAnalyzer.Analyze(program);
+            var semanticSuccess = semanticAnalyzer.Analyze(program, runtimeFunctions);
 
             diagnostics.AddRange(semanticAnalyzer.Diagnostics);
 
