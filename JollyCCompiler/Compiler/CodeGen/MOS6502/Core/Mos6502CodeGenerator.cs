@@ -10,17 +10,24 @@ namespace JollyCCompiler.Compiler.CodeGen.MOS6502
         private const byte ArrayPointer = 0x02;
         private const byte ArrayPointerHigh = 0x03;
         private const byte ArrayIndexTemp = 0x04;
+        private const int ParameterSize = 4;
 
         private sealed record LoopContext(string BreakLabel, string ContinueLabel);
+
         private static readonly Stack<LoopContext> LoopContexts = new();
 
         private readonly Dictionary<string, ushort> _functionAddresses = new(StringComparer.Ordinal);
+        private readonly Dictionary<string, FunctionNode> _functions = new(StringComparer.Ordinal);
 
         public Mos6502CodeGenerationResult Generate(ProgramNode program, ushort origin, ushort returnValueAddress)
         {
             ArgumentNullException.ThrowIfNull(program);
 
             _functionAddresses.Clear();
+            _functions.Clear();
+
+            foreach (var function in program.Functions)
+                _functions[function.Name] = function;
 
             var main = program.Functions.FirstOrDefault(function => function.Name == "main");
 
@@ -45,13 +52,23 @@ namespace JollyCCompiler.Compiler.CodeGen.MOS6502
             ushort mainAddress = _functionAddresses.TryGetValue("main", out ushort address) ? address : origin;
             var machineCode = buffer.ToArray();
             var instructions = buffer.GetInstructions();
+
             return new Mos6502CodeGenerationResult(machineCode, origin, mainAddress, new Dictionary<string, ushort>(_functionAddresses, StringComparer.Ordinal), instructions);
         }
 
-        private static void GenerateFunction(FunctionNode function, Mos6502CodeBuffer buffer, ushort returnValueAddress)
+        private void GenerateFunction(FunctionNode function, Mos6502CodeBuffer buffer, ushort returnValueAddress)
         {
             var variables = new Dictionary<string, ushort>(StringComparer.Ordinal);
             ushort nextVariableAddress = checked((ushort)(returnValueAddress + 4));
+
+            foreach (var parameter in function.Parameters)
+            {
+                if (variables.ContainsKey(parameter.Name))
+                    throw new InvalidOperationException($"Parameter '{parameter.Name}' is already declared.");
+
+                variables.Add(parameter.Name, nextVariableAddress);
+                nextVariableAddress = checked((ushort)(nextVariableAddress + ParameterSize));
+            }
 
             foreach (var statement in function.Body.Statements)
                 GenerateStatement(statement, buffer, function.ReturnType, returnValueAddress, variables, ref nextVariableAddress);
@@ -63,7 +80,7 @@ namespace JollyCCompiler.Compiler.CodeGen.MOS6502
             }
         }
 
-        private static void GenerateStatement(StatementNode statement, Mos6502CodeBuffer buffer, string returnType, ushort returnValueAddress, Dictionary<string, ushort> variables, ref ushort nextVariableAddress)
+        private void GenerateStatement(StatementNode statement, Mos6502CodeBuffer buffer, string returnType, ushort returnValueAddress, Dictionary<string, ushort> variables, ref ushort nextVariableAddress)
         {
             switch (statement)
             {
@@ -72,7 +89,7 @@ namespace JollyCCompiler.Compiler.CodeGen.MOS6502
                     return;
 
                 case ExpressionStatement expressionStatement:
-                    GenerateExpressionStatement(expressionStatement, buffer, variables);
+                    GenerateExpressionStatement(expressionStatement, buffer, variables, returnValueAddress);
                     return;
 
                 case ReturnStatement returnStatement:
@@ -130,7 +147,9 @@ namespace JollyCCompiler.Compiler.CodeGen.MOS6502
 
             var typeSize = Get6502TypeSize(statement.Type);
             var address = nextVariableAddress;
+
             variables.Add(statement.Name, address);
+
             nextVariableAddress = checked((ushort)(nextVariableAddress + typeSize));
 
             if (statement.Initializer is null)
@@ -145,12 +164,12 @@ namespace JollyCCompiler.Compiler.CodeGen.MOS6502
             EmitIntegerValue(buffer, address, integer.Value, typeSize);
         }
 
-        private static void GenerateExpressionStatement(ExpressionStatement statement, Mos6502CodeBuffer buffer, Dictionary<string, ushort> variables)
+        private void GenerateExpressionStatement(ExpressionStatement statement, Mos6502CodeBuffer buffer, Dictionary<string, ushort> variables, ushort returnValueAddress)
         {
-            GenerateExpression(statement.Expression, buffer, variables);
+            GenerateExpression(statement.Expression, buffer, variables, returnValueAddress);
         }
 
-        private static void GenerateForStatement(ForStatement statement, Mos6502CodeBuffer buffer, string returnType, ushort returnValueAddress, Dictionary<string, ushort> variables, ref ushort nextVariableAddress)
+        private void GenerateForStatement(ForStatement statement, Mos6502CodeBuffer buffer, string returnType, ushort returnValueAddress, Dictionary<string, ushort> variables, ref ushort nextVariableAddress)
         {
             if (statement.Initializer is not null)
                 GenerateStatement(statement.Initializer, buffer, returnType, returnValueAddress, variables, ref nextVariableAddress);
@@ -162,7 +181,7 @@ namespace JollyCCompiler.Compiler.CodeGen.MOS6502
             buffer.Label(conditionLabel);
 
             if (statement.Condition is not null)
-                GenerateForCondition(statement.Condition, buffer, variables, endLabel);
+                GenerateForCondition(statement.Condition, buffer, variables, endLabel, returnValueAddress);
 
             LoopContexts.Push(new LoopContext(endLabel, continueLabel));
 
@@ -178,13 +197,13 @@ namespace JollyCCompiler.Compiler.CodeGen.MOS6502
             buffer.Label(continueLabel);
 
             if (statement.Increment is not null)
-                GenerateExpression(statement.Increment, buffer, variables);
+                GenerateExpression(statement.Increment, buffer, variables, returnValueAddress);
 
             buffer.Jmp(conditionLabel);
             buffer.Label(endLabel);
         }
 
-        private static void GenerateForCondition(ExpressionNode expression, Mos6502CodeBuffer buffer, Dictionary<string, ushort> variables, string falseLabel)
+        private void GenerateForCondition(ExpressionNode expression, Mos6502CodeBuffer buffer, Dictionary<string, ushort> variables, string falseLabel, ushort returnValueAddress)
         {
             if (expression is BinaryExpression binary)
             {
@@ -212,15 +231,22 @@ namespace JollyCCompiler.Compiler.CodeGen.MOS6502
                 return;
             }
 
+            if (expression is CallExpression)
+            {
+                GenerateExpression(expression, buffer, variables, returnValueAddress);
+                EmitBranchIfReturnValueZero(buffer, returnValueAddress, falseLabel);
+                return;
+            }
+
             throw new NotSupportedException($"6502 for condition expression '{expression.GetType().Name}' is not yet supported.");
         }
 
-        private static void GenerateIfStatement(IfStatement statement, Mos6502CodeBuffer buffer, string returnType, ushort returnValueAddress, Dictionary<string, ushort> variables, ref ushort nextVariableAddress)
+        private void GenerateIfStatement(IfStatement statement, Mos6502CodeBuffer buffer, string returnType, ushort returnValueAddress, Dictionary<string, ushort> variables, ref ushort nextVariableAddress)
         {
             var elseLabel = $"$if_else_{buffer.Address:X4}";
             var endLabel = $"$if_end_{buffer.Address:X4}";
 
-            GenerateForCondition(statement.Condition, buffer, variables, elseLabel);
+            GenerateForCondition(statement.Condition, buffer, variables, elseLabel, returnValueAddress);
 
             GenerateStatement(statement.Then, buffer, returnType, returnValueAddress, variables, ref nextVariableAddress);
 
@@ -238,14 +264,14 @@ namespace JollyCCompiler.Compiler.CodeGen.MOS6502
             buffer.Label(endLabel);
         }
 
-        private static void GenerateWhileStatement(WhileStatement statement, Mos6502CodeBuffer buffer, string returnType, ushort returnValueAddress, Dictionary<string, ushort> variables, ref ushort nextVariableAddress)
+        private void GenerateWhileStatement(WhileStatement statement, Mos6502CodeBuffer buffer, string returnType, ushort returnValueAddress, Dictionary<string, ushort> variables, ref ushort nextVariableAddress)
         {
             var conditionLabel = $"$while_condition_{buffer.Address:X4}";
             var endLabel = $"$while_end_{buffer.Address:X4}";
 
             buffer.Label(conditionLabel);
 
-            GenerateForCondition(statement.Condition, buffer, variables, endLabel);
+            GenerateForCondition(statement.Condition, buffer, variables, endLabel, returnValueAddress);
 
             LoopContexts.Push(new LoopContext(endLabel, conditionLabel));
 
@@ -262,7 +288,7 @@ namespace JollyCCompiler.Compiler.CodeGen.MOS6502
             buffer.Label(endLabel);
         }
 
-        private static void GenerateDoWhileStatement(DoWhileStatement statement, Mos6502CodeBuffer buffer, string returnType, ushort returnValueAddress, Dictionary<string, ushort> variables, ref ushort nextVariableAddress)
+        private void GenerateDoWhileStatement(DoWhileStatement statement, Mos6502CodeBuffer buffer, string returnType, ushort returnValueAddress, Dictionary<string, ushort> variables, ref ushort nextVariableAddress)
         {
             var bodyLabel = $"$do_while_body_{buffer.Address:X4}";
             var conditionLabel = $"$do_while_condition_{buffer.Address:X4}";
@@ -283,7 +309,7 @@ namespace JollyCCompiler.Compiler.CodeGen.MOS6502
 
             buffer.Label(conditionLabel);
 
-            GenerateForCondition(statement.Condition, buffer, variables, endLabel);
+            GenerateForCondition(statement.Condition, buffer, variables, endLabel, returnValueAddress);
 
             buffer.Jmp(bodyLabel);
             buffer.Label(endLabel);
@@ -305,7 +331,7 @@ namespace JollyCCompiler.Compiler.CodeGen.MOS6502
             buffer.Jmp(LoopContexts.Peek().ContinueLabel);
         }
 
-        private static void GenerateExpression(ExpressionNode expression, Mos6502CodeBuffer buffer, Dictionary<string, ushort> variables)
+        private void GenerateExpression(ExpressionNode expression, Mos6502CodeBuffer buffer, Dictionary<string, ushort> variables, ushort returnValueAddress)
         {
             switch (expression)
             {
@@ -317,7 +343,7 @@ namespace JollyCCompiler.Compiler.CodeGen.MOS6502
                     return;
 
                 case AssignmentExpression assignment:
-                    GenerateAssignmentExpression(assignment, buffer, variables);
+                    GenerateAssignmentExpression(assignment, buffer, variables, returnValueAddress);
                     return;
 
                 case UnaryExpression unary:
@@ -326,6 +352,10 @@ namespace JollyCCompiler.Compiler.CodeGen.MOS6502
 
                 case BinaryExpression binary:
                     GenerateBinaryExpression(binary, buffer, variables);
+                    return;
+
+                case CallExpression call:
+                    GenerateCallExpression(call, buffer, variables, returnValueAddress);
                     return;
 
                 default:
@@ -341,7 +371,7 @@ namespace JollyCCompiler.Compiler.CodeGen.MOS6502
             buffer.LdaAbsolute(address);
         }
 
-        private static void GenerateAssignmentExpression(AssignmentExpression expression, Mos6502CodeBuffer buffer, Dictionary<string, ushort> variables)
+        private void GenerateAssignmentExpression(AssignmentExpression expression, Mos6502CodeBuffer buffer, Dictionary<string, ushort> variables, ushort returnValueAddress)
         {
             if (expression.Target is DereferenceExpression dereference)
             {
@@ -405,7 +435,114 @@ namespace JollyCCompiler.Compiler.CodeGen.MOS6502
                 return;
             }
 
+            if (expression.Value is CallExpression call)
+            {
+                GenerateCallExpression(call, buffer, variables, returnValueAddress);
+                StoreReturnValue(buffer, address, GetExpressionSize(identifier, variables), returnValueAddress);
+                return;
+            }
+
             throw new NotSupportedException($"6502 assignment value '{expression.Value.GetType().Name}' is not yet supported.");
+        }
+
+        private void GenerateCallExpression(CallExpression expression, Mos6502CodeBuffer buffer, Dictionary<string, ushort> variables, ushort returnValueAddress)
+        {
+            if (expression.Function is not IdentifierExpression identifier)
+                throw new NotSupportedException($"6502 function expression '{expression.Function.GetType().Name}' is not yet supported.");
+
+            var function = GetFunction(identifier.Name);
+
+            if (function is null)
+                throw new InvalidOperationException($"6502 function '{identifier.Name}' is not defined.");
+
+            if (expression.Arguments.Count > GetMaximumParameterCount())
+                throw new NotSupportedException($"6502 function '{identifier.Name}' has too many arguments.");
+
+            var parameterAddress = checked((ushort)(returnValueAddress + 4));
+
+            if (expression.Arguments.Count != function.Parameters.Count)
+                throw new InvalidOperationException($"Function '{identifier.Name}' expects {function.Parameters.Count} argument(s) but received {expression.Arguments.Count}.");
+
+            for (var index = 0; index < expression.Arguments.Count; index++)
+            {
+                GenerateCallArgument(expression.Arguments[index], buffer, variables, returnValueAddress);
+                StoreAccumulatorAsParameter(buffer, checked((ushort)(parameterAddress + (index * ParameterSize))));
+            }
+
+            buffer.Jsr(GetFunctionLabel(identifier.Name));
+        }
+
+        private FunctionNode? GetFunction(string name)
+        {
+            return _functions.TryGetValue(name, out var function) ? function : null;
+        }
+
+        private static int GetMaximumParameterCount()
+        {
+            return 8;
+        }
+
+        private void GenerateCallArgument(ExpressionNode expression, Mos6502CodeBuffer buffer, Dictionary<string, ushort> variables, ushort returnValueAddress)
+        {
+            if (expression is IntegerExpression integer)
+            {
+                buffer.LdaImmediate((byte)integer.Value);
+                return;
+            }
+
+            if (expression is IdentifierExpression identifier)
+            {
+                if (!variables.TryGetValue(identifier.Name, out var address))
+                    throw new InvalidOperationException($"Variable '{identifier.Name}' is not defined.");
+
+                buffer.LdaAbsolute(address);
+                return;
+            }
+
+            if (expression is CallExpression call)
+            {
+                GenerateCallExpression(call, buffer, variables, returnValueAddress);
+                buffer.LdaAbsolute(returnValueAddress);
+                return;
+            }
+
+            if (expression is BinaryExpression binary)
+            {
+                GenerateBinaryValue(binary, buffer, variables);
+                return;
+            }
+
+            throw new NotSupportedException($"6502 call argument '{expression.GetType().Name}' is not yet supported.");
+        }
+
+        private static void StoreAccumulatorAsParameter(Mos6502CodeBuffer buffer, ushort address)
+        {
+            buffer.StaAbsolute(address);
+            buffer.LdaImmediate(0);
+            buffer.StaAbsolute((ushort)(address + 1));
+            buffer.StaAbsolute((ushort)(address + 2));
+            buffer.StaAbsolute((ushort)(address + 3));
+        }
+
+        private static void StoreReturnValue(Mos6502CodeBuffer buffer, ushort destinationAddress, int size, ushort returnValueAddress)
+        {
+            for (var index = 0; index < size; index++)
+            {
+                buffer.LdaAbsolute((ushort)(returnValueAddress + index));
+                buffer.StaAbsolute((ushort)(destinationAddress + index));
+            }
+        }
+
+        private static void EmitBranchIfReturnValueZero(Mos6502CodeBuffer buffer, ushort returnValueAddress, string falseLabel)
+        {
+            for (var index = 0; index < 4; index++)
+            {
+                buffer.LdaAbsolute((ushort)(returnValueAddress + index));
+                var nonZeroLabel = $"$call_nonzero_{buffer.Address:X4}_{index}";
+                buffer.BneLong(nonZeroLabel);
+                buffer.Jmp(falseLabel);
+                buffer.Label(nonZeroLabel);
+            }
         }
 
         private static void GenerateDereferenceValue(DereferenceExpression expression, Mos6502CodeBuffer buffer, Dictionary<string, ushort> variables)
@@ -601,7 +738,6 @@ namespace JollyCCompiler.Compiler.CodeGen.MOS6502
 
             buffer.LdaImmediate((byte)(index & 0xFF));
             buffer.StaZeroPage(ArrayPointer);
-
             buffer.LdaImmediate((byte)(index >> 8));
             buffer.StaZeroPage(ArrayPointerHigh);
         }
@@ -890,6 +1026,7 @@ namespace JollyCCompiler.Compiler.CodeGen.MOS6502
             for (var index = size - 1; index >= 0; index--)
             {
                 var byteValue = (byte)((value >> (index * 8)) & 0xFF);
+
                 buffer.LdaAbsolute((ushort)(address + index));
                 buffer.CmpImmediate(byteValue);
                 buffer.BccLong(trueLabel);
@@ -906,6 +1043,7 @@ namespace JollyCCompiler.Compiler.CodeGen.MOS6502
             for (var index = size - 1; index >= 0; index--)
             {
                 var byteValue = (byte)((value >> (index * 8)) & 0xFF);
+
                 buffer.LdaAbsolute((ushort)(address + index));
                 buffer.CmpImmediate(byteValue);
                 buffer.BccLong(trueLabel);
@@ -923,6 +1061,7 @@ namespace JollyCCompiler.Compiler.CodeGen.MOS6502
             {
                 var byteValue = (byte)((value >> (index * 8)) & 0xFF);
                 var greaterLabel = $"$compare_greater_{buffer.Address:X4}_{index}";
+
                 buffer.LdaAbsolute((ushort)(address + index));
                 buffer.CmpImmediate(byteValue);
                 buffer.BcsLong(greaterLabel);
@@ -939,6 +1078,7 @@ namespace JollyCCompiler.Compiler.CodeGen.MOS6502
             for (var index = size - 1; index >= 0; index--)
             {
                 var byteValue = (byte)((value >> (index * 8)) & 0xFF);
+
                 buffer.LdaAbsolute((ushort)(address + index));
                 buffer.CmpImmediate(byteValue);
                 buffer.BcsLong(trueLabel);
@@ -1039,7 +1179,7 @@ namespace JollyCCompiler.Compiler.CodeGen.MOS6502
             }
         }
 
-        private static void GenerateReturn(ReturnStatement statement, Mos6502CodeBuffer buffer, string returnType, ushort returnValueAddress, Dictionary<string, ushort> variables)
+        private void GenerateReturn(ReturnStatement statement, Mos6502CodeBuffer buffer, string returnType, ushort returnValueAddress, Dictionary<string, ushort> variables)
         {
             if (statement.Expression is null)
             {
@@ -1076,7 +1216,36 @@ namespace JollyCCompiler.Compiler.CodeGen.MOS6502
                     throw new InvalidOperationException($"Variable '{identifier.Name}' is not defined.");
 
                 var size = GetExpressionSize(identifier, variables);
+
                 EmitVariableReturn(buffer, address, size, returnValueAddress);
+                buffer.Rts();
+                return;
+            }
+
+            if (statement.Expression is BinaryExpression binary)
+            {
+                if (returnType == "void")
+                {
+                    buffer.Rts();
+                    return;
+                }
+
+                GenerateBinaryValue(binary, buffer, variables);
+                EmitAccumulatorToReturnValue(buffer, returnValueAddress);
+                buffer.Rts();
+                return;
+            }
+
+            if (statement.Expression is CallExpression call)
+            {
+                if (returnType == "void")
+                {
+                    GenerateCallExpression(call, buffer, variables, returnValueAddress);
+                    buffer.Rts();
+                    return;
+                }
+
+                GenerateCallExpression(call, buffer, variables, returnValueAddress);
                 buffer.Rts();
                 return;
             }
@@ -1088,15 +1257,22 @@ namespace JollyCCompiler.Compiler.CodeGen.MOS6502
         {
             for (var index = 0; index < 4; index++)
             {
-                var value = index < size ? address + index : 0;
-
                 if (index < size)
-                    buffer.LdaAbsolute((ushort)value);
+                    buffer.LdaAbsolute((ushort)(address + index));
                 else
                     buffer.LdaImmediate(0);
 
                 buffer.StaAbsolute((ushort)(returnValueAddress + index));
             }
+        }
+
+        private static void EmitAccumulatorToReturnValue(Mos6502CodeBuffer buffer, ushort returnValueAddress)
+        {
+            buffer.StaAbsolute(returnValueAddress);
+            buffer.LdaImmediate(0);
+            buffer.StaAbsolute((ushort)(returnValueAddress + 1));
+            buffer.StaAbsolute((ushort)(returnValueAddress + 2));
+            buffer.StaAbsolute((ushort)(returnValueAddress + 3));
         }
 
         private static int GetExpressionSize(IdentifierExpression expression, Dictionary<string, ushort> variables)

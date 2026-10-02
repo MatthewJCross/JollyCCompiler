@@ -1,35 +1,49 @@
-﻿using JollyCCompiler.Compiler.CodeGen;
-using JollyCCompiler.Compiler.CodeGen.MOS6502.Platforms.C64;
+﻿using JollyCCompiler.Compiler.CodeGen.MOS6502.Platforms.C64;
 using JollyCCompiler.Compiler.CodeGen.X64;
 using JollyCCompiler.Compiler.Compilation;
 using JollyCCompiler.Compiler.Syntax;
-using JollyCCompiler.GUI;
 using JollyCCompiler.Object;
+using JollyCCompiler.Project;
 using Microsoft.Win32;
 using System.Diagnostics;
 using System.IO;
+using System.Net.Sockets;
 using System.Text;
+using System.Text.Json;
 using System.Windows;
+using System.Windows.Controls;
+using System.Windows.Input;
 
 namespace JollyCCompiler
 {
-    /// <summary>
-    /// Interaction logic for MainWindow.xaml
-    /// </summary>
     public partial class MainWindow : Window
     {
+        private readonly JollyProjectService _projectService = new();
+        private readonly List<OpenDocument> _openDocuments = new();
+        private JollyProject? _project;
+        private OpenDocument? _activeDocument;
         private string? _currentFile;
         private string? _compiledOutputPath;
         private Process? _consoleProcess;
+        private bool _switchingDocument;
+
+        private const string SettingsDirectoryName = "JollyCCompiler";
+        private const string SettingsFileName = "settings.json";        private string SettingsFilePath => Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData), SettingsDirectoryName, SettingsFileName);
+        
+        private Process? _viceProcess;
+        private const string ViceBinaryMonitorHost = "127.0.0.1";
+        private const int ViceBinaryMonitorPort = 6502;
 
         public MainWindow()
         {
             InitializeComponent();
-
+            TargetComboBox.ItemsSource = Enum.GetValues<ProjectTarget>();
+            TargetComboBox.SelectedItem = ProjectTarget.X64;
             Editor.Text = SampleSource;
             StatusText.Text = "Ready";
-
             Editor.CursorPositionChanged += CodeEditor_CursorPositionChanged;
+            Editor.TextChanged += Editor_TextChanged;
+            Loaded += MainWindow_Loaded;
         }
 
         private void CodeEditor_CursorPositionChanged(object? sender, EventArgs e)
@@ -37,43 +51,533 @@ namespace JollyCCompiler
             CursorPositionText.Text = $"Ln: {Editor.CurrentLine}, Col: {Editor.CurrentColumn}";
         }
 
-        private static string SampleSource =>
-        """
-        void main(void)
+        private void Editor_TextChanged(object? sender, EventArgs e)
         {
-            unsigned char *p;
-            unsigned char value;
-
-            p = (unsigned char *)0x0400;
-            *p = 42;
-            value = *p;
-        }
-        """;
-
-        private void New_Click(object sender, RoutedEventArgs e)
-        {
-            Editor.Text = "";
-            _currentFile = null;
-            StatusText.Text = "New source file";
-            Output.Clear();
-            TokenList.Items.Clear();
-        }
-
-        private void Open_Click(object sender, RoutedEventArgs e)
-        {
-            var dialog = new OpenFileDialog
+            if (_switchingDocument || _activeDocument is null)
             {
-                Filter = "C source (*.c)|*.c|C header (*.h)|*.h|All files (*.*)|*.*"
+                return;
+            }
+
+            _activeDocument.Text = Editor.Text;
+            _activeDocument.IsDirty = true;
+            UpdateDocumentTab(_activeDocument);
+        }
+
+        private void MainWindow_Loaded(object sender, RoutedEventArgs e)
+        {
+            Loaded -= MainWindow_Loaded;
+            LoadLastProject();
+        }
+
+        private void LoadLastProject()
+        {
+            try
+            {
+                if (!File.Exists(SettingsFilePath))
+                {
+                    return;
+                }
+
+                var json = File.ReadAllText(SettingsFilePath);
+                var settings = JsonSerializer.Deserialize<ApplicationSettings>(json);
+
+                if (settings is null || string.IsNullOrWhiteSpace(settings.LastProjectPath))
+                {
+                    return;
+                }
+
+                if (!File.Exists(settings.LastProjectPath))
+                {
+                    StatusText.Text = "Last project could not be found.";
+                    return;
+                }
+
+                CloseAllDocuments();
+
+                _project = _projectService.Open(settings.LastProjectPath);
+
+                RefreshProjectTree();
+                UpdateTargetUi();
+
+                TargetComboBox.SelectedItem = _project.Target;
+
+                ClearBuildOutput();
+
+                Title = $"{_project.Name} - JollyC Compiler";
+                StatusText.Text = $"Opened {_project.Name}";
+            }
+            catch (Exception ex)
+            {
+                StatusText.Text = "Could not open the last project.";
+            }
+        }
+
+        private void SaveLastProject()
+        {
+            if (_project?.ProjectFilePath is null)
+            {
+                return;
+            }
+
+            try
+            {
+                var directory = Path.GetDirectoryName(SettingsFilePath);
+
+                if (!string.IsNullOrWhiteSpace(directory))
+                {
+                    Directory.CreateDirectory(directory);
+                }
+
+                var settings = new ApplicationSettings
+                {
+                    LastProjectPath = Path.GetFullPath(_project.ProjectFilePath)
+                };
+
+                var json = JsonSerializer.Serialize(settings, new JsonSerializerOptions
+                {
+                    WriteIndented = true
+                });
+
+                File.WriteAllText(SettingsFilePath, json);
+            }
+            catch
+            {
+            }
+        }
+
+        private void UpdateDocumentTab(OpenDocument document)
+        {
+            if (document.Tab is null)
+            {
+                return;
+            }
+
+            document.Tab.Header = document.IsDirty ? $"{document.FileName} *" : document.FileName;
+        }
+
+        private static string SampleSource => "";
+
+        private void NewProject_Click(object sender, RoutedEventArgs e)
+        {
+            var dialog = new SaveFileDialog
+            {
+                Filter = "JollyC Project (*.jollyproj)|*.jollyproj",
+                DefaultExt = ".jollyproj",
+                FileName = "JollyCProgram.jollyproj"
             };
 
             if (dialog.ShowDialog() != true)
+            {
                 return;
+            }
 
-            Editor.Text = File.ReadAllText(dialog.FileName);
-            _currentFile = dialog.FileName;
-            StatusText.Text = $"Opened {Path.GetFileName(dialog.FileName)}";
-            Output.Clear();
-            TokenList.Items.Clear();
+            try
+            {
+                CloseAllDocuments();
+
+                var projectName = Path.GetFileNameWithoutExtension(dialog.FileName);
+
+                _project = _projectService.Create(projectName, dialog.FileName);
+                _project.Target = ProjectTarget.X64;
+
+                var projectDirectory = Path.GetDirectoryName(dialog.FileName);
+
+                if (string.IsNullOrWhiteSpace(projectDirectory))
+                {
+                    throw new InvalidOperationException("The project directory could not be determined.");
+                }
+
+                Directory.CreateDirectory(projectDirectory);
+
+                var sourcePath = Path.Combine(projectDirectory, "main.c");
+
+                File.WriteAllText(sourcePath, SampleSource);
+
+                _project.SourceFiles.Add("main.c");
+
+                _projectService.Save(_project, dialog.FileName);
+                SaveLastProject();
+
+                RefreshProjectTree();
+                UpdateTargetUi();
+                OpenSourceFile(sourcePath);
+                ClearBuildOutput();
+
+                Title = $"{_project.Name} - JollyC Compiler";
+                StatusText.Text = $"Created project {_project.Name}";
+            }
+            catch (Exception ex)
+            {
+                MessageBox.Show(this, ex.Message, "New Project", MessageBoxButton.OK, MessageBoxImage.Error);
+            }
+        }
+
+        private void OpenProject_Click(object sender, RoutedEventArgs e)
+        {
+            var dialog = new OpenFileDialog
+            {
+                Filter = "JollyC Project (*.jollyproj)|*.jollyproj|All files (*.*)|*.*"
+            };
+
+            if (dialog.ShowDialog() != true)
+            {
+                return;
+            }
+
+            try
+            {
+                CloseAllDocuments();
+
+                _project = _projectService.Open(dialog.FileName);
+                SaveLastProject();
+
+                RefreshProjectTree();
+                UpdateTargetUi();
+
+                TargetComboBox.SelectedItem = _project.Target;
+
+                ClearBuildOutput();
+
+                Title = $"{_project.Name} - JollyC Compiler";
+                StatusText.Text = $"Opened project {_project.Name}";
+            }
+            catch (Exception ex)
+            {
+                MessageBox.Show(this, ex.Message, "Open Project", MessageBoxButton.OK, MessageBoxImage.Error);
+            }
+        }
+
+        private void SaveProject_Click(object sender, RoutedEventArgs e)
+        {
+            if (_project is null)
+            {
+                MessageBox.Show(this, "There is no project to save.", "Save Project", MessageBoxButton.OK, MessageBoxImage.Information);
+                return;
+            }
+
+            try
+            {
+                if (!SaveAllFiles())
+                {
+                    return;
+                }
+
+                if (_project.ProjectFilePath is null)
+                {
+                    var dialog = new SaveFileDialog
+                    {
+                        Filter = "JollyC Project (*.jollyproj)|*.jollyproj",
+                        DefaultExt = ".jollyproj",
+                        FileName = $"{_project.Name}.jollyproj"
+                    };
+
+                    if (dialog.ShowDialog() != true)
+                    {
+                        return;
+                    }
+
+                    _project.ProjectFilePath = dialog.FileName;
+                }
+
+                _projectService.Save(_project, _project.ProjectFilePath);
+
+                StatusText.Text = $"Saved project {_project.Name}";
+            }
+            catch (Exception ex)
+            {
+                MessageBox.Show(this, ex.Message, "Save Project", MessageBoxButton.OK, MessageBoxImage.Error);
+            }
+        }
+
+        private void AddSourceFile_Click(object sender, RoutedEventArgs e)
+        {
+            if (_project is null)
+            {
+                MessageBox.Show(this, "Create or open a project first.", "Add Source File", MessageBoxButton.OK, MessageBoxImage.Information);
+                return;
+            }
+
+            var dialog = new OpenFileDialog
+            {
+                Filter = "C source (*.c)|*.c|C header (*.h)|*.h|All files (*.*)|*.*",
+                Multiselect = true
+            };
+
+            if (dialog.ShowDialog() != true)
+            {
+                return;
+            }
+
+            foreach (var fileName in dialog.FileNames)
+            {
+                var relativePath = _projectService.GetRelativePath(_project, fileName);
+
+                if (!_project.SourceFiles.Contains(relativePath, StringComparer.OrdinalIgnoreCase))
+                {
+                    _project.SourceFiles.Add(relativePath);
+                }
+            }
+
+            _projectService.Save(_project, _project.ProjectFilePath!);
+
+            RefreshProjectTree();
+
+            StatusText.Text = "Source files added";
+        }
+
+        private void NewSourceFile_Click(object sender, RoutedEventArgs e)
+        {
+            if (_project is null)
+            {
+                MessageBox.Show(this, "Create or open a project first.", "New Source File", MessageBoxButton.OK, MessageBoxImage.Information);
+                return;
+            }
+
+            var dialog = new SaveFileDialog
+            {
+                Filter = "C source (*.c)|*.c",
+                DefaultExt = ".c",
+                FileName = "new.c",
+                InitialDirectory = _project.ProjectDirectory
+            };
+
+            if (dialog.ShowDialog() != true)
+            {
+                return;
+            }
+
+            try
+            {
+                File.WriteAllText(dialog.FileName, "");
+
+                var relativePath = _projectService.GetRelativePath(_project, dialog.FileName);
+
+                if (!_project.SourceFiles.Contains(relativePath, StringComparer.OrdinalIgnoreCase))
+                {
+                    _project.SourceFiles.Add(relativePath);
+                }
+
+                _projectService.Save(_project, _project.ProjectFilePath!);
+
+                RefreshProjectTree();
+                OpenSourceFile(dialog.FileName);
+            }
+            catch (Exception ex)
+            {
+                MessageBox.Show(this, ex.Message, "New Source File", MessageBoxButton.OK, MessageBoxImage.Error);
+            }
+        }
+
+        private void ProjectTree_SelectedItemChanged(object sender, RoutedPropertyChangedEventArgs<object> e)
+        {
+            if (e.NewValue is ProjectFileItem item)
+            {
+                OpenSourceFile(item.FullPath);
+            }
+        }
+
+        private void ProjectTree_MouseDoubleClick(object sender, MouseButtonEventArgs e)
+        {
+            if (ProjectTree.SelectedItem is not ProjectFileItem fileItem)
+            {
+                return;
+            }
+
+            OpenSourceFile(fileItem.FullPath);
+            e.Handled = true;
+        }
+
+        private void TargetComboBox_SelectionChanged(object sender, SelectionChangedEventArgs e)
+        {
+            if (_project is null)
+            {
+                return;
+            }
+
+            if (TargetComboBox.SelectedItem is not ProjectTarget target)
+            {
+                return;
+            }
+
+            if (_project.Target == target)
+            {
+                UpdateTargetUi();
+                return;
+            }
+
+            _project.Target = target;
+
+            if (!string.IsNullOrWhiteSpace(_project.ProjectFilePath))
+            {
+                _projectService.Save(_project, _project.ProjectFilePath);
+            }
+
+            ClearBuildOutput();
+            UpdateTargetUi();
+
+            StatusText.Text = $"Target changed to {target}.";
+        }
+
+        private void OpenSourceFile(string filePath)
+        {
+            if (!File.Exists(filePath))
+            {
+                return;
+            }
+
+            var existing = _openDocuments.FirstOrDefault(x => string.Equals(x.FilePath, filePath, StringComparison.OrdinalIgnoreCase));
+
+            if (existing is not null)
+            {
+                DocumentTabs.SelectedItem = existing.Tab;
+                return;
+            }
+
+            var document = new OpenDocument
+            {
+                FilePath = filePath,
+                Text = File.ReadAllText(filePath)
+            };
+
+            var tab = new TabItem
+            {
+                Header = document.FileName,
+                Tag = document
+            };
+
+            document.Tab = tab;
+
+            _openDocuments.Add(document);
+            DocumentTabs.Items.Add(tab);
+
+            _switchingDocument = true;
+
+            try
+            {
+                DocumentTabs.SelectedItem = tab;
+                _activeDocument = document;
+                _currentFile = document.FilePath;
+                Editor.Text = document.Text;
+            }
+            finally
+            {
+                _switchingDocument = false;
+            }
+
+            StatusText.Text = $"Opened {document.FileName}";
+        }
+
+        private void DocumentTabs_SelectionChanged(object sender, SelectionChangedEventArgs e)
+        {
+            if (e.Source != DocumentTabs)
+            {
+                return;
+            }
+
+            if (_switchingDocument)
+            {
+                return;
+            }
+
+            if (_activeDocument is not null)
+            {
+                _activeDocument.Text = Editor.Text;
+            }
+
+            if (DocumentTabs.SelectedItem is not TabItem tab)
+            {
+                _activeDocument = null;
+                _currentFile = null;
+
+                _switchingDocument = true;
+
+                try
+                {
+                    Editor.Text = string.Empty;
+                }
+                finally
+                {
+                    _switchingDocument = false;
+                }
+
+                return;
+            }
+
+            if (tab.Tag is not OpenDocument document)
+            {
+                return;
+            }
+
+            _switchingDocument = true;
+
+            try
+            {
+                _activeDocument = document;
+                _currentFile = document.FilePath;
+                Editor.Text = document.Text;
+            }
+            finally
+            {
+                _switchingDocument = false;
+            }
+
+            StatusText.Text = $"Editing {document.FileName}";
+
+            UpdateDocumentTab(document);
+        }
+
+        private void CloseAllDocuments()
+        {
+            _switchingDocument = true;
+
+            try
+            {
+                _openDocuments.Clear();
+                DocumentTabs.Items.Clear();
+                _activeDocument = null;
+                _currentFile = null;
+                Editor.Text = string.Empty;
+            }
+            finally
+            {
+                _switchingDocument = false;
+            }
+        }
+
+        private void RefreshProjectTree()
+        {
+            ProjectTree.Items.Clear();
+
+            if (_project is null)
+            {
+                return;
+            }
+
+            var root = new TreeViewItem
+            {
+                Header = _project.Name,
+                IsExpanded = true
+            };
+
+            var sourceNode = new TreeViewItem
+            {
+                Header = "Source",
+                IsExpanded = true
+            };
+
+            foreach (var sourceFile in _project.SourceFiles)
+            {
+                var fullPath = _projectService.GetSourcePath(_project, sourceFile);
+
+                sourceNode.Items.Add(new ProjectFileItem
+                {
+                    DisplayName = Path.GetFileName(sourceFile),
+                    FullPath = fullPath
+                });
+            }
+
+            root.Items.Add(sourceNode);
+            ProjectTree.Items.Add(root);
         }
 
         private void Save_Click(object sender, RoutedEventArgs e)
@@ -83,106 +587,175 @@ namespace JollyCCompiler
 
         private bool SaveFile()
         {
-            if (_currentFile is null)
+            if (_activeDocument is null)
             {
-                var dialog = new SaveFileDialog
-                {
-                    Filter = "C source (*.c)|*.c|All files (*.*)|*.*",
-                    DefaultExt = ".c",
-                    FileName = "main.c"
-                };
-
-                if (dialog.ShowDialog() != true)
-                    return false;
-
-                _currentFile = dialog.FileName;
+                MessageBox.Show(this, "No source file is open.", "Save", MessageBoxButton.OK, MessageBoxImage.Information);
+                return false;
             }
 
-            File.WriteAllText(_currentFile, Editor.Text);
-            StatusText.Text = $"Saved {Path.GetFileName(_currentFile)}";
+            try
+            {
+                _activeDocument.Text = Editor.Text;
+
+                File.WriteAllText(_activeDocument.FilePath, _activeDocument.Text);
+
+                _activeDocument.IsDirty = false;
+                _currentFile = _activeDocument.FilePath;
+
+                UpdateDocumentTab(_activeDocument);
+
+                StatusText.Text = $"Saved {Path.GetFileName(_activeDocument.FilePath)}";
+
+                return true;
+            }
+            catch (Exception ex)
+            {
+                MessageBox.Show(this, $"Failed to save the file.\n\n{ex.Message}", "Save", MessageBoxButton.OK, MessageBoxImage.Error);
+                return false;
+            }
+        }
+
+        private bool SaveAllFiles()
+        {
+            if (_activeDocument is not null)
+            {
+                _activeDocument.Text = Editor.Text;
+
+                if (_activeDocument.IsDirty && !SaveDocument(_activeDocument))
+                {
+                    return false;
+                }
+            }
+
+            foreach (var document in _openDocuments)
+            {
+                if (ReferenceEquals(document, _activeDocument))
+                {
+                    continue;
+                }
+
+                if (document.IsDirty && !SaveDocument(document))
+                {
+                    return false;
+                }
+            }
+
             return true;
+        }
+
+        private bool SaveDocument(OpenDocument document)
+        {
+            try
+            {
+                File.WriteAllText(document.FilePath, document.Text);
+
+                document.IsDirty = false;
+
+                UpdateDocumentTab(document);
+
+                return true;
+            }
+            catch (Exception ex)
+            {
+                MessageBox.Show(this, $"Failed to save {document.FileName}.\n\n{ex.Message}", "Save", MessageBoxButton.OK, MessageBoxImage.Error);
+                return false;
+            }
         }
 
         private void Compile_Click(object sender, RoutedEventArgs e)
         {
             try
             {
+                if (_project is null)
+                {
+                    MessageBox.Show(this, "Create or open a project first.", "Compile", MessageBoxButton.OK, MessageBoxImage.Information);
+                    return;
+                }
+
+                if (!SaveAllFiles())
+                    return;
+
+                ClearBuildOutput();
+
+                var sourceFiles = GetProjectSourceFilesForCompilation();
+
+                if (sourceFiles.Count == 0)
+                {
+                    MessageBox.Show(this, "The project contains no C source files.", "Compile", MessageBoxButton.OK, MessageBoxImage.Warning);
+                    return;
+                }
+
                 var compiler = new CCompiler();
-                var result = compiler.Compile(Editor.Text);
+                var result = compiler.CompileProject(sourceFiles);
 
                 TokenList.Items.Clear();
 
                 foreach (var token in result.Tokens)
+                {
                     TokenList.Items.Add($"{token.Line,3}:{token.Column,-3}  {token.Kind,-18} {token.Text}");
+                }
 
                 var output = new StringBuilder();
 
-                if (result.Success)
+                output.AppendLine("BUILD");
+                output.AppendLine("-----");
+                output.AppendLine($"Project: {_project.Name}");
+                output.AppendLine($"Target: {_project.Target}");
+                output.AppendLine();
+
+                output.AppendLine("SOURCE FILES");
+                output.AppendLine("------------");
+
+                foreach (var sourceFile in sourceFiles)
                 {
-                    output.AppendLine("BUILD SUCCEEDED");
-                    output.AppendLine();
-
-                    output.AppendLine("AST");
-                    output.AppendLine("---");
-                    output.AppendLine(AstPrinter.Print(result.Program!));
-
-                    var codeGenerator = new X64CodeGenerator();
-                    var nativeCode = codeGenerator.Generate(result.Program!);
-
-                    var outputDirectory = Path.Combine(AppContext.BaseDirectory, "output");
-                    Directory.CreateDirectory(outputDirectory);
-                    var executablePath = Path.Combine(outputDirectory, "JollyCProgram.exe");
-                    var peWriter = new PeWriter();
-                    peWriter.Write(executablePath, nativeCode);
-                    _compiledOutputPath = executablePath;
-
-                    output.AppendLine();
-                    output.AppendLine("NATIVE x64");
-                    output.AppendLine("----------");
-
-                    output.AppendLine(string.Join(" ", nativeCode.MachineCode.Select(b => b.ToString("X2"))));
-
-                    output.AppendLine();
-                    output.AppendLine("OUTPUT");
-                    output.AppendLine("------");
-                    output.AppendLine(executablePath);
-
-                    AstOutput.Text = AstPrinter.Print(result.Program!);
-                    NativeCodeGrid.ItemsSource = nativeCode.Instructions;
-                    StatusText.Text = "Compile succeeded";
-
-
-                    var c64Target = new C64Target();
-                    var c64Generated = c64Target.Generate(result.Program!);
-
-                    var c64ProgramPath = Path.Combine(outputDirectory, "JollyCProgram.prg");
-                    c64Target.WriteProgram(c64ProgramPath, result.Program!);
-
-                    output.AppendLine();
-                    output.AppendLine("NATIVE 6502");
-                    output.AppendLine("-----------");
-                    output.AppendLine($"Origin:    ${c64Generated.Origin:X4}");
-                    output.AppendLine($"Main:      ${c64Generated.MainAddress:X4}");
-                    output.AppendLine($"Code size: {c64Generated.MachineCode.Length} bytes");
-                    output.AppendLine($"PRG:       {c64ProgramPath}");
-
-                    Mos6502OriginText.Text = $"${c64Generated.Origin:X4}";
-                    Mos6502MainAddressText.Text = $"${c64Generated.MainAddress:X4}";
-                    Mos6502CodeSizeText.Text = c64Generated.MachineCode.Length.ToString();
-                    Mos6502CodeGrid.ItemsSource = c64Generated.Instructions;
+                    output.AppendLine(_projectService.GetRelativePath(_project, sourceFile.FilePath));
                 }
-                else
+
+                output.AppendLine();
+
+                if (!result.Success)
                 {
                     output.AppendLine("BUILD FAILED");
                     output.AppendLine();
 
                     foreach (var diagnostic in result.Diagnostics)
+                    {
                         output.AppendLine(diagnostic.ToString());
+                    }
 
-                    StatusText.Text = $"Compile failed ({result.Diagnostics.Count} error(s))";
+                    Output.Text = output.ToString();
+                    StatusText.Text = $"Compile failed ({result.Diagnostics.Count} diagnostic(s))";
+                    return;
+                }
+
+                output.AppendLine("BUILD SUCCEEDED");
+                output.AppendLine();
+                output.AppendLine("AST");
+                output.AppendLine("---");
+
+                string ast = AstPrinter.Print(result.Program!);
+
+                output.AppendLine(ast);
+
+                AstOutput.Text = ast;
+
+                var outputDirectory = _projectService.GetOutputDirectory(_project);
+
+                Directory.CreateDirectory(outputDirectory);
+
+                if (_project.Target == ProjectTarget.X64)
+                {
+                    GenerateX64(result.Program!, output, outputDirectory);
+                }
+
+                if (_project.Target == ProjectTarget.C64)
+                {
+                    GenerateC64(result.Program!, output, outputDirectory);
                 }
 
                 Output.Text = output.ToString();
+
+                StatusText.Text = $"Compile succeeded ({_project.Target})";
             }
             catch (Exception ex)
             {
@@ -191,53 +764,430 @@ namespace JollyCCompiler
             }
         }
 
+        private List<ProjectSourceFile> GetProjectSourceFilesForCompilation()
+        {
+            var sourceFiles = new List<ProjectSourceFile>();
+
+            if (_project is null)
+                return sourceFiles;
+
+            foreach (var sourceFile in _project.SourceFiles)
+            {
+                if (!string.Equals(Path.GetExtension(sourceFile), ".c", StringComparison.OrdinalIgnoreCase))
+                    continue;
+
+                var fullPath = _projectService.GetSourcePath(_project, sourceFile);
+
+                if (!File.Exists(fullPath))
+                    throw new FileNotFoundException($"The project source file could not be found: {fullPath}", fullPath);
+
+                sourceFiles.Add(new ProjectSourceFile(fullPath, File.ReadAllText(fullPath)));
+            }
+
+            return sourceFiles;
+        }
+
+        private void GenerateX64(ProgramNode program, StringBuilder output, string outputDirectory)
+        {
+            var codeGenerator = new X64CodeGenerator();
+            var nativeCode = codeGenerator.Generate(program);
+            var executablePath = Path.Combine(outputDirectory, "JollyCProgram.exe");
+            var peWriter = new PeWriter();
+
+            peWriter.Write(executablePath, nativeCode);
+
+            _compiledOutputPath = executablePath;
+
+            NativeCodeGrid.ItemsSource = nativeCode.Instructions;
+
+            output.AppendLine();
+            output.AppendLine("NATIVE x64");
+            output.AppendLine("----------");
+            output.AppendLine(string.Join(" ", nativeCode.MachineCode.Select(b => b.ToString("X2"))));
+            output.AppendLine();
+            output.AppendLine("OUTPUT");
+            output.AppendLine("------");
+            output.AppendLine(executablePath);
+        }
+
+        private void GenerateC64(ProgramNode program, StringBuilder output, string outputDirectory)
+        {
+            Directory.CreateDirectory(outputDirectory);
+
+            var target = new C64Target();
+            var generated = target.Generate(program);
+            var outputPath = Path.Combine(outputDirectory, "JollyCProgram.prg");
+
+            target.WriteProgram(outputPath, program);
+
+            _compiledOutputPath = outputPath;
+
+            Mos6502MainAddressText.Text = $"${generated.MainAddress:X4}";
+
+            output.AppendLine();
+            output.AppendLine("C64");
+            output.AppendLine("---");
+            output.AppendLine($"Output: {outputPath}");
+            output.AppendLine($"Main address: ${generated.MainAddress:X4}");
+            output.AppendLine();
+        }
+
+        private void RunC64()
+        {
+            if (_project is null)
+            {
+                return;
+            }
+
+            if (string.IsNullOrWhiteSpace(_project.VicePath))
+            {
+                MessageBox.Show(this, "No VICE emulator has been configured for this C64 project.\n\nSelect the C64 target and use Browse... to select x64sc.exe.", "Run C64", MessageBoxButton.OK, MessageBoxImage.Warning);
+                return;
+            }
+
+            if (!File.Exists(_project.VicePath))
+            {
+                MessageBox.Show(this, $"The configured VICE executable could not be found:\n\n{_project.VicePath}", "Run C64", MessageBoxButton.OK, MessageBoxImage.Error);
+                return;
+            }
+
+            if (string.IsNullOrWhiteSpace(_compiledOutputPath) || !File.Exists(_compiledOutputPath))
+            {
+                Compile_Click(this, new RoutedEventArgs());
+
+                if (string.IsNullOrWhiteSpace(_compiledOutputPath) || !File.Exists(_compiledOutputPath))
+                {
+                    return;
+                }
+            }
+
+            try
+            {
+                if (TrySendProgramToVice(_compiledOutputPath))
+                {
+                    StatusText.Text = $"Loaded {Path.GetFileName(_compiledOutputPath)} into VICE.";
+                    return;
+                }
+
+                if (_viceProcess is not null && !_viceProcess.HasExited)
+                {
+                    MessageBox.Show(this, "VICE is already running, but its binary monitor is not available.\n\nStart VICE from JollyC Compiler so that JollyC can load programs into it.", "Run C64", MessageBoxButton.OK, MessageBoxImage.Information);
+                    return;
+                }
+
+                StartViceProcess(_compiledOutputPath);
+
+                if (!WaitForViceBinaryMonitor(5000))
+                {
+                    throw new InvalidOperationException("VICE started, but its binary monitor did not become available.");
+                }
+
+                if (!TrySendProgramToVice(_compiledOutputPath))
+                {
+                    throw new InvalidOperationException("VICE started, but the compiled program could not be sent to it.");
+                }
+
+                StatusText.Text = $"Loaded {Path.GetFileName(_compiledOutputPath)} into VICE.";
+            }
+            catch (Exception ex)
+            {
+                MessageBox.Show(this, $"Failed to run C64 program.\n\n{ex.Message}", "Run C64", MessageBoxButton.OK, MessageBoxImage.Error);
+            }
+        }
+
+        private bool TrySendProgramToVice(string programPath)
+        {
+            try
+            {
+                using var client = new TcpClient();
+                client.NoDelay = true;
+                client.SendTimeout = 3000;
+                client.ReceiveTimeout = 3000;
+                client.Connect(ViceBinaryMonitorHost, ViceBinaryMonitorPort);
+
+                using var stream = client.GetStream();
+
+                SendViceAutostartCommand(stream, programPath);
+
+                return true;
+            }
+            catch (SocketException)
+            {
+                return false;
+            }
+            catch (IOException)
+            {
+                return false;
+            }
+        }
+
+        private static void SendViceAutostartCommand(NetworkStream stream, string programPath)
+        {
+            var fileName = Encoding.UTF8.GetBytes(Path.GetFullPath(programPath));
+
+            if (fileName.Length > byte.MaxValue)
+            {
+                throw new InvalidOperationException("The VICE program path is too long for the binary monitor protocol.");
+            }
+
+            var bodyLength = checked(5 + fileName.Length);
+            var packet = new byte[11 + bodyLength];
+
+            packet[0] = 0x02;
+            packet[1] = 0x02;
+
+            BitConverter.GetBytes(bodyLength).CopyTo(packet, 2);
+            BitConverter.GetBytes(1u).CopyTo(packet, 6);
+
+            packet[10] = 0xDD;
+
+            packet[11] = 0x01;
+
+            packet[12] = 0x00;
+            packet[13] = 0x00;
+
+            packet[14] = checked((byte)fileName.Length);
+
+            Array.Copy(fileName, 0, packet, 15, fileName.Length);
+
+            stream.Write(packet, 0, packet.Length);
+            stream.Flush();
+        }
+
+        private void StartViceProcess(string programPath)
+        {
+            if (_project is null || string.IsNullOrWhiteSpace(_project.VicePath))
+            {
+                throw new InvalidOperationException("The VICE executable has not been configured.");
+            }
+
+            var workingDirectory = Path.GetDirectoryName(programPath) ?? Environment.CurrentDirectory;
+
+            var startInfo = new ProcessStartInfo
+            {
+                FileName = _project.VicePath,
+                Arguments = $"-binarymonitor -binarymonitoraddress ip4://{ViceBinaryMonitorHost}:{ViceBinaryMonitorPort}",
+                WorkingDirectory = workingDirectory,
+                UseShellExecute = false
+            };
+
+            _viceProcess = Process.Start(startInfo);
+
+            if (_viceProcess is null)
+            {
+                throw new InvalidOperationException("VICE could not be started.");
+            }
+        }
+
+        private static bool WaitForViceBinaryMonitor(int timeoutMilliseconds)
+        {
+            var stopwatch = Stopwatch.StartNew();
+
+            while (stopwatch.ElapsedMilliseconds < timeoutMilliseconds)
+            {
+                try
+                {
+                    using var client = new TcpClient();
+                    client.Connect(ViceBinaryMonitorHost, ViceBinaryMonitorPort);
+                    return true;
+                }
+                catch (SocketException)
+                {
+                    Thread.Sleep(100);
+                }
+            }
+
+            return false;
+        }
+
+        private void RunX64()
+        {
+            if (string.IsNullOrWhiteSpace(_compiledOutputPath) || !File.Exists(_compiledOutputPath))
+            {
+                MessageBox.Show("Compile the project first.", "Run", MessageBoxButton.OK, MessageBoxImage.Information);
+                return;
+            }
+
+            if (_consoleProcess is null || _consoleProcess.HasExited)
+            {
+                StartConsoleProcess();
+                return;
+            }
+
+            try
+            {
+                _consoleProcess.StandardInput.WriteLine($"\"{_compiledOutputPath}\"");
+                _consoleProcess.StandardInput.Flush();
+            }
+            catch
+            {
+                StartConsoleProcess();
+            }
+        }
+
+        private void StartConsoleProcess()
+        {
+            if (_consoleProcess is not null && !_consoleProcess.HasExited)
+            {
+                return;
+            }
+
+            if (string.IsNullOrWhiteSpace(_compiledOutputPath) || !File.Exists(_compiledOutputPath))
+            {
+                MessageBox.Show(this, "Compile the project first.", "Run", MessageBoxButton.OK, MessageBoxImage.Information);
+                return;
+            }
+
+            try
+            {
+                var workingDirectory = Path.GetDirectoryName(_compiledOutputPath) ?? Environment.CurrentDirectory;
+
+                var startInfo = new ProcessStartInfo
+                {
+                    FileName = "cmd.exe",
+                    WorkingDirectory = workingDirectory,
+                    UseShellExecute = false,
+                    RedirectStandardInput = true,
+                    CreateNoWindow = false
+                };
+
+                _consoleProcess = Process.Start(startInfo);
+
+                if (_consoleProcess is null)
+                {
+                    MessageBox.Show(this, "Failed to start the console process.", "Run", MessageBoxButton.OK, MessageBoxImage.Error);
+                    return;
+                }
+
+                _consoleProcess.StandardInput.WriteLine($"\"{_compiledOutputPath}\"");
+                _consoleProcess.StandardInput.Flush();
+            }
+            catch (Exception ex)
+            {
+                MessageBox.Show(this, $"Failed to start the console.\n\n{ex.Message}", "Run", MessageBoxButton.OK, MessageBoxImage.Error);
+            }
+        }
+
+        private void ClearBuildOutput()
+        {
+            Output.Clear();
+            TokenList.Items.Clear();
+            AstOutput.Clear();
+            NativeCodeGrid.ItemsSource = null;
+            Mos6502CodeGrid.ItemsSource = null;
+            Mos6502OriginText.Text = "----";
+            Mos6502MainAddressText.Text = "----";
+            Mos6502CodeSizeText.Text = "0";
+            _compiledOutputPath = null;
+        }
+
         private void Exit_Click(object sender, RoutedEventArgs e)
         {
             Close();
         }
 
-        private void StartConsole()
-        {
-            var startInfo = new ProcessStartInfo
-            {
-                FileName = "cmd.exe",
-                Arguments = "/K",
-                WorkingDirectory = Path.GetDirectoryName(_compiledOutputPath)!,
-                UseShellExecute = false,
-                RedirectStandardInput = true,
-                CreateNoWindow = false
-            };
-
-            _consoleProcess = Process.Start(startInfo);
-        }
-
         private void Run_Click(object sender, RoutedEventArgs e)
         {
-            try
+            if (_project is null)
             {
-                if (string.IsNullOrWhiteSpace(_compiledOutputPath) || !File.Exists(_compiledOutputPath))
-                {
-                    Output.Text = "No compiled executable found. Compile first.";
-                    StatusText.Text = "Nothing to run";
-                    return;
-                }
-
-                if (_consoleProcess == null || _consoleProcess.HasExited)
-                {
-                    StartConsole();
-                }
-
-                _consoleProcess!.StandardInput.WriteLine($"\"{_compiledOutputPath}\"");
-                _consoleProcess.StandardInput.WriteLine("echo JOLLYC_EXITCODE:%ERRORLEVEL%");
-                _consoleProcess.StandardInput.Flush();
-
-                StatusText.Text = "Program running";
+                MessageBox.Show("Open or create a project first.", "Run", MessageBoxButton.OK, MessageBoxImage.Information);
+                return;
             }
-            catch (Exception ex)
+
+            if (_project.Target == ProjectTarget.C64)
             {
-                Output.AppendText($"{Environment.NewLine}RUN ERROR{Environment.NewLine}{ex}");
-                StatusText.Text = "Run failed";
+                RunC64();
+                return;
             }
+
+            RunX64();
+        }
+
+        private void BrowseVice_Click(object sender, RoutedEventArgs e)
+        {
+            if (_project is null)
+            {
+                MessageBox.Show("Open or create a project first.", "VICE", MessageBoxButton.OK, MessageBoxImage.Information);
+                return;
+            }
+
+            var dialog = new OpenFileDialog
+            {
+                Title = "Select VICE C64 Emulator",
+                Filter = "VICE Emulator|x64sc.exe;x64.exe|Executable Files|*.exe|All Files|*.*",
+                CheckFileExists = true,
+                Multiselect = false
+            };
+
+            if (!string.IsNullOrWhiteSpace(_project.VicePath) && File.Exists(_project.VicePath))
+            {
+                dialog.InitialDirectory = Path.GetDirectoryName(_project.VicePath);
+            }
+
+            if (dialog.ShowDialog() != true)
+            {
+                return;
+            }
+
+            _project.VicePath = dialog.FileName;
+            VicePathTextBox.Text = _project.VicePath;
+
+            if (!string.IsNullOrWhiteSpace(_project.ProjectFilePath))
+            {
+                _projectService.Save(_project, _project.ProjectFilePath);
+            }
+
+            VicePathStatusText.Text = "VICE path saved to the project.";
+            StatusText.Text = "VICE path updated.";
+        }
+
+        private void UpdateTargetUi()
+        {
+            if (_project is null)
+            {
+                ViceSettingsPanel.Visibility = Visibility.Collapsed;
+                VicePathTextBox.Text = string.Empty;
+                return;
+            }
+
+            TargetComboBox.SelectedItem = _project.Target;
+
+            var isC64 = _project.Target == ProjectTarget.C64;
+
+            ViceSettingsPanel.Visibility = isC64 ? Visibility.Visible : Visibility.Collapsed;
+            VicePathTextBox.Text = _project.VicePath ?? string.Empty;
+
+            if (isC64)
+            {
+                VicePathStatusText.Text = string.IsNullOrWhiteSpace(_project.VicePath)
+                    ? "Select the VICE executable used to run C64 programs."
+                    : "VICE path saved to the project.";
+            }
+        }
+
+        private sealed class ProjectFileItem
+        {
+            public string DisplayName { get; init; } = "";
+            public string FullPath { get; init; } = "";
+
+            public override string ToString()
+            {
+                return DisplayName;
+            }
+        }
+
+        private sealed class OpenDocument
+        {
+            public string FilePath { get; init; } = string.Empty;
+            public string FileName => Path.GetFileName(FilePath);
+            public string Text { get; set; } = string.Empty;
+            public bool IsDirty { get; set; }
+            public TabItem? Tab { get; set; }
+        }
+
+        private sealed class ApplicationSettings
+        {
+            public string? LastProjectPath { get; set; }
         }
     }
 }

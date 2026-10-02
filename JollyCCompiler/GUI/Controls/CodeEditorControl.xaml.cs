@@ -25,6 +25,7 @@ namespace JollyCCompiler.GUI.Controls
         public int CurrentColumn
         { get; private set; } = 1;
         public event EventHandler? CursorPositionChanged;
+        public event EventHandler? TextChanged;
 
         private static readonly HashSet<string> Keywords = new(StringComparer.Ordinal)
         {
@@ -262,6 +263,7 @@ namespace JollyCCompiler.GUI.Controls
             }
 
             UpdateCursorPosition();
+            TextChanged?.Invoke(this, EventArgs.Empty);
         }
 
         private void ScheduleDocumentWidthUpdate()
