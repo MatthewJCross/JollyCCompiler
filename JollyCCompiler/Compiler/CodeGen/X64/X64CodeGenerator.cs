@@ -1,11 +1,6 @@
 using JollyCCompiler.Compiler.Lexing;
 using JollyCCompiler.Compiler.Syntax;
-using System.Diagnostics;
-using System.Reflection.Metadata;
-using System.Security.Policy;
 using System.Text;
-using System.Threading.Channels;
-using static System.Net.Mime.MediaTypeNames;
 
 namespace JollyCCompiler.Compiler.CodeGen.X64
 {
@@ -78,6 +73,8 @@ namespace JollyCCompiler.Compiler.CodeGen.X64
 
             var emitter = new X64Emitter();
             var data = new List<X64DataItem>();
+            var imports = new List<X64Import>();
+
             foreach (var global in program.Globals)
             {
                 if (global.IsExtern)
@@ -114,8 +111,30 @@ namespace JollyCCompiler.Compiler.CodeGen.X64
                 GenerateFunction(function, emitter, data, variables, arrays, parameters, frameSize);
             }
 
+            foreach (var fixup in emitter.Fixups)
+            {
+                if (string.Equals(fixup.Symbol, "printf", StringComparison.Ordinal))
+                {
+                    AddImport(imports, "msvcrt.dll", "printf");
+                }
+                else if (string.Equals(fixup.Symbol, "MessageBoxA", StringComparison.Ordinal))
+                {
+                    AddImport(imports, "user32.dll", "MessageBoxA");
+                }
+            }
+
             var machineCode = emitter.GetCode();
-            return new X64CodeGenerationResult(machineCode, emitter.Instructions, emitter.Fixups, data, emitter.Labels);
+            return new X64CodeGenerationResult(machineCode, emitter.Instructions, emitter.Fixups, data, emitter.Labels, imports);
+        }
+
+        private static void AddImport(List<X64Import> imports, string dllName, string functionName)
+        {
+            if (imports.Any(x => string.Equals(x.DllName, dllName, StringComparison.OrdinalIgnoreCase) && string.Equals(x.FunctionName, functionName, StringComparison.Ordinal)))
+            {
+                return;
+            }
+
+            imports.Add(new X64Import(dllName, functionName));
         }
 
         private static X64DataItem CreateGlobalDataItem(VariableDeclarationStatement global, List<X64DataItem> additionalData)
@@ -3380,6 +3399,12 @@ namespace JollyCCompiler.Compiler.CodeGen.X64
                 return;
             }
 
+            if (call.Function is IdentifierExpression messageBoxIdentifier && messageBoxIdentifier.Name == "MessageBoxA")
+            {
+                GenerateMessageBoxCall(call, emitter, data, variables, arrays, parameters);
+                return;
+            }
+
             var argumentCount = call.Arguments.Count;
             var callStackSize = emitter.GetCallStackSize(argumentCount);
             var temporaryBytes = argumentCount * 8;
@@ -3640,6 +3665,43 @@ namespace JollyCCompiler.Compiler.CodeGen.X64
             }
 
             emitter.CallIndirectRipRelative("printf", "printf");
+            emitter.AddRsp(totalBytes);
+        }
+
+        private static void GenerateMessageBoxCall(CallExpression call, X64Emitter emitter, List<X64DataItem> data, Dictionary<string, (int Offset, string Type, bool IsConst)> variables, Dictionary<string, (int Length, string Type)> arrays, Dictionary<string, (int Index, string Type)> parameters)
+        {
+            if (call.Arguments.Count != 4)
+                throw new InvalidOperationException("MessageBoxA requires exactly four arguments.");
+
+            var callStackSize = emitter.GetCallStackSize(4);
+            var temporaryBytes = 32;
+            var totalBytes = callStackSize + temporaryBytes;
+
+            totalBytes = (totalBytes + 15) & ~15;
+
+            emitter.SubRsp(totalBytes);
+
+            for (var i = 0; i < 4; i++)
+            {
+                GenerateExpression(call.Arguments[i], emitter, data, variables, arrays, parameters);
+
+                emitter.MovRspDisp32Rax(callStackSize + (i * 8));
+            }
+
+            emitter.MovRaxRspDisp32(callStackSize);
+            emitter.MoveRaxToArgumentRegister(0);
+
+            emitter.MovRaxRspDisp32(callStackSize + 8);
+            emitter.MoveRaxToArgumentRegister(1);
+
+            emitter.MovRaxRspDisp32(callStackSize + 16);
+            emitter.MoveRaxToArgumentRegister(2);
+
+            emitter.MovRaxRspDisp32(callStackSize + 24);
+            emitter.MoveRaxToArgumentRegister(3);
+
+            emitter.CallIndirectRipRelative("MessageBoxA", "MessageBoxA");
+
             emitter.AddRsp(totalBytes);
         }
 

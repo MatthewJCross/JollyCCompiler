@@ -685,7 +685,14 @@ namespace JollyCCompiler
                 }
 
                 var compiler = new CCompiler();
-                var runtimeFunctions = _project.Target == ProjectTarget.X64 ? new[] { "printf" } : Array.Empty<string>();
+
+                var runtimeFunctions = _project.Target switch
+                {
+                    ProjectTarget.X64 => new[] { "printf" },
+                    ProjectTarget.WIN => new[] { "MessageBoxA" },
+                    _ => Array.Empty<string>()
+                };
+
                 var result = compiler.CompileProject(sourceFiles, runtimeFunctions);
 
                 TokenList.Items.Clear();
@@ -751,6 +758,11 @@ namespace JollyCCompiler
                 if (_project.Target == ProjectTarget.C64)
                 {
                     GenerateC64(result.Program!, output, outputDirectory);
+                }
+
+                if (_project.Target == ProjectTarget.WIN)
+                {
+                    GenerateWin(result.Program!, output, outputDirectory);
                 }
 
                 Output.Text = output.ToString();
@@ -830,6 +842,29 @@ namespace JollyCCompiler
             output.AppendLine($"Output: {outputPath}");
             output.AppendLine($"Main address: ${generated.MainAddress:X4}");
             output.AppendLine();
+        }
+
+        private void GenerateWin(ProgramNode program, StringBuilder output, string outputDirectory)
+        {
+            var codeGenerator = new X64CodeGenerator();
+            var nativeCode = codeGenerator.Generate(program);
+            var executablePath = Path.Combine(outputDirectory, "JollyCProgram.exe");
+            var peWriter = new PeWriter();
+
+            peWriter.Write(executablePath, nativeCode, PeSubsystem.Windows);
+
+            _compiledOutputPath = executablePath;
+
+            NativeCodeGrid.ItemsSource = nativeCode.Instructions;
+
+            output.AppendLine();
+            output.AppendLine("WINDOWS GUI");
+            output.AppendLine("------------");
+            output.AppendLine(string.Join(" ", nativeCode.MachineCode.Select(b => b.ToString("X2"))));
+            output.AppendLine();
+            output.AppendLine("OUTPUT");
+            output.AppendLine("------");
+            output.AppendLine(executablePath);
         }
 
         private void RunC64()
@@ -972,6 +1007,30 @@ namespace JollyCCompiler
             }
         }
 
+        private void RunWin()
+        {
+            if (string.IsNullOrWhiteSpace(_compiledOutputPath) || !File.Exists(_compiledOutputPath))
+            {
+                MessageBox.Show("Compile the project first.", "Run", MessageBoxButton.OK, MessageBoxImage.Information);
+                return;
+            }
+
+            try
+            {
+                var startInfo = new ProcessStartInfo
+                {
+                    FileName = _compiledOutputPath,
+                    UseShellExecute = true
+                };
+
+                Process.Start(startInfo);
+            }
+            catch (Exception ex)
+            {
+                MessageBox.Show(this, $"Failed to run Windows application.{Environment.NewLine}{Environment.NewLine}{ex.Message}", "Run", MessageBoxButton.OK, MessageBoxImage.Error);
+            }
+        }
+
         private void ClearBuildOutput()
         {
             Output.Clear();
@@ -1003,6 +1062,13 @@ namespace JollyCCompiler
                 RunC64();
                 return;
             }
+
+            if (_project.Target == ProjectTarget.WIN)
+            {
+                RunWin();
+                return;
+            }
+
 
             RunX64();
         }

@@ -3,6 +3,7 @@
     public enum ProjectTarget
     {
         X64,
-        C64
+        C64, 
+        WIN
     }
 }

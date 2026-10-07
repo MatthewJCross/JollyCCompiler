@@ -37,11 +37,14 @@ namespace JollyCCompiler.Compiler.Parsing
             while (Current.Kind != TokenKind.EndOfFile)
             {
                 var startPosition = _position;
-                var startToken = Current;
 
                 if (Current.Kind == TokenKind.Typedef)
                 {
                     ParseTypedefDeclaration();
+                }
+                else if (Current.Kind == TokenKind.Extern)
+                {
+                    ParseExternDeclaration(functions);
                 }
                 else if (IsStructDeclaration())
                 {
@@ -64,13 +67,6 @@ namespace JollyCCompiler.Compiler.Parsing
                     if (declaration is not null)
                         _enums.Add(declaration);
                 }
-                else if (Current.Kind == TokenKind.Extern)
-                {
-                    var global = ParseVariableDeclaration();
-
-                    if (global is not null)
-                        _globals.Add(global);
-                }
                 else if (IsFunctionDeclaration())
                 {
                     var function = ParseFunction();
@@ -90,9 +86,14 @@ namespace JollyCCompiler.Compiler.Parsing
                     Synchronize();
             }
 
-            return new ProgramNode(_structs, _unions, _enums, _globals, functions);
+            return new ProgramNode(
+                _structs,
+                _unions,
+                _enums,
+                _globals,
+                functions);
         }
-        
+
         private bool IsStructDeclaration()
         {
             return Current.Kind == TokenKind.Struct && Peek(1).Kind == TokenKind.Identifier && Peek(2).Kind == TokenKind.LeftBrace;
@@ -106,23 +107,16 @@ namespace JollyCCompiler.Compiler.Parsing
 
         private void ParseTypedefDeclaration()
         {
-            Expect(
-                TokenKind.Typedef,
-                "Expected 'typedef'.");
+            Expect(TokenKind.Typedef, "Expected 'typedef'.");
 
-            if (Current.Kind == TokenKind.Enum &&
-                (Peek(1).Kind == TokenKind.LeftBrace ||
-                 (Peek(1).Kind == TokenKind.Identifier &&
-                  Peek(2).Kind == TokenKind.LeftBrace)))
+            if (Current.Kind == TokenKind.Enum && (Peek(1).Kind == TokenKind.LeftBrace || (Peek(1).Kind == TokenKind.Identifier && Peek(2).Kind == TokenKind.LeftBrace)))
             {
                 var enumDeclaration = ParseEnumDeclaration(false);
 
                 if (enumDeclaration is null)
                     return;
 
-                var typedefName = Expect(
-                    TokenKind.Identifier,
-                    "Expected typedef name after enum declaration.");
+                var typedefName = Expect(TokenKind.Identifier, "Expected typedef name after enum declaration.");
 
                 if (typedefName.Kind != TokenKind.Identifier)
                     return;
@@ -193,9 +187,147 @@ namespace JollyCCompiler.Compiler.Parsing
 
             _typedefs[name.Text] = type;
 
+            Expect(TokenKind.Semicolon, "Expected ';' after typedef declaration.");
+        }
+
+        private void ParseExternDeclaration(List<FunctionNode> functions)
+        {
+            Debug.WriteLine(
+                $"EXTERN DECLARATION: Position={_position}, Kind={Current.Kind}, Text='{Current.Text}'");
+
+            Expect(TokenKind.Extern, "Expected 'extern'.");
+
+            bool isConst = false;
+
+            if (Current.Kind == TokenKind.Const)
+            {
+                Advance();
+                isConst = true;
+            }
+
+            var returnType = ParseType();
+
+            if (returnType is null)
+                return;
+
+            var name = Expect(
+                TokenKind.Identifier,
+                "Expected extern declaration name.");
+
+            if (name.Kind != TokenKind.Identifier)
+                return;
+
+            if (Current.Kind != TokenKind.LeftParen)
+            {
+                Error("Expected '(' after extern function name.");
+                return;
+            }
+
+            Advance();
+
+            var parameters = new List<ParameterNode>();
+
+            if (Current.Kind != TokenKind.RightParen)
+            {
+                if (Current.Kind == TokenKind.Void)
+                {
+                    Advance();
+
+                    if (Current.Kind != TokenKind.RightParen)
+                    {
+                        var parameterType = "void";
+
+                        while (Current.Kind == TokenKind.Star)
+                        {
+                            Advance();
+                            parameterType += "*";
+                        }
+
+                        var parameterName = Expect(
+                            TokenKind.Identifier,
+                            "Expected parameter name.");
+
+                        if (parameterName.Kind != TokenKind.Identifier)
+                            return;
+
+                        parameters.Add(
+                            new ParameterNode(
+                                parameterType,
+                                parameterName.Text));
+
+                        while (Current.Kind == TokenKind.Comma)
+                        {
+                            Advance();
+
+                            parameterType = ParseType();
+
+                            if (parameterType is null)
+                                return;
+
+                            parameterName = Expect(
+                                TokenKind.Identifier,
+                                "Expected parameter name.");
+
+                            if (parameterName.Kind != TokenKind.Identifier)
+                                return;
+
+                            parameters.Add(
+                                new ParameterNode(
+                                    parameterType,
+                                    parameterName.Text));
+                        }
+                    }
+                }
+                else
+                {
+                    while (true)
+                    {
+                        var parameterType = ParseType();
+
+                        if (parameterType is null)
+                            return;
+
+                        var parameterName = Expect(
+                            TokenKind.Identifier,
+                            "Expected parameter name.");
+
+                        if (parameterName.Kind != TokenKind.Identifier)
+                            return;
+
+                        parameters.Add(
+                            new ParameterNode(
+                                parameterType,
+                                parameterName.Text));
+
+                        if (Current.Kind != TokenKind.Comma)
+                            break;
+
+                        Advance();
+
+                        if (Current.Kind == TokenKind.RightParen)
+                        {
+                            Error("Expected parameter after ','.");
+                            return;
+                        }
+                    }
+                }
+            }
+
+            Expect(
+                TokenKind.RightParen,
+                "Expected ')' after extern function parameters.");
+
             Expect(
                 TokenKind.Semicolon,
-                "Expected ';' after typedef declaration.");
+                "Expected ';' after extern function declaration.");
+
+            functions.Add(
+                new FunctionNode(
+                    returnType,
+                    name.Text,
+                    parameters,
+                    new BlockStatement(Array.Empty<StatementNode>()),
+                    true));
         }
 
         private EnumDeclarationNode? ParseEnumDeclaration(bool consumeSemicolon = true)
@@ -508,8 +640,13 @@ namespace JollyCCompiler.Compiler.Parsing
             return result;
         }
 
-        private FunctionNode? ParseFunction()
+        private FunctionNode? ParseFunction(bool isExtern = false)
         {
+            if (isExtern)
+            {
+                Expect(TokenKind.Extern, "Expected 'extern'.");
+            }
+
             var returnType = ParseType();
 
             if (returnType is null)
@@ -595,6 +732,13 @@ namespace JollyCCompiler.Compiler.Parsing
             }
 
             Expect(TokenKind.RightParen, "Expected ')' after parameters.");
+
+            if (isExtern)
+            {
+                Expect(TokenKind.Semicolon, "Expected ';' after extern function declaration.");
+
+                return new FunctionNode(returnType, name.Text, parameters, new BlockStatement(Array.Empty<StatementNode>()), true);
+            }
 
             var body = ParseBlock();
 
@@ -902,6 +1046,8 @@ namespace JollyCCompiler.Compiler.Parsing
 
         private VariableDeclarationStatement ParseVariableDeclaration()
         {
+            Debug.WriteLine($"VARIABLE DECLARATION: Position={_position}, Kind={Current.Kind}, Text='{Current.Text}'");
+            
             bool isConst = false;
             bool isExtern = false;
 
