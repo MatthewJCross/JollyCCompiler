@@ -1,42 +1,34 @@
 {
   "Version": 1,
-  "WorkspaceRootPath": "F:\\JollyCCompiler\\",
+  "WorkspaceRootPath": "F:\\JollyProjects\\JollyCCompiler\\",
   "Documents": [
     {
-      "AbsoluteMoniker": "D:0:0:{86964323-0933-B13E-C742-6BF37442A6EB}|JollyCCompiler\\JollyCCompiler.csproj|f:\\jollyccompiler\\jollyccompiler\\compiler\\parsing\\parser.cs||{A6C744A8-0E4A-4FC6-886A-064283054674}",
-      "RelativeMoniker": "D:0:0:{86964323-0933-B13E-C742-6BF37442A6EB}|JollyCCompiler\\JollyCCompiler.csproj|solutionrelative:jollyccompiler\\compiler\\parsing\\parser.cs||{A6C744A8-0E4A-4FC6-886A-064283054674}"
-    },
-    {
-      "AbsoluteMoniker": "D:0:0:{86964323-0933-B13E-C742-6BF37442A6EB}|JollyCCompiler\\JollyCCompiler.csproj|f:\\jollyccompiler\\jollyccompiler\\compiler\\codegen\\x64\\x64codegenerator.cs||{A6C744A8-0E4A-4FC6-886A-064283054674}",
+      "AbsoluteMoniker": "D:0:0:{86964323-0933-B13E-C742-6BF37442A6EB}|JollyCCompiler\\JollyCCompiler.csproj|f:\\jollyprojects\\jollyccompiler\\jollyccompiler\\compiler\\codegen\\x64\\x64codegenerator.cs||{A6C744A8-0E4A-4FC6-886A-064283054674}",
       "RelativeMoniker": "D:0:0:{86964323-0933-B13E-C742-6BF37442A6EB}|JollyCCompiler\\JollyCCompiler.csproj|solutionrelative:jollyccompiler\\compiler\\codegen\\x64\\x64codegenerator.cs||{A6C744A8-0E4A-4FC6-886A-064283054674}"
     },
     {
-      "AbsoluteMoniker": "D:0:0:{86964323-0933-B13E-C742-6BF37442A6EB}|JollyCCompiler\\JollyCCompiler.csproj|f:\\jollyccompiler\\jollyccompiler\\compiler\\syntax\\astnode.cs||{A6C744A8-0E4A-4FC6-886A-064283054674}",
-      "RelativeMoniker": "D:0:0:{86964323-0933-B13E-C742-6BF37442A6EB}|JollyCCompiler\\JollyCCompiler.csproj|solutionrelative:jollyccompiler\\compiler\\syntax\\astnode.cs||{A6C744A8-0E4A-4FC6-886A-064283054674}"
-    },
-    {
-      "AbsoluteMoniker": "D:0:0:{86964323-0933-B13E-C742-6BF37442A6EB}|JollyCCompiler\\JollyCCompiler.csproj|f:\\jollyccompiler\\jollyccompiler\\object\\pewriter.cs||{A6C744A8-0E4A-4FC6-886A-064283054674}",
+      "AbsoluteMoniker": "D:0:0:{86964323-0933-B13E-C742-6BF37442A6EB}|JollyCCompiler\\JollyCCompiler.csproj|f:\\jollyprojects\\jollyccompiler\\jollyccompiler\\object\\pewriter.cs||{A6C744A8-0E4A-4FC6-886A-064283054674}",
       "RelativeMoniker": "D:0:0:{86964323-0933-B13E-C742-6BF37442A6EB}|JollyCCompiler\\JollyCCompiler.csproj|solutionrelative:jollyccompiler\\object\\pewriter.cs||{A6C744A8-0E4A-4FC6-886A-064283054674}"
     },
     {
-      "AbsoluteMoniker": "D:0:0:{86964323-0933-B13E-C742-6BF37442A6EB}|JollyCCompiler\\JollyCCompiler.csproj|f:\\jollyccompiler\\jollyccompiler\\compiler\\codegen\\x64\\x64codegenerationresult.cs||{A6C744A8-0E4A-4FC6-886A-064283054674}",
-      "RelativeMoniker": "D:0:0:{86964323-0933-B13E-C742-6BF37442A6EB}|JollyCCompiler\\JollyCCompiler.csproj|solutionrelative:jollyccompiler\\compiler\\codegen\\x64\\x64codegenerationresult.cs||{A6C744A8-0E4A-4FC6-886A-064283054674}"
+      "AbsoluteMoniker": "D:0:0:{86964323-0933-B13E-C742-6BF37442A6EB}|JollyCCompiler\\JollyCCompiler.csproj|f:\\jollyprojects\\jollyccompiler\\jollyccompiler\\examples\\windows_controls_5a.c||{D0E1A5C6-B359-4E41-9B60-3365922C2A22}",
+      "RelativeMoniker": "D:0:0:{86964323-0933-B13E-C742-6BF37442A6EB}|JollyCCompiler\\JollyCCompiler.csproj|solutionrelative:jollyccompiler\\examples\\windows_controls_5a.c||{D0E1A5C6-B359-4E41-9B60-3365922C2A22}"
     },
     {
-      "AbsoluteMoniker": "D:0:0:{86964323-0933-B13E-C742-6BF37442A6EB}|JollyCCompiler\\JollyCCompiler.csproj|f:\\jollyccompiler\\jollyccompiler\\compiler\\codegen\\x64\\x64import.cs||{A6C744A8-0E4A-4FC6-886A-064283054674}",
-      "RelativeMoniker": "D:0:0:{86964323-0933-B13E-C742-6BF37442A6EB}|JollyCCompiler\\JollyCCompiler.csproj|solutionrelative:jollyccompiler\\compiler\\codegen\\x64\\x64import.cs||{A6C744A8-0E4A-4FC6-886A-064283054674}"
+      "AbsoluteMoniker": "D:0:0:{86964323-0933-B13E-C742-6BF37442A6EB}|JollyCCompiler\\JollyCCompiler.csproj|f:\\jollyprojects\\jollyccompiler\\jollyccompiler\\examples\\windows_button_51_no_probe.c||{D0E1A5C6-B359-4E41-9B60-3365922C2A22}",
+      "RelativeMoniker": "D:0:0:{86964323-0933-B13E-C742-6BF37442A6EB}|JollyCCompiler\\JollyCCompiler.csproj|solutionrelative:jollyccompiler\\examples\\windows_button_51_no_probe.c||{D0E1A5C6-B359-4E41-9B60-3365922C2A22}"
     },
     {
-      "AbsoluteMoniker": "D:0:0:{86964323-0933-B13E-C742-6BF37442A6EB}|JollyCCompiler\\JollyCCompiler.csproj|f:\\jollyccompiler\\jollyccompiler\\mainwindow.xaml||{F11ACC28-31D1-4C80-A34B-F4E09D3D753C}",
-      "RelativeMoniker": "D:0:0:{86964323-0933-B13E-C742-6BF37442A6EB}|JollyCCompiler\\JollyCCompiler.csproj|solutionrelative:jollyccompiler\\mainwindow.xaml||{F11ACC28-31D1-4C80-A34B-F4E09D3D753C}"
+      "AbsoluteMoniker": "D:0:0:{86964323-0933-B13E-C742-6BF37442A6EB}|JollyCCompiler\\JollyCCompiler.csproj|f:\\jollyprojects\\jollyccompiler\\jollyccompiler\\examples\\windows_button.c||{D0E1A5C6-B359-4E41-9B60-3365922C2A22}",
+      "RelativeMoniker": "D:0:0:{86964323-0933-B13E-C742-6BF37442A6EB}|JollyCCompiler\\JollyCCompiler.csproj|solutionrelative:jollyccompiler\\examples\\windows_button.c||{D0E1A5C6-B359-4E41-9B60-3365922C2A22}"
     },
     {
-      "AbsoluteMoniker": "D:0:0:{86964323-0933-B13E-C742-6BF37442A6EB}|JollyCCompiler\\JollyCCompiler.csproj|f:\\jollyccompiler\\jollyccompiler\\compiler\\codegen\\x64\\x64emitter.cs||{A6C744A8-0E4A-4FC6-886A-064283054674}",
-      "RelativeMoniker": "D:0:0:{86964323-0933-B13E-C742-6BF37442A6EB}|JollyCCompiler\\JollyCCompiler.csproj|solutionrelative:jollyccompiler\\compiler\\codegen\\x64\\x64emitter.cs||{A6C744A8-0E4A-4FC6-886A-064283054674}"
+      "AbsoluteMoniker": "D:0:0:{86964323-0933-B13E-C742-6BF37442A6EB}|JollyCCompiler\\JollyCCompiler.csproj|f:\\jollyprojects\\jollyccompiler\\jollyccompiler\\examples\\windows_first_window.c||{D0E1A5C6-B359-4E41-9B60-3365922C2A22}",
+      "RelativeMoniker": "D:0:0:{86964323-0933-B13E-C742-6BF37442A6EB}|JollyCCompiler\\JollyCCompiler.csproj|solutionrelative:jollyccompiler\\examples\\windows_first_window.c||{D0E1A5C6-B359-4E41-9B60-3365922C2A22}"
     },
     {
-      "AbsoluteMoniker": "D:0:0:{86964323-0933-B13E-C742-6BF37442A6EB}|JollyCCompiler\\JollyCCompiler.csproj|f:\\jollyccompiler\\jollyccompiler\\object\\pesubsystem.cs||{A6C744A8-0E4A-4FC6-886A-064283054674}",
-      "RelativeMoniker": "D:0:0:{86964323-0933-B13E-C742-6BF37442A6EB}|JollyCCompiler\\JollyCCompiler.csproj|solutionrelative:jollyccompiler\\object\\pesubsystem.cs||{A6C744A8-0E4A-4FC6-886A-064283054674}"
+      "AbsoluteMoniker": "D:0:0:{86964323-0933-B13E-C742-6BF37442A6EB}|JollyCCompiler\\JollyCCompiler.csproj|f:\\jollyprojects\\jollyccompiler\\jollyccompiler\\jollyccompiler.csproj||{8B382828-6202-11D1-8870-0000F87579D2}",
+      "RelativeMoniker": "D:0:0:{86964323-0933-B13E-C742-6BF37442A6EB}|JollyCCompiler\\JollyCCompiler.csproj|solutionrelative:jollyccompiler\\jollyccompiler.csproj||{8B382828-6202-11D1-8870-0000F87579D2}"
     }
   ],
   "DocumentGroupContainers": [
@@ -59,117 +51,92 @@
             {
               "$type": "Document",
               "DocumentIndex": 0,
-              "Title": "Parser.cs",
-              "DocumentMoniker": "F:\\JollyCCompiler\\JollyCCompiler\\Compiler\\Parsing\\Parser.cs",
-              "RelativeDocumentMoniker": "JollyCCompiler\\Compiler\\Parsing\\Parser.cs",
-              "ToolTip": "F:\\JollyCCompiler\\JollyCCompiler\\Compiler\\Parsing\\Parser.cs*",
-              "RelativeToolTip": "JollyCCompiler\\Compiler\\Parsing\\Parser.cs*",
-              "ViewState": "AgIAACIBAAAAAAAAAAAmwEsBAAAAAAAAAAAAAA==",
+              "Title": "X64CodeGenerator.cs",
+              "DocumentMoniker": "F:\\JollyProjects\\JollyCCompiler\\JollyCCompiler\\Compiler\\CodeGen\\X64\\X64CodeGenerator.cs",
+              "RelativeDocumentMoniker": "JollyCCompiler\\Compiler\\CodeGen\\X64\\X64CodeGenerator.cs",
+              "ToolTip": "F:\\JollyProjects\\JollyCCompiler\\JollyCCompiler\\Compiler\\CodeGen\\X64\\X64CodeGenerator.cs*",
+              "RelativeToolTip": "JollyCCompiler\\Compiler\\CodeGen\\X64\\X64CodeGenerator.cs*",
+              "ViewState": "AgIAAHcAAAAAAAAAAADgv5UAAAAAAAAAAAAAAA==",
               "Icon": "ae27a6b0-e345-4288-96df-5eaf394ee369.000738|",
-              "WhenOpened": "2026-10-07T13:47:25.153Z",
-              "EditorCaption": ""
-            },
-            {
-              "$type": "Document",
-              "DocumentIndex": 2,
-              "Title": "AstNode.cs",
-              "DocumentMoniker": "F:\\JollyCCompiler\\JollyCCompiler\\Compiler\\Syntax\\AstNode.cs",
-              "RelativeDocumentMoniker": "JollyCCompiler\\Compiler\\Syntax\\AstNode.cs",
-              "ToolTip": "F:\\JollyCCompiler\\JollyCCompiler\\Compiler\\Syntax\\AstNode.cs",
-              "RelativeToolTip": "JollyCCompiler\\Compiler\\Syntax\\AstNode.cs",
-              "ViewState": "AgIAAAMAAAAAAAAAAAAAAAkAAAAEAAAAAAAAAA==",
-              "Icon": "ae27a6b0-e345-4288-96df-5eaf394ee369.000738|",
-              "WhenOpened": "2026-10-07T13:45:28.498Z",
-              "EditorCaption": ""
-            },
-            {
-              "$type": "Document",
-              "DocumentIndex": 3,
-              "Title": "PeWriter.cs",
-              "DocumentMoniker": "F:\\JollyCCompiler\\JollyCCompiler\\Object\\PeWriter.cs",
-              "RelativeDocumentMoniker": "JollyCCompiler\\Object\\PeWriter.cs",
-              "ToolTip": "F:\\JollyCCompiler\\JollyCCompiler\\Object\\PeWriter.cs",
-              "RelativeToolTip": "JollyCCompiler\\Object\\PeWriter.cs",
-              "ViewState": "AgIAAD4BAAAAAAAAAAAowF0BAAAAAAAAAAAAAA==",
-              "Icon": "ae27a6b0-e345-4288-96df-5eaf394ee369.000738|",
-              "WhenOpened": "2026-10-07T13:16:36.362Z",
-              "EditorCaption": ""
-            },
-            {
-              "$type": "Document",
-              "DocumentIndex": 5,
-              "Title": "X64Import.cs",
-              "DocumentMoniker": "F:\\JollyCCompiler\\JollyCCompiler\\Compiler\\CodeGen\\X64\\X64Import.cs",
-              "RelativeDocumentMoniker": "JollyCCompiler\\Compiler\\CodeGen\\X64\\X64Import.cs",
-              "ToolTip": "F:\\JollyCCompiler\\JollyCCompiler\\Compiler\\CodeGen\\X64\\X64Import.cs",
-              "RelativeToolTip": "JollyCCompiler\\Compiler\\CodeGen\\X64\\X64Import.cs",
-              "ViewState": "AgIAAAAAAAAAAAAAAAAAAAoAAAAmAAAAAAAAAA==",
-              "Icon": "ae27a6b0-e345-4288-96df-5eaf394ee369.000738|",
-              "WhenOpened": "2026-10-07T12:53:53.646Z",
-              "EditorCaption": ""
-            },
-            {
-              "$type": "Document",
-              "DocumentIndex": 4,
-              "Title": "X64CodeGenerationResult.cs",
-              "DocumentMoniker": "F:\\JollyCCompiler\\JollyCCompiler\\Compiler\\CodeGen\\X64\\X64CodeGenerationResult.cs",
-              "RelativeDocumentMoniker": "JollyCCompiler\\Compiler\\CodeGen\\X64\\X64CodeGenerationResult.cs",
-              "ToolTip": "F:\\JollyCCompiler\\JollyCCompiler\\Compiler\\CodeGen\\X64\\X64CodeGenerationResult.cs",
-              "RelativeToolTip": "JollyCCompiler\\Compiler\\CodeGen\\X64\\X64CodeGenerationResult.cs",
-              "ViewState": "AgIAAAAAAAAAAAAAAAAAAAQAAAAnAAAAAAAAAA==",
-              "Icon": "ae27a6b0-e345-4288-96df-5eaf394ee369.000738|",
-              "WhenOpened": "2026-10-07T12:52:43.599Z",
-              "EditorCaption": ""
-            },
-            {
-              "$type": "Document",
-              "DocumentIndex": 6,
-              "Title": "MainWindow.xaml",
-              "DocumentMoniker": "F:\\JollyCCompiler\\JollyCCompiler\\MainWindow.xaml",
-              "RelativeDocumentMoniker": "JollyCCompiler\\MainWindow.xaml",
-              "ToolTip": "F:\\JollyCCompiler\\JollyCCompiler\\MainWindow.xaml",
-              "RelativeToolTip": "JollyCCompiler\\MainWindow.xaml",
-              "Icon": "ae27a6b0-e345-4288-96df-5eaf394ee369.003549|",
-              "WhenOpened": "2026-10-07T07:54:13.83Z",
-              "EditorCaption": ""
-            },
-            {
-              "$type": "Document",
-              "DocumentIndex": 7,
-              "Title": "X64Emitter.cs",
-              "DocumentMoniker": "F:\\JollyCCompiler\\JollyCCompiler\\Compiler\\CodeGen\\X64\\X64Emitter.cs",
-              "RelativeDocumentMoniker": "JollyCCompiler\\Compiler\\CodeGen\\X64\\X64Emitter.cs",
-              "ToolTip": "F:\\JollyCCompiler\\JollyCCompiler\\Compiler\\CodeGen\\X64\\X64Emitter.cs",
-              "RelativeToolTip": "JollyCCompiler\\Compiler\\CodeGen\\X64\\X64Emitter.cs",
-              "ViewState": "AgIAAK8BAAAAAAAAAAAAADASAAAAAAAAAAAAAA==",
-              "Icon": "ae27a6b0-e345-4288-96df-5eaf394ee369.000738|",
-              "WhenOpened": "2026-10-06T06:32:50.531Z",
+              "WhenOpened": "2026-11-17T10:04:40.217Z",
               "EditorCaption": ""
             },
             {
               "$type": "Document",
               "DocumentIndex": 1,
-              "Title": "X64CodeGenerator.cs",
-              "DocumentMoniker": "F:\\JollyCCompiler\\JollyCCompiler\\Compiler\\CodeGen\\X64\\X64CodeGenerator.cs",
-              "RelativeDocumentMoniker": "JollyCCompiler\\Compiler\\CodeGen\\X64\\X64CodeGenerator.cs",
-              "ToolTip": "F:\\JollyCCompiler\\JollyCCompiler\\Compiler\\CodeGen\\X64\\X64CodeGenerator.cs",
-              "RelativeToolTip": "JollyCCompiler\\Compiler\\CodeGen\\X64\\X64CodeGenerator.cs",
-              "ViewState": "AgIAAD4MAAAAAAAAAAASwFgMAAAbAAAAAAAAAA==",
+              "Title": "PeWriter.cs",
+              "DocumentMoniker": "F:\\JollyProjects\\JollyCCompiler\\JollyCCompiler\\Object\\PeWriter.cs",
+              "RelativeDocumentMoniker": "JollyCCompiler\\Object\\PeWriter.cs",
+              "ToolTip": "F:\\JollyProjects\\JollyCCompiler\\JollyCCompiler\\Object\\PeWriter.cs",
+              "RelativeToolTip": "JollyCCompiler\\Object\\PeWriter.cs",
+              "ViewState": "AgIAAAsAAAAAAAAAAAA6wB4AAAAIAAAAAAAAAA==",
               "Icon": "ae27a6b0-e345-4288-96df-5eaf394ee369.000738|",
-              "WhenOpened": "2026-10-05T17:27:02.145Z",
+              "WhenOpened": "2026-11-17T08:32:37.088Z",
               "EditorCaption": ""
             },
             {
               "$type": "Document",
-              "DocumentIndex": 8,
-              "Title": "PeSubsystem.cs",
-              "DocumentMoniker": "F:\\JollyCCompiler\\JollyCCompiler\\Object\\PeSubsystem.cs",
-              "RelativeDocumentMoniker": "JollyCCompiler\\Object\\PeSubsystem.cs",
-              "ToolTip": "F:\\JollyCCompiler\\JollyCCompiler\\Object\\PeSubsystem.cs",
-              "RelativeToolTip": "JollyCCompiler\\Object\\PeSubsystem.cs",
+              "DocumentIndex": 2,
+              "Title": "windows_controls_5a.c",
+              "DocumentMoniker": "F:\\JollyProjects\\JollyCCompiler\\JollyCCompiler\\Examples\\windows_controls_5a.c",
+              "RelativeDocumentMoniker": "JollyCCompiler\\Examples\\windows_controls_5a.c",
+              "ToolTip": "F:\\JollyProjects\\JollyCCompiler\\JollyCCompiler\\Examples\\windows_controls_5a.c",
+              "RelativeToolTip": "JollyCCompiler\\Examples\\windows_controls_5a.c",
+              "ViewState": "AgIAAGwAAAAAAAAAAAAAAJIAAAAAAAAAAAAAAA==",
+              "Icon": "ae27a6b0-e345-4288-96df-5eaf394ee369.000423|",
+              "WhenOpened": "2026-11-17T08:25:58.789Z",
+              "EditorCaption": ""
+            },
+            {
+              "$type": "Document",
+              "DocumentIndex": 3,
+              "Title": "windows_button_51_no_probe.c",
+              "DocumentMoniker": "F:\\JollyProjects\\JollyCCompiler\\JollyCCompiler\\Examples\\windows_button_51_no_probe.c",
+              "RelativeDocumentMoniker": "JollyCCompiler\\Examples\\windows_button_51_no_probe.c",
+              "ToolTip": "F:\\JollyProjects\\JollyCCompiler\\JollyCCompiler\\Examples\\windows_button_51_no_probe.c",
+              "RelativeToolTip": "JollyCCompiler\\Examples\\windows_button_51_no_probe.c",
+              "ViewState": "AgIAAEYAAAAAAAAAAAAAAGwAAAAAAAAAAAAAAA==",
+              "Icon": "ae27a6b0-e345-4288-96df-5eaf394ee369.000423|",
+              "WhenOpened": "2026-11-17T08:17:30.453Z",
+              "EditorCaption": ""
+            },
+            {
+              "$type": "Document",
+              "DocumentIndex": 4,
+              "Title": "windows_button.c",
+              "DocumentMoniker": "F:\\JollyProjects\\JollyCCompiler\\JollyCCompiler\\Examples\\windows_button.c",
+              "RelativeDocumentMoniker": "JollyCCompiler\\Examples\\windows_button.c",
+              "ToolTip": "F:\\JollyProjects\\JollyCCompiler\\JollyCCompiler\\Examples\\windows_button.c",
+              "RelativeToolTip": "JollyCCompiler\\Examples\\windows_button.c",
+              "ViewState": "AgIAAEYAAAAAAAAAAAAAAGwAAAAAAAAAAAAAAA==",
+              "Icon": "ae27a6b0-e345-4288-96df-5eaf394ee369.000423|",
+              "WhenOpened": "2026-11-17T07:57:25.295Z",
+              "EditorCaption": ""
+            },
+            {
+              "$type": "Document",
+              "DocumentIndex": 5,
+              "Title": "windows_first_window.c",
+              "DocumentMoniker": "F:\\JollyProjects\\JollyCCompiler\\JollyCCompiler\\Examples\\windows_first_window.c",
+              "RelativeDocumentMoniker": "JollyCCompiler\\Examples\\windows_first_window.c",
+              "ToolTip": "F:\\JollyProjects\\JollyCCompiler\\JollyCCompiler\\Examples\\windows_first_window.c",
+              "RelativeToolTip": "JollyCCompiler\\Examples\\windows_first_window.c",
+              "ViewState": "AgIAADwAAAAAAAAAAAAAAFMAAAAAAAAAAAAAAA==",
+              "Icon": "ae27a6b0-e345-4288-96df-5eaf394ee369.000423|",
+              "WhenOpened": "2026-11-17T07:55:00.626Z",
+              "EditorCaption": ""
+            },
+            {
+              "$type": "Document",
+              "DocumentIndex": 6,
+              "Title": "JollyCCompiler.csproj",
+              "DocumentMoniker": "F:\\JollyProjects\\JollyCCompiler\\JollyCCompiler\\JollyCCompiler.csproj",
+              "RelativeDocumentMoniker": "JollyCCompiler\\JollyCCompiler.csproj",
+              "ToolTip": "F:\\JollyProjects\\JollyCCompiler\\JollyCCompiler\\JollyCCompiler.csproj",
+              "RelativeToolTip": "JollyCCompiler\\JollyCCompiler.csproj",
               "ViewState": "AgIAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA==",
-              "Icon": "ae27a6b0-e345-4288-96df-5eaf394ee369.000738|",
-              "WhenOpened": "2026-10-05T14:22:53.673Z",
+              "Icon": "ae27a6b0-e345-4288-96df-5eaf394ee369.000758|",
+              "WhenOpened": "2026-11-17T05:53:58.941Z",
               "EditorCaption": ""
             }
           ]

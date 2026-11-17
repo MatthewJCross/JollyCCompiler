@@ -10,6 +10,7 @@ namespace JollyCCompiler.Compiler.CodeGen.X64
         private static readonly Dictionary<string, StructDeclarationNode> _structs = new();
         private static readonly Dictionary<string, UnionDeclarationNode> _unions = new();
         private static readonly Dictionary<string, string> _functionReturnTypes = new();
+        private static readonly Dictionary<string, string> _externalDlls = new(StringComparer.Ordinal);
         private static readonly Dictionary<string, (string Type, bool IsConst, bool IsExtern)> _globals = new();
         private static readonly Dictionary<string, (int Length, string Type)> _globalArrays = new(StringComparer.Ordinal);
         private static readonly Dictionary<string, int> _enumConstants = new(StringComparer.Ordinal);
@@ -21,6 +22,7 @@ namespace JollyCCompiler.Compiler.CodeGen.X64
             _structs.Clear();
             _unions.Clear();
             _functionReturnTypes.Clear();
+            _externalDlls.Clear();
             _globals.Clear();
             _globalArrays.Clear();
             _enumConstants.Clear();
@@ -61,7 +63,11 @@ namespace JollyCCompiler.Compiler.CodeGen.X64
             }
 
             foreach (var function in program.Functions)
+            {
                 _functionReturnTypes[function.Name] = function.ReturnType;
+                if (function.IsExtern && TryResolveWindowsDll(function.Name, out var dll))
+                    _externalDlls[function.Name] = dll;
+            }
 
             foreach (var enumDeclaration in program.Enums)
             {
@@ -94,7 +100,7 @@ namespace JollyCCompiler.Compiler.CodeGen.X64
 
             foreach (var function in program.Functions)
             {
-                if (function.Name != "main")
+                if (function.Name != "main" && !function.IsExtern)
                     functions.Add(function);
             }
 
@@ -104,7 +110,7 @@ namespace JollyCCompiler.Compiler.CodeGen.X64
                 var arrays = new Dictionary<string, (int Length, string Type)>();
                 var parameters = new Dictionary<string, (int Index, string Type)>();
                 CollectParameters(function, parameters);
-                var frameSize = CollectVariables(function, variables, arrays);
+                var frameSize = CollectVariables(function, variables, arrays, parameters.Count);
                 if (frameSize > 0)
                     frameSize = ((frameSize + 15) / 16) * 16;
 
@@ -117,14 +123,33 @@ namespace JollyCCompiler.Compiler.CodeGen.X64
                 {
                     AddImport(imports, "msvcrt.dll", "printf");
                 }
-                else if (string.Equals(fixup.Symbol, "MessageBoxA", StringComparison.Ordinal))
+                else if (_externalDlls.TryGetValue(fixup.Symbol, out var externalDll))
                 {
-                    AddImport(imports, "user32.dll", "MessageBoxA");
+                    AddImport(imports, externalDll, fixup.Symbol);
                 }
             }
 
             var machineCode = emitter.GetCode();
             return new X64CodeGenerationResult(machineCode, emitter.Instructions, emitter.Fixups, data, emitter.Labels, imports);
+        }
+
+        // Win32 imports are resolved by symbol name for the initial Windows runtime.
+        // Explicit DLL annotations should replace this table when the declaration syntax supports them.
+        private static bool TryResolveWindowsDll(string function, out string dll)
+        {
+            dll = function switch
+            {
+                "MessageBoxA" or "RegisterClassA" or "CreateWindowExA" or "DefWindowProcA" or
+                "ShowWindow" or "UpdateWindow" or "GetMessageA" or "TranslateMessage" or
+                "DispatchMessageA" or "PostQuitMessage" or "LoadCursorA" or "LoadIconA" or
+                "GetDlgItem" or "GetWindowTextA" or "SetWindowTextA" or "SendMessageA" => "user32.dll",
+                "GetModuleHandleA" or "ExitProcess" or "GetLastError" or "FormatMessageA" or "GetStdHandle" or
+                "WriteFile" or "GetConsoleMode" => "kernel32.dll",
+                "BeginPaint" or "EndPaint" or "GetSysColorBrush" => "user32.dll",
+                "TextOutA" or "GetStockObject" => "gdi32.dll",
+                _ => string.Empty
+            };
+            return dll.Length != 0;
         }
 
         private static void AddImport(List<X64Import> imports, string dllName, string functionName)
@@ -383,7 +408,7 @@ namespace JollyCCompiler.Compiler.CodeGen.X64
             if (!_structs.TryGetValue(name, out var declaration))
                 throw new InvalidOperationException($"Unknown struct type 'struct {name}'.");
 
-            var alignment = 8;
+            var alignment = 1;
 
             foreach (var field in declaration.Fields)
             {
@@ -494,9 +519,9 @@ namespace JollyCCompiler.Compiler.CodeGen.X64
             throw new InvalidOperationException($"Struct '{name}' has no member '{member}'.");
         }
 
-        private static int CollectVariables(FunctionNode function, Dictionary<string, (int Offset, string Type, bool IsConst)> variables, Dictionary<string, (int Length, string Type)> arrays)
+        private static int CollectVariables(FunctionNode function, Dictionary<string, (int Offset, string Type, bool IsConst)> variables, Dictionary<string, (int Length, string Type)> arrays, int parameterCount)
         {
-            var nextOffset = 40;
+            var nextOffset = Math.Max(40, parameterCount * 8);
             foreach (var statement in function.Body.Statements)
                 CollectVariablesFromStatement(statement, variables, arrays, ref nextOffset);
 
@@ -510,9 +535,6 @@ namespace JollyCCompiler.Compiler.CodeGen.X64
                 var parameter = function.Parameters[i];
                 if (parameters.ContainsKey(parameter.Name))
                     throw new InvalidOperationException($"Duplicate parameter '{parameter.Name}'.");
-
-                if (i >= 4)
-                    throw new NotSupportedException("More than four function parameters are not yet supported.");
 
                 parameters[parameter.Name] = (i, parameter.Type);
             }
@@ -641,6 +663,18 @@ namespace JollyCCompiler.Compiler.CodeGen.X64
                             break;
                     }
 
+                    continue;
+                }
+
+                if (parameterIndex >= 4)
+                {
+                    // After push rbp, the fifth argument is at [rbp+48]:
+                    // return address (8) + 32-byte shadow space + saved rbp (8).
+                    // Copy incoming stack arguments into the same local parameter
+                    // slots used by identifier/lvalue handling.
+                    var incomingOffset = checked(48 + (parameterIndex - 4) * 8);
+                    emitter.MovRaxRbpDisp32(incomingOffset);
+                    emitter.MovRbpDisp32Rax(offset);
                     continue;
                 }
 
@@ -3407,12 +3441,29 @@ namespace JollyCCompiler.Compiler.CodeGen.X64
 
             var argumentCount = call.Arguments.Count;
             var callStackSize = emitter.GetCallStackSize(argumentCount);
-            var temporaryBytes = argumentCount * 8;
+            // Preserve the indirect callee before evaluating arguments. Evaluating it
+            // after register arguments are loaded would overwrite RCX/RDX/R8/R9
+            // for expressions such as callbacks and function-pointer variables.
+            var indirectCall = call.Function is not IdentifierExpression directName ||
+                (!_externalDlls.ContainsKey(directName.Name) && !_functionReturnTypes.ContainsKey(directName.Name));
+            var temporaryBytes = (argumentCount + (indirectCall ? 1 : 0)) * 8;
             var totalBytes = callStackSize + temporaryBytes;
             totalBytes = (totalBytes + 15) & ~15;
             emitter.SubRsp(totalBytes);
 
+            // The first 32 bytes are reserved for Win64 shadow space; outgoing
+            // stack arguments occupy the following 8-byte slots. Temporaries
+            // must never overlap those slots.
+            if (callStackSize < 32 + Math.Max(0, argumentCount - 4) * 8 || (totalBytes & 15) != 0)
+                throw new InvalidOperationException("Invalid Windows x64 outgoing call frame.");
+
             var temporaryBase = callStackSize;
+            var calleeOffset = temporaryBase + argumentCount * 8;
+            if (indirectCall)
+            {
+                GenerateExpression(call.Function, emitter, data, variables, arrays, parameters);
+                emitter.MovRspDisp32Rax(calleeOffset);
+            }
 
             for (var i = 0; i < argumentCount; i++)
             {
@@ -3522,32 +3573,16 @@ namespace JollyCCompiler.Compiler.CodeGen.X64
 
                 emitter.MovRaxRspDisp32(temporaryOffset);
 
+                // Use the resolved C type rather than the expression syntax.
+                // Casts, conditional expressions and pointer-valued members must
+                // not silently become 32-bit arguments on Windows x64.
                 var isPointerArgument =
-                    argument is StringExpression ||
-                    (
-                        argument is IdentifierExpression pointerIdentifier &&
-                        (
-                            arrays.ContainsKey(pointerIdentifier.Name) ||
-                            _globalArrays.ContainsKey(pointerIdentifier.Name) ||
-                            _functionReturnTypes.ContainsKey(pointerIdentifier.Name) ||
-                            (
-                                variables.TryGetValue(pointerIdentifier.Name, out var variable) &&
-                                (
-                                    variable.Type.EndsWith("*", StringComparison.Ordinal) ||
-                                    variable.Type.StartsWith("function*", StringComparison.Ordinal)
-                                )
-                            ) ||
-                            (
-                                parameters.TryGetValue(pointerIdentifier.Name, out var parameter) &&
-                                (
-                                    parameter.Type.EndsWith("*", StringComparison.Ordinal) ||
-                                    parameter.Type.StartsWith("function*", StringComparison.Ordinal)
-                                )
-                            )
-                        )
-                    ) ||
+                    argumentType.EndsWith("*", StringComparison.Ordinal) ||
+                    argumentType.StartsWith("function*", StringComparison.Ordinal) ||
                     argument is AddressOfExpression ||
-                    argument is ArraySubscriptExpression;
+                    argument is StringExpression ||
+                    (argument is IdentifierExpression arrayIdentifier &&
+                     (arrays.ContainsKey(arrayIdentifier.Name) || _globalArrays.ContainsKey(arrayIdentifier.Name)));
 
                 if (isPointerArgument)
                 {
@@ -3572,18 +3607,29 @@ namespace JollyCCompiler.Compiler.CodeGen.X64
                         if (is64BitArgument)
                             emitter.MoveRaxToStackArgument(i);
                         else
-                            emitter.MoveEaxToStackArgument(i);
+                        {
+                            // Win64 outgoing stack slots are eight bytes. Zero
+                            // extend 32-bit scalar arguments before writing the
+                            // whole slot, avoiding stale upper-half contents.
+                            emitter.MovEaxRspDisp32(temporaryOffset);
+                            emitter.MoveRaxToStackArgument(i);
+                        }
                     }
                 }
             }
 
-            if (call.Function is IdentifierExpression functionIdentifier && _functionReturnTypes.ContainsKey(functionIdentifier.Name))
+            if (call.Function is IdentifierExpression externalIdentifier && _externalDlls.ContainsKey(externalIdentifier.Name))
+            {
+                emitter.CallIndirectRipRelative(externalIdentifier.Name, externalIdentifier.Name);
+            }
+            else if (call.Function is IdentifierExpression functionIdentifier && _functionReturnTypes.ContainsKey(functionIdentifier.Name))
             {
                 emitter.CallRelative($"$fn_{functionIdentifier.Name}");
             }
             else
             {
-                GenerateExpression(call.Function, emitter, data, variables, arrays, parameters);
+                // Load only RAX here: all argument registers must remain intact.
+                emitter.MovRaxRspDisp32(calleeOffset);
                 emitter.CallRax();
             }
 

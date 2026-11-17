@@ -1,4 +1,4 @@
-﻿// ============================================================================
+// ============================================================================
 // JollyCCompiler - X64Emitter
 // ============================================================================
 //
@@ -4631,16 +4631,23 @@ namespace JollyCCompiler.Compiler.CodeGen.X64
         // Raw machine-code emission
         // ------------------------------------------------------------
 
-        // Emits a single raw byte without instruction metadata.
+        // Raw encodings must be represented in the listing as well as in the PE.
+        // Otherwise subsequent instruction offsets appear discontinuous and, more
+        // importantly, struct-field stores seem to be missing from diagnostics.
         public void EmitByte(byte value)
         {
-            _code.Add(value);
+            EmitBytes(value);
         }
 
-        // Emits multiple raw bytes without instruction metadata.
         public void EmitBytes(params byte[] values)
         {
+            if (values.Length == 0)
+                return;
+
+            var offset = Offset;
             _code.AddRange(values);
+            _instructions.Add(new X64Instruction(offset, values.ToArray(),
+                "raw x64 (" + Convert.ToHexString(values) + ")"));
         }
 
 

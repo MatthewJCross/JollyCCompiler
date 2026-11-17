@@ -76,6 +76,16 @@ namespace JollyCCompiler.Compiler.Parsing
                 }
                 else
                 {
+                    // A stray punctuation token at file scope normally means an earlier
+                    // declaration failed to consume its complete declarator. Report the
+                    // actual source position instead of throwing an internal exception.
+                    if (!IsTypeName())
+                    {
+                        Error($"Unexpected token '{Current.Text}' at file scope (line {Current.Line}, column {Current.Column}). Check the preceding declaration.");
+                        Advance();
+                        continue;
+                    }
+
                     var global = ParseVariableDeclaration();
 
                     if (global is not null)
@@ -243,17 +253,14 @@ namespace JollyCCompiler.Compiler.Parsing
                             parameterType += "*";
                         }
 
-                        var parameterName = Expect(
-                            TokenKind.Identifier,
-                            "Expected parameter name.");
-
-                        if (parameterName.Kind != TokenKind.Identifier)
-                            return;
+                        string parameterName = Current.Kind == TokenKind.Identifier
+                            ? Advance().Text
+                            : $"__arg{parameters.Count}";
 
                         parameters.Add(
                             new ParameterNode(
                                 parameterType,
-                                parameterName.Text));
+                                parameterName));
 
                         while (Current.Kind == TokenKind.Comma)
                         {
@@ -264,17 +271,14 @@ namespace JollyCCompiler.Compiler.Parsing
                             if (parameterType is null)
                                 return;
 
-                            parameterName = Expect(
-                                TokenKind.Identifier,
-                                "Expected parameter name.");
-
-                            if (parameterName.Kind != TokenKind.Identifier)
-                                return;
+                            parameterName = Current.Kind == TokenKind.Identifier
+                                ? Advance().Text
+                                : $"__arg{parameters.Count}";
 
                             parameters.Add(
                                 new ParameterNode(
                                     parameterType,
-                                    parameterName.Text));
+                                    parameterName));
                         }
                     }
                 }
@@ -287,17 +291,14 @@ namespace JollyCCompiler.Compiler.Parsing
                         if (parameterType is null)
                             return;
 
-                        var parameterName = Expect(
-                            TokenKind.Identifier,
-                            "Expected parameter name.");
-
-                        if (parameterName.Kind != TokenKind.Identifier)
-                            return;
+                        string parameterName = Current.Kind == TokenKind.Identifier
+                            ? Advance().Text
+                            : $"__arg{parameters.Count}";
 
                         parameters.Add(
                             new ParameterNode(
                                 parameterType,
-                                parameterName.Text));
+                                parameterName));
 
                         if (Current.Kind != TokenKind.Comma)
                             break;
@@ -439,9 +440,22 @@ namespace JollyCCompiler.Compiler.Parsing
                 if (type is null) 
                     return null;
 
-                var fieldName = Expect(TokenKind.Identifier, "Expected struct field name.");
-                if (fieldName.Kind != TokenKind.Identifier) 
-                    return null;
+                string fieldType = type;
+                string fieldNameText;
+                if (IsFunctionPointerDeclarator())
+                {
+                    var parsedType = ParseFunctionPointerType(type, out fieldNameText);
+                    if (parsedType is null)
+                        return null;
+                    fieldType = parsedType;
+                }
+                else
+                {
+                    var fieldName = Expect(TokenKind.Identifier, "Expected struct field name.");
+                    if (fieldName.Kind != TokenKind.Identifier)
+                        return null;
+                    fieldNameText = fieldName.Text;
+                }
 
                 int? arrayLength = null;
                 if (Current.Kind == TokenKind.LeftBracket)
@@ -455,7 +469,7 @@ namespace JollyCCompiler.Compiler.Parsing
                 }
 
                 Expect(TokenKind.Semicolon, "Expected ';' after struct field.");
-                fields.Add(new StructFieldNode(type, fieldName.Text, arrayLength));
+                fields.Add(new StructFieldNode(fieldType, fieldNameText, arrayLength));
             }
 
             Expect(TokenKind.RightBrace, "Expected '}' after struct fields.");
@@ -663,69 +677,59 @@ namespace JollyCCompiler.Compiler.Parsing
 
             if (Current.Kind != TokenKind.RightParen)
             {
-                if (Current.Kind == TokenKind.Void)
+                // Only a *bare* void followed by ')' denotes an empty parameter list.
+                // void* hwnd is an ordinary pointer parameter, including in callbacks.
+                if (Current.Kind == TokenKind.Void && Peek(1).Kind == TokenKind.RightParen)
                 {
                     Advance();
-
-                    if (Current.Kind != TokenKind.RightParen)
-                    {
-                        Error("Expected ')' after 'void' in parameter list.");
-                        return null;
-                    }
                 }
                 else
                 {
                     while (true)
                     {
                         var parameterType = ParseType();
-
                         if (parameterType is null)
                             return null;
 
                         string parameterName;
-
                         if (IsFunctionPointerDeclarator())
                         {
                             var functionPointerType = ParseFunctionPointerType(parameterType, out parameterName);
-
                             if (functionPointerType is null)
                                 return null;
-
                             parameterType = functionPointerType;
                         }
-                        else
+                        else if (Current.Kind == TokenKind.Identifier)
                         {
-                            var parameterNameToken = Expect(TokenKind.Identifier, "Expected parameter name.");
-
-                            if (parameterNameToken.Kind != TokenKind.Identifier)
-                                return null;
-
-                            parameterName = parameterNameToken.Text;
-
+                            parameterName = Advance().Text;
                             if (Current.Kind == TokenKind.LeftBracket)
                             {
                                 Advance();
-
                                 if (Current.Kind == TokenKind.IntegerLiteral)
                                     Advance();
-
                                 Expect(TokenKind.RightBracket, "Expected ']' after array parameter.");
-
                                 parameterType += "*";
                             }
                         }
+                        else if (isExtern && (Current.Kind == TokenKind.Comma || Current.Kind == TokenKind.RightParen))
+                        {
+                            // C prototypes may omit parameter names.
+                            parameterName = $"__arg{parameters.Count}";
+                        }
+                        else
+                        {
+                            Error("Expected parameter name.");
+                            return null;
+                        }
 
                         parameters.Add(new ParameterNode(parameterType, parameterName));
-
                         if (Current.Kind != TokenKind.Comma)
                             break;
-
                         Advance();
-
                         if (Current.Kind == TokenKind.RightParen)
                         {
                             Error("Expected parameter after ','.");
-                            break;
+                            return null;
                         }
                     }
                 }
@@ -1067,7 +1071,7 @@ namespace JollyCCompiler.Compiler.Parsing
 
             if (type is null)
             {
-                throw new InvalidOperationException($"Expected a valid type at token '{Current.Text}' ({Current.Kind}).");
+                throw new InvalidOperationException($"Expected a valid type at line {Current.Line}, column {Current.Column}: token '{Current.Text}' ({Current.Kind}); previous token '{Previous.Text}' at {Previous.Line}:{Previous.Column}.");
             }
 
             string name;

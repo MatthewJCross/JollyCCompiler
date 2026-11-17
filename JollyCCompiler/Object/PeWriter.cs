@@ -12,8 +12,6 @@ namespace JollyCCompiler.Object
         private const uint SectionAlignment = 0x1000;
         private const uint FileAlignment = 0x200;
         private const uint TextRva = 0x1000;
-        private const uint RDataRva = 0x2000;
-        private const uint IDataRva = 0x3000;
         private const ushort MachineAmd64 = 0x8664;
         private const ushort CharacteristicsExecutableImage = 0x0002;
         private const ushort CharacteristicsLargeAddressAware = 0x0020;
@@ -35,43 +33,39 @@ namespace JollyCCompiler.Object
                 throw new ArgumentException("Main function contains no generated code.", nameof(result));
 
             Directory.CreateDirectory(Path.GetDirectoryName(Path.GetFullPath(filePath))!);
-            const int entryStubSize = 18; // 14;
+            // Entry stub: align stack, reserve Win64 shadow space, call main,
+            // forward its 32-bit return value to ExitProcess.
+            // and rsp, -16                 (4)
+            // sub rsp, 32                  (4)
+            // call main                    (5)
+            // mov ecx, eax                 (2)
+            // call qword ptr [rip+IAT]     (6)
+            // int3                         (1)
+            const int entryStubSize = 22;
             var mainCode = result.MachineCode;
             var text = new byte[AlignUp(entryStubSize + mainCode.Length, (int)FileAlignment)];
             var mainOffset = entryStubSize;
             Array.Copy(mainCode, 0, text, mainOffset, mainCode.Length);
-            var rdata = BuildRDataSection(result.Data, out Dictionary<string, uint> dataRvas);
-            var idata = BuildImportSection(subsystem, result.Imports, out Dictionary<string, uint> importIatRvas);
-
+            // Place sections according to their actual virtual sizes, rounded to the
+            // PE section alignment. Import/data fixups must use these computed RVAs.
+            uint textVirtualSize = checked((uint)(entryStubSize + mainCode.Length));
+            uint rdataRva = checked(TextRva + AlignUp(textVirtualSize, SectionAlignment));
+            var rdata = BuildRDataSection(result.Data, rdataRva, out Dictionary<string, uint> dataRvas);
+            uint rdataVirtualSize = checked((uint)rdata.Length);
+            uint idataRva = checked(rdataRva + AlignUp(Math.Max(rdataVirtualSize, 1u), SectionAlignment));
+            var idata = BuildImportSection(subsystem, result.Imports, idataRva, out Dictionary<string, uint> importIatRvas);
+            uint idataVirtualSize = checked((uint)idata.Length);
             uint exitProcessIatRva = importIatRvas["ExitProcess"];
-
-            foreach (var import in importIatRvas)
-            {
-                Debug.WriteLine($"Import IAT: {import.Key} = 0x{import.Value:X8}");
-            }
-
             uint entryRva = TextRva;
             uint mainRva = TextRva + (uint)mainOffset;
-
-            text[0] = 0x48;
-            text[1] = 0x83;
-            text[2] = 0xE4;
-            text[3] = 0xF0;
-
-            text[4] = 0xE8;
-            WriteInt32(text, 5, checked((int)(mainRva - (entryRva + 9))));
-
-            text[9] = 0x89;
-            text[10] = 0xC1;
-
-            text[11] = 0xFF;
-            text[12] = 0x15;
-
-            uint exitNextInstructionRva = TextRva + 17;
-
-            WriteInt32(text, 13, checked((int)(exitProcessIatRva - exitNextInstructionRva)));
-
-            text[17] = 0xCC;            
+            text[0] = 0x48; text[1] = 0x83; text[2] = 0xE4; text[3] = 0xF0;
+            text[4] = 0x48; text[5] = 0x83; text[6] = 0xEC; text[7] = 0x20;
+            text[8] = 0xE8;
+            WriteInt32(text, 9, checked((int)(mainRva - (entryRva + 13))));
+            text[13] = 0x89; text[14] = 0xC1;
+            text[15] = 0xFF; text[16] = 0x15;
+            WriteInt32(text, 17, checked((int)(exitProcessIatRva - (TextRva + 21))));
+            text[21] = 0xCC;
 
             foreach (var fixup in result.Fixups)
             {
@@ -108,6 +102,12 @@ namespace JollyCCompiler.Object
                 else if (importIatRvas.TryGetValue(fixup.Symbol, out uint importIatRva))
                 {
                     targetRva = importIatRva;
+                }
+                else if (result.Labels.TryGetValue(fixup.Symbol, out int functionOffset))
+                {
+                    // Local function addresses are in .text, after the PE entry stub.
+                    // A RIP-relative LEA needs the function's RVA, not an IAT slot.
+                    targetRva = checked(TextRva + (uint)entryStubSize + (uint)functionOffset);
                 }
                 else
                 {
@@ -149,13 +149,10 @@ namespace JollyCCompiler.Object
             uint textRawSize = (uint)AlignUp(text.Length, (int)FileAlignment);
             uint rdataRawSize = (uint)AlignUp(rdata.Length, (int)FileAlignment);
             uint idataRawSize = (uint)AlignUp(idata.Length, (int)FileAlignment);
-            uint textVirtualSize = (uint)(entryStubSize + mainCode.Length);
-            uint rdataVirtualSize = (uint)rdata.Length;
-            uint idataVirtualSize = (uint)idata.Length;
             uint textRawPointer = (uint)headersSize;
             uint rdataRawPointer = textRawPointer + textRawSize;
             uint idataRawPointer = rdataRawPointer + rdataRawSize;
-            uint sizeOfImage = IDataRva + AlignUp(idataVirtualSize, SectionAlignment);
+            uint sizeOfImage = checked(idataRva + AlignUp(idataVirtualSize, SectionAlignment));
             uint sizeOfHeaders = (uint)headersSize;
             var output = new byte[checked((int)(idataRawPointer + idataRawSize))];
             WriteUInt16(output, 0x00, 0x5A4D);
@@ -194,7 +191,7 @@ namespace JollyCCompiler.Object
             WriteUInt32(output, optionalOffset + 60, sizeOfHeaders);
             WriteUInt32(output, optionalOffset + 64, 0);
             WriteUInt16(output, optionalOffset + 68, (ushort)subsystem);
-            WriteUInt16(output, optionalOffset + 70, DllCharacteristicsDynamicBase | DllCharacteristicsNxCompat | DllCharacteristicsNoSeh);
+            WriteUInt16(output, optionalOffset + 70, DllCharacteristicsNxCompat);
             WriteUInt64(output, optionalOffset + 72, 0x100000);
             WriteUInt64(output, optionalOffset + 80, 0x1000);
             WriteUInt64(output, optionalOffset + 88, 0x100000);
@@ -202,33 +199,25 @@ namespace JollyCCompiler.Object
             WriteUInt32(output, optionalOffset + 104, 0);
             WriteUInt32(output, optionalOffset + 108, 16);
             int importDirectoryOffset = optionalOffset + 112 + (1 * 8);
-            WriteUInt32(output, importDirectoryOffset, IDataRva);
+            WriteUInt32(output, importDirectoryOffset, idataRva);
             WriteUInt32(output, importDirectoryOffset + 4, 60);
             int sectionOffset = optionalOffset + optionalHeaderSize;
             WriteSectionHeader(output, sectionOffset, ".text", textVirtualSize, TextRva, textRawSize, textRawPointer, TextCharacteristics);
-            WriteSectionHeader(output, sectionOffset + sectionHeaderSize, ".rdata", rdataVirtualSize, RDataRva, rdataRawSize, rdataRawPointer, RDataCharacteristics);
-            WriteSectionHeader(output, sectionOffset + sectionHeaderSize * 2, ".idata", idataVirtualSize, IDataRva, idataRawSize, idataRawPointer, IDataCharacteristics);
+            WriteSectionHeader(output, sectionOffset + sectionHeaderSize, ".rdata", rdataVirtualSize, rdataRva, rdataRawSize, rdataRawPointer, RDataCharacteristics);
+            WriteSectionHeader(output, sectionOffset + sectionHeaderSize * 2, ".idata", idataVirtualSize, idataRva, idataRawSize, idataRawPointer, IDataCharacteristics);
             Array.Copy(text, 0, output, (int)textRawPointer, text.Length);
             Array.Copy(rdata, 0, output, (int)rdataRawPointer, rdata.Length);
             Array.Copy(idata, 0, output, (int)idataRawPointer, idata.Length);
             File.WriteAllBytes(filePath, output);
-
-            int textFileOffset = checked((int)textRawPointer);
-            var finalBytes = File.ReadAllBytes(filePath);
-
-            int disp = BitConverter.ToInt32(finalBytes, textFileOffset + 0x8A);
-
-            long nextRva = 0x108E;
-            long targRva = nextRva + disp;
         }
 
-        private static byte[] BuildRDataSection(IReadOnlyList<X64DataItem> items, out Dictionary<string, uint> symbolRvas)
+        private static byte[] BuildRDataSection(IReadOnlyList<X64DataItem> items, uint sectionRva, out Dictionary<string, uint> symbolRvas)
         {
             symbolRvas = new Dictionary<string, uint>(StringComparer.Ordinal);
             int totalSize = 0;
             foreach (var item in items)
             {
-                symbolRvas[item.Symbol] = RDataRva + (uint)totalSize;
+                symbolRvas[item.Symbol] = checked(sectionRva + (uint)totalSize);
                 totalSize += item.Data.Length;
             }
 
@@ -244,7 +233,7 @@ namespace JollyCCompiler.Object
             return data;
         }
 
-        private static byte[] BuildImportSection(PeSubsystem subsystem, IReadOnlyList<X64Import> requestedImports, out Dictionary<string, uint> importIatRvas)
+        private static byte[] BuildImportSection(PeSubsystem subsystem, IReadOnlyList<X64Import> requestedImports, uint sectionRva, out Dictionary<string, uint> importIatRvas)
         {
             var imports = new List<X64Import>();
 
@@ -317,9 +306,9 @@ namespace JollyCCompiler.Object
             {
                 var groupImports = group.ToList();
 
-                uint lookupRva = IDataRva + (uint)lookupOffset;
-                uint addressRva = IDataRva + (uint)addressOffset;
-                uint dllNameRva = IDataRva + (uint)dllNameOffsets[group.Key];
+                uint lookupRva = sectionRva + (uint)lookupOffset;
+                uint addressRva = sectionRva + (uint)addressOffset;
+                uint dllNameRva = sectionRva + (uint)dllNameOffsets[group.Key];
 
                 int descriptorOffsetForGroup = descriptorOffset + descriptorIndex * descriptorSize;
 
@@ -334,12 +323,12 @@ namespace JollyCCompiler.Object
                     var import = groupImports[index];
 
                     string hintNameKey = import.DllName + "\0" + import.FunctionName;
-                    uint hintNameRva = IDataRva + (uint)hintNameOffsets[hintNameKey];
+                    uint hintNameRva = sectionRva + (uint)hintNameOffsets[hintNameKey];
 
                     WriteUInt64(data, lookupOffset + index * 8, hintNameRva);
                     WriteUInt64( data, addressOffset + index * 8, hintNameRva);
 
-                    uint iatRva = IDataRva + (uint)(addressOffset + index * 8);
+                    uint iatRva = sectionRva + (uint)(addressOffset + index * 8);
 
                     if (importIatRvas.ContainsKey(import.FunctionName))
                     {
