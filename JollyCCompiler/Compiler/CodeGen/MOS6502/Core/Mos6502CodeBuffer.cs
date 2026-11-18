@@ -180,6 +180,11 @@ namespace JollyCCompiler.Compiler.CodeGen.MOS6502.Core
             Capture(2, $"EOR #${value:X2}", () => _assembler.EorImmediate(value));
         }
 
+        public void CmpAbsolute(ushort address)
+        {
+            Capture(3, $"CMP ${address:X4}", () => _assembler.CmpAbsolute(address));
+        }
+
         public void CmpImmediate(byte value)
         {
             Capture(2, $"CMP #${value:X2}", () => _assembler.CmpImmediate(value));
@@ -224,6 +229,9 @@ namespace JollyCCompiler.Compiler.CodeGen.MOS6502.Core
         {
             Capture(3, $"JSR {label}", () => _assembler.Jsr(label));
         }
+
+        public void Sei() => Capture(1, "SEI", _assembler.Sei);
+        public void Cli() => Capture(1, "CLI", _assembler.Cli);
 
         public void Rts()
         {
@@ -337,6 +345,11 @@ namespace JollyCCompiler.Compiler.CodeGen.MOS6502.Core
         public void LdaZeroPage(byte address)
         {
             Capture(2, $"LDA ${address:X2}", () => _assembler.LdaZeroPage(address));
+        }
+
+        public void AndZeroPage(byte address)
+        {
+            Capture(2, $"AND ${address:X2}", () => _assembler.AndZeroPage(address));
         }
 
         public void AdcZeroPage(byte address)

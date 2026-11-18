@@ -42,10 +42,9 @@ namespace JollyCCompiler.Compiler.CodeGen.MOS6502.Platforms.C64
             var generated = Generate(program);
             var layout = _runtime.CreateLayout(generated.MachineCode.Length);
 
-            if (layout.MainAddress != generated.MainAddress)
-                throw new InvalidOperationException("The C64 main address changed between code generation and program layout.");
-
-            return _runtime.CreateProgram(layout, generated.MachineCode);
+            // Code may begin with an IRQ handler before main. The BASIC startup
+            // must JSR the actual main symbol, not the first emitted byte.
+            return _runtime.CreateProgram(layout with { MainAddress = generated.MainAddress }, generated.MachineCode);
         }
 
         public void WriteProgram(string outputPath, ProgramNode program)

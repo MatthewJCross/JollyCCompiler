@@ -1,4 +1,4 @@
-﻿using JollyCCompiler.Compiler.Diagnostics;
+using JollyCCompiler.Compiler.Diagnostics;
 using JollyCCompiler.Compiler.Syntax;
 
 namespace JollyCCompiler.Compiler.Semantic
@@ -31,6 +31,23 @@ namespace JollyCCompiler.Compiler.Semantic
                 foreach (var runtimeFunction in runtimeFunctions)
                     _runtimeFunctions.Add(runtimeFunction);
             }
+
+            _runtimeFunctions.Add("__install_raster_irq");
+            _runtimeFunctions.Add("__install_raster_bars");
+            // C64 Phase 8 built-ins are implemented directly by the MOS6502 backend.
+            _runtimeFunctions.Add("__c64_poke");
+            _runtimeFunctions.Add("__c64_peek");
+            _runtimeFunctions.Add("__joystick1");
+            _runtimeFunctions.Add("__joystick2");
+            _runtimeFunctions.Add("__cia1_timer_start");
+            _runtimeFunctions.Add("__cia1_timer_elapsed");
+            _runtimeFunctions.Add("__c64_key");
+            _runtimeFunctions.Add("__c64_ticks");
+            _runtimeFunctions.Add("__sprite_position");
+            _runtimeFunctions.Add("__sprite_colour");
+            _runtimeFunctions.Add("__sprite_enable");
+            _runtimeFunctions.Add("__sid_beep");
+            _runtimeFunctions.Add("__sid_stop");
 
             CollectGlobalNames(program);
             CollectFunctionNames(program);

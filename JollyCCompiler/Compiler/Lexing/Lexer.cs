@@ -304,6 +304,7 @@ public sealed class Lexer
             "struct" => TokenKind.Struct,
             "union" => TokenKind.Union,
             "const" => TokenKind.Const,
+            "volatile" => TokenKind.Volatile,
             "return" => TokenKind.Return,
             "if" => TokenKind.If,
             "else" => TokenKind.Else,

@@ -95,6 +95,7 @@
 
         Sizeof,
         Const,
+        Volatile,
         Enum,
         Typedef,
         Extern

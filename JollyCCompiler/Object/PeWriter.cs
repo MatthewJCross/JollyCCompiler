@@ -78,7 +78,9 @@ namespace JollyCCompiler.Object
                 {
                     if (!result.Labels.TryGetValue(fixup.Symbol, out int labelOffset))
                     {
-                        throw new InvalidOperationException($"Unknown x64 label '{fixup.Symbol}'.");
+                        throw new InvalidOperationException(
+                            $"Unresolved x64 code target '{fixup.Symbol}'. " +
+                            "Check that the function is defined or its Windows import is registered.");
                     }
 
                     long targetOffset = entryStubSize + labelOffset;

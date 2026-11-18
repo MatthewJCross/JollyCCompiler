@@ -102,7 +102,7 @@ int main()
     wc.hInstance = instance;
     wc.hIcon = 0;
     wc.hCursor = 0;
-    wc.hbrBackground = 0;
+    wc.hbrBackground = (void*)6; /* COLOR_WINDOW + 1; repaint on resize */
     wc.lpszMenuName = 0;
     wc.lpszClassName = className;
 

@@ -129,6 +129,29 @@ namespace JollyCCompiler.Compiler.CodeGen.X64
                 }
             }
 
+            // Fail at code generation rather than leaking an unresolved $fn_ label
+            // into PeWriter (which otherwise reports an internal compiler error).
+            var localFunctionNames = new HashSet<string>(
+                functions.Select(f => f.Name), StringComparer.Ordinal);
+            foreach (var fixup in emitter.Fixups)
+            {
+                if (fixup.Kind != X64FixupKind.Relative32 ||
+                    !fixup.Symbol.StartsWith("$fn_", StringComparison.Ordinal))
+                    continue;
+
+                string name = fixup.Symbol[4..];
+                if (localFunctionNames.Contains(name))
+                    continue;
+
+                if (program.Functions.Any(f => f.Name == name && f.IsExtern))
+                    throw new NotSupportedException(
+                        $"External function '{name}' has no registered Windows DLL import. " +
+                        "Add the function to TryResolveWindowsDll in X64CodeGenerator.");
+
+                throw new NotSupportedException(
+                    $"Function '{name}' is referenced but has no definition.");
+            }
+
             var machineCode = emitter.GetCode();
             return new X64CodeGenerationResult(machineCode, emitter.Instructions, emitter.Fixups, data, emitter.Labels, imports);
         }

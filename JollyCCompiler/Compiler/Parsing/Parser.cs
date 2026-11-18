@@ -67,6 +67,12 @@ namespace JollyCCompiler.Compiler.Parsing
                     if (declaration is not null)
                         _enums.Add(declaration);
                 }
+                else if (Current.Kind == TokenKind.Identifier && Current.Text == "__interrupt")
+                {
+                    Advance();
+                    var handler = ParseFunction(isInterrupt: true);
+                    if (handler is not null) functions.Add(handler);
+                }
                 else if (IsFunctionDeclaration())
                 {
                     var function = ParseFunction();
@@ -654,7 +660,7 @@ namespace JollyCCompiler.Compiler.Parsing
             return result;
         }
 
-        private FunctionNode? ParseFunction(bool isExtern = false)
+        private FunctionNode? ParseFunction(bool isExtern = false, bool isInterrupt = false)
         {
             if (isExtern)
             {
@@ -746,11 +752,16 @@ namespace JollyCCompiler.Compiler.Parsing
 
             var body = ParseBlock();
 
-            return new FunctionNode(returnType, name.Text, parameters, body);
+            return new FunctionNode(returnType, name.Text, parameters, body, IsInterrupt: isInterrupt);
         }
 
         private string? ParseType()
         {
+            // The current backends do not cache memory reads, so volatile
+            // is accepted as a qualifier without changing the canonical type.
+            while (Current.Kind == TokenKind.Volatile)
+                Advance();
+
             string? type;
 
             if (Current.Kind == TokenKind.Short)
@@ -981,7 +992,7 @@ namespace JollyCCompiler.Compiler.Parsing
 
         private bool IsTypeName()
         {
-            if (Current.Kind == TokenKind.Const)
+            if (Current.Kind is TokenKind.Const or TokenKind.Volatile)
                 return true;
 
             if (Current.Kind is TokenKind.Short or TokenKind.Int or TokenKind.Char or TokenKind.Float or TokenKind.Double or TokenKind.Long or TokenKind.Unsigned or TokenKind.Void or TokenKind.Struct or TokenKind.Union or TokenKind.Enum)
@@ -1061,10 +1072,10 @@ namespace JollyCCompiler.Compiler.Parsing
                 isExtern = true;
             }
 
-            if (Current.Kind == TokenKind.Const)
+            while (Current.Kind is TokenKind.Const or TokenKind.Volatile)
             {
+                if (Current.Kind == TokenKind.Const) isConst = true;
                 Advance();
-                isConst = true;
             }
 
             var type = ParseType();
@@ -1226,7 +1237,7 @@ namespace JollyCCompiler.Compiler.Parsing
 
             StatementNode? initializer = null;
 
-            if (Current.Kind is TokenKind.Const or TokenKind.Short or TokenKind.Int or TokenKind.Char or TokenKind.Float or TokenKind.Double or TokenKind.Long or TokenKind.Unsigned or TokenKind.Struct or TokenKind.Union)
+            if (Current.Kind is TokenKind.Const or TokenKind.Volatile or TokenKind.Short or TokenKind.Int or TokenKind.Char or TokenKind.Float or TokenKind.Double or TokenKind.Long or TokenKind.Unsigned or TokenKind.Struct or TokenKind.Union)
             {
                 initializer = ParseVariableDeclaration();
             }
@@ -1606,6 +1617,8 @@ namespace JollyCCompiler.Compiler.Parsing
                 Expect(TokenKind.LeftParen, "Expected '(' after 'sizeof'.");
 
                 if (Current.Kind is
+                    TokenKind.Const or
+                    TokenKind.Volatile or
                     TokenKind.Short or
                     TokenKind.Int or
                     TokenKind.Char or
@@ -1666,7 +1679,9 @@ namespace JollyCCompiler.Compiler.Parsing
 
         private static bool IsCastType(TokenKind kind)
         {
-            return kind is TokenKind.Char
+            return kind is TokenKind.Const
+                or TokenKind.Volatile
+                or TokenKind.Char
                 or TokenKind.Short
                 or TokenKind.Int
                 or TokenKind.Long
