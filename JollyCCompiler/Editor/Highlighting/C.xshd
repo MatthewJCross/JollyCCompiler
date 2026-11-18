@@ -1,0 +1,28 @@
+<?xml version="1.0" encoding="utf-8"?>
+<SyntaxDefinition name="Jolly C" extensions=".c;.h" xmlns="http://icsharpcode.net/sharpdevelop/syntaxdefinition/2008">
+  <Color name="Normal" foreground="#E6EDF5" />
+  <Color name="Keyword" foreground="#C792EA" fontWeight="bold" />
+  <Color name="Type" foreground="#82AAFF" />
+  <Color name="Number" foreground="#F2B879" />
+  <Color name="String" foreground="#C3E88D" />
+  <Color name="Comment" foreground="#7FA17D" />
+  <Color name="Preprocessor" foreground="#E4B77A" />
+  <Color name="Builtin" foreground="#56C99A" />
+  <Color name="Function" foreground="#8EC8E8" />
+  <RuleSet>
+    <Span color="Comment" begin="/\*" end="\*/" />
+    <Span color="Comment" begin="//" end="$" />
+    <Span color="String" begin="&quot;" end="(?&lt;!\\)&quot;" />
+    <Span color="String" begin="'" end="(?&lt;!\\)'" />
+    <Rule color="Preprocessor">^\s*\#\s*[a-zA-Z_]+</Rule>
+    <Rule color="Builtin">\b__[A-Za-z_][A-Za-z_0-9]*\b</Rule>
+    <Rule color="Number">\b(?:0[xX][0-9a-fA-F]+|[0-9]+(?:\.[0-9]+)?(?:[uUlLfF]+)?)\b</Rule>
+    <Keywords color="Keyword">
+      <Word>auto</Word><Word>break</Word><Word>case</Word><Word>continue</Word><Word>default</Word><Word>do</Word><Word>else</Word><Word>enum</Word><Word>extern</Word><Word>for</Word><Word>goto</Word><Word>if</Word><Word>register</Word><Word>return</Word><Word>sizeof</Word><Word>static</Word><Word>struct</Word><Word>switch</Word><Word>typedef</Word><Word>union</Word><Word>while</Word>
+    </Keywords>
+    <Keywords color="Type">
+      <Word>bool</Word><Word>char</Word><Word>const</Word><Word>double</Word><Word>float</Word><Word>int</Word><Word>long</Word><Word>short</Word><Word>signed</Word><Word>unsigned</Word><Word>void</Word><Word>volatile</Word>
+    </Keywords>
+    <Rule color="Function">\b[A-Za-z_][A-Za-z_0-9]*(?=\s*\()</Rule>
+  </RuleSet>
+</SyntaxDefinition>

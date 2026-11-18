@@ -1,19 +1,13 @@
-﻿<Window x:Class="JollyCCompiler.MainWindow"
-        xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
-        xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
-        xmlns:d="http://schemas.microsoft.com/expression/blend/2008"
-        xmlns:mc="http://schemas.openxmlformats.org/markup-compatibility/2006"
-        xmlns:local="clr-namespace:JollyCCompiler"
-        xmlns:controls="clr-namespace:JollyCCompiler.GUI.Controls"
-        mc:Ignorable="d"
-        Title="JollyC Compiler"
-        Width="1800"
-        Height="1200"
-        MinWidth="1000"
-        MinHeight="600"
-        WindowStartupLocation="CenterScreen">
+﻿<Window x:Class="JollyCCompiler.MainWindow" xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation" xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml" xmlns:d="http://schemas.microsoft.com/expression/blend/2008" xmlns:mc="http://schemas.openxmlformats.org/markup-compatibility/2006" xmlns:local="clr-namespace:JollyCCompiler" xmlns:controls="clr-namespace:JollyCCompiler.GUI.Controls" xmlns:gui="clr-namespace:JollyCCompiler.GUI" mc:Ignorable="d" Title="JollyC Compiler" Width="1500" Height="950" MinWidth="1000" MinHeight="600" WindowStartupLocation="CenterScreen" Background="#111820" Foreground="#DDE5EE">
+    <Window.Resources>
+        <ResourceDictionary>
+            <ResourceDictionary.MergedDictionaries>
+                <ResourceDictionary Source="Styles/EditorTheme.xaml"/>
+            </ResourceDictionary.MergedDictionaries>
+        </ResourceDictionary>
+    </Window.Resources>
     <DockPanel>
-        <Menu DockPanel.Dock="Top">
+        <Menu DockPanel.Dock="Top" Background="#202A36" Foreground="#DDE5EE">
             <MenuItem Header="_File">
                 <MenuItem Header="_New Project" Click="NewProject_Click"/>
                 <MenuItem Header="_Open Project..." Click="OpenProject_Click"/>
@@ -32,7 +26,7 @@
             </MenuItem>
         </Menu>
 
-        <ToolBar DockPanel.Dock="Top">
+        <ToolBar DockPanel.Dock="Top" Background="#19232E" Foreground="#DDE5EE">
             <Button Content="New Project" Padding="12,4" Margin="2" Click="NewProject_Click"/>
             <Button Content="Open Project" Padding="12,4" Margin="2" Click="OpenProject_Click"/>
             <Button Content="Save Project" Padding="12,4" Margin="2" Click="SaveProject_Click"/>
@@ -40,11 +34,11 @@
             <Button Content="Add File" Padding="12,4" Margin="2" Click="AddSourceFile_Click"/>
             <Button Content="New File" Padding="12,4" Margin="2" Click="NewSourceFile_Click"/>
             <Separator/>
-            <Button Content="Compile" Padding="16,4" Margin="2" Click="Compile_Click"/>
+            <Button Content="Build" Padding="16,4" Margin="2" Click="Compile_Click" Background="#217A5C"/>
             <Button Content="Run" Padding="16,4" Margin="2" Click="Run_Click"/>
         </ToolBar>
 
-        <StatusBar DockPanel.Dock="Bottom">
+        <StatusBar DockPanel.Dock="Bottom" Background="#25664E" Foreground="White">
             <StatusBarItem HorizontalContentAlignment="Stretch">
                 <Grid>
                     <Grid.ColumnDefinitions>
@@ -52,36 +46,26 @@
                         <ColumnDefinition Width="Auto"/>
                     </Grid.ColumnDefinitions>
 
-                    <TextBlock x:Name="StatusText"
-                               Text="Ready"
-                               VerticalAlignment="Center"
-                               Grid.Column="0"/>
-
-                    <TextBlock x:Name="CursorPositionText"
-                               Text="Ln: 1, Col: 1"
-                               Margin="12,0,12,0"
-                               VerticalAlignment="Center"
-                               Grid.Column="1"/>
+                    <TextBlock x:Name="StatusText" Text="Ready" VerticalAlignment="Center" Grid.Column="0"/>
+                    <TextBlock x:Name="CursorPositionText" Text="Ln: 1, Col: 1" Margin="12,0,12,0" VerticalAlignment="Center" Grid.Column="1"/>
                 </Grid>
             </StatusBarItem>
         </StatusBar>
 
-        <Grid Margin="8">
+        <Grid Margin="8" Background="#111820">
             <Grid.RowDefinitions>
                 <RowDefinition Height="*"/>
-                <RowDefinition Height="220"/>
+                <RowDefinition Height="6"/>
+                <RowDefinition Height="230" MinHeight="90"/>
             </Grid.RowDefinitions>
 
             <Grid.ColumnDefinitions>
-                <ColumnDefinition Width="260"/>
-                <ColumnDefinition Width="*"/>
-                <ColumnDefinition Width="340"/>
+                <ColumnDefinition Width="240" MinWidth="150"/>
+                <ColumnDefinition Width="5"/>
+                <ColumnDefinition Width="*" MinWidth="300"/>
             </Grid.ColumnDefinitions>
 
-            <GroupBox Grid.Row="0"
-                      Grid.Column="0"
-                      Header="Project"
-                      Margin="0,0,8,8">
+            <GroupBox Grid.Row="0" Grid.Column="0" Header="Project" Margin="0,0,8,8">
                 <Grid Margin="8">
                     <Grid.RowDefinitions>
                         <RowDefinition Height="Auto"/>
@@ -90,104 +74,59 @@
                         <RowDefinition Height="*"/>
                     </Grid.RowDefinitions>
 
-                    <TextBlock Grid.Row="0"
-                               Text="Target"
-                               Margin="0,0,0,4"/>
-
-                    <ComboBox Grid.Row="1"
-                              x:Name="TargetComboBox"
-                              SelectionChanged="TargetComboBox_SelectionChanged"
-                              Margin="0,0,0,8"/>
-
-                    <StackPanel Grid.Row="2"
-                                x:Name="ViceSettingsPanel"
-                                Visibility="Collapsed"
-                                Margin="0,0,0,8">
-
-                        <TextBlock Text="VICE Emulator"
-                                   Margin="0,0,0,4"/>
-
+                    <TextBlock Grid.Row="0" Text="Target" Margin="0,0,0,4"/>
+                    <ComboBox Grid.Row="1" x:Name="TargetComboBox" SelectionChanged="TargetComboBox_SelectionChanged" Margin="0,0,0,8"/>
+                    <StackPanel Grid.Row="2" x:Name="ViceSettingsPanel" Visibility="Collapsed" Margin="0,0,0,8">
+                        <TextBlock Text="VICE Emulator" Margin="0,0,0,4"/>
                         <Grid>
                             <Grid.ColumnDefinitions>
                                 <ColumnDefinition Width="*"/>
                                 <ColumnDefinition Width="Auto"/>
                             </Grid.ColumnDefinitions>
 
-                            <TextBox Grid.Column="0"
-                                     x:Name="VicePathTextBox"
-                                     Margin="0,0,6,0"
-                                     IsReadOnly="True"/>
-
-                            <Button Grid.Column="1"
-                                    Content="Browse..."
-                                    Padding="10,4"
-                                    Click="BrowseVice_Click"/>
+                            <TextBox Grid.Column="0" x:Name="VicePathTextBox" Margin="0,0,6,0" IsReadOnly="True" Height="26"/>
+                            <Button Grid.Column="1" Content="Browse..." Padding="10,4" Click="BrowseVice_Click"/>
                         </Grid>
 
-                        <TextBlock x:Name="VicePathStatusText"
-                                   Text="Select the VICE executable used to run C64 programs."
-                                   TextWrapping="Wrap"
-                                   Margin="0,6,0,0"
-                                   Opacity="0.7"/>
+                        <TextBlock x:Name="VicePathStatusText" Text="Select the VICE executable used to run C64 programs." TextWrapping="Wrap" Margin="0,6,0,0" Opacity="0.7" />
                     </StackPanel>
-
                     <TreeView Grid.Row="3" x:Name="ProjectTree" Margin="0,12,0,0" MouseDoubleClick="ProjectTree_MouseDoubleClick"/>
                 </Grid>
             </GroupBox>
 
-            <GroupBox Header="C Source" Grid.Row="0" Grid.Column="1" Margin="0,0,6,6">
+            <GroupBox Header="C Source" Grid.Row="0" Grid.Column="2" Margin="0,0,0,6">
                 <Grid>
                     <Grid.RowDefinitions>
                         <RowDefinition Height="Auto"/>
                         <RowDefinition Height="*"/>
                     </Grid.RowDefinitions>
 
-                    <TabControl x:Name="DocumentTabs" Grid.Row="0" Height="34" SelectionChanged="DocumentTabs_SelectionChanged"/>
+                    <TabControl x:Name="DocumentTabs" Grid.Row="0" Height="34" SelectionChanged="DocumentTabs_SelectionChanged">
+                        
+                    </TabControl>
                     <controls:CodeEditorControl x:Name="Editor" Grid.Row="1"/>
-                </Grid>
-            </GroupBox>
-            
-            <GroupBox Header="Tokens" Grid.Row="0" Grid.Column="2" Margin="6,0,0,6">
-                <ListBox x:Name="TokenList" FontFamily="Consolas" FontSize="13"/>
-            </GroupBox>
-
-            <TabControl Grid.Row="1" Grid.Column="0" Grid.ColumnSpan="3" Margin="0,6,0,0">
-                <TabItem Header="Build Output">
-                    <TextBox x:Name="Output" FontFamily="Consolas" FontSize="13" IsReadOnly="True" AcceptsReturn="True" HorizontalScrollBarVisibility="Auto" VerticalScrollBarVisibility="Auto" TextWrapping="NoWrap" Padding="8"/>
+                    <TabControl x:Name="GeneratedViews" Grid.Row="1" Visibility="Collapsed" SelectionChanged="GeneratedViews_SelectionChanged">
+                        <TabControl.Template>
+                            <ControlTemplate TargetType="TabControl">
+                                <ContentPresenter ContentSource="SelectedContent"/>
+                            </ControlTemplate>
+                        </TabControl.Template>
+                <TabItem Header="AST Text">
+                    <TextBox x:Name="AstOutput" FontFamily="Consolas" FontSize="13" IsReadOnly="True" AcceptsReturn="True" HorizontalScrollBarVisibility="Auto" VerticalScrollBarVisibility="Auto" TextWrapping="NoWrap" Padding="8"/>
                 </TabItem>
 
-                <TabItem Header="AST">
-                    <TextBox x:Name="AstOutput"
-                             FontFamily="Consolas"
-                             FontSize="13"
-                             IsReadOnly="True"
-                             AcceptsReturn="True"
-                             HorizontalScrollBarVisibility="Auto"
-                             VerticalScrollBarVisibility="Auto"
-                             TextWrapping="NoWrap"
-                             Padding="8"/>
+                <TabItem Header="Tokens">
+                    <ListBox x:Name="TokenList" FontFamily="Consolas" FontSize="13"/>
                 </TabItem>
 
                 <TabItem Header="Native x64">
-                    <DataGrid x:Name="NativeCodeGrid"
-                              AutoGenerateColumns="False"
-                              IsReadOnly="True"
-                              CanUserAddRows="False"
-                              HeadersVisibility="Column"
-                              FontFamily="Consolas"
-                              FontSize="13">
+                    <DataGrid x:Name="NativeCodeGrid" AutoGenerateColumns="False" IsReadOnly="True" CanUserAddRows="False" HeadersVisibility="Column" FontFamily="Consolas" FontSize="13">
                         <DataGrid.Columns>
-                            <DataGridTextColumn Header="Offset"
-                                                Binding="{Binding Offset}"
-                                                Width="100"/>
+                            <DataGridTextColumn Header="Offset" Binding="{Binding Offset}" Width="100"/>
 
-                            <DataGridTextColumn Header="Bytes"
-                                                Binding="{Binding BytesText}"
-                                                Width="250"/>
+                            <DataGridTextColumn Header="Bytes" Binding="{Binding BytesText}" Width="250"/>
 
-                            <DataGridTextColumn Header="Assembly"
-                                                Binding="{Binding Assembly}"
-                                                Width="*"/>
+                            <DataGridTextColumn Header="Assembly" Binding="{Binding Assembly}" Width="*"/>
                         </DataGrid.Columns>
                     </DataGrid>
                 </TabItem>
@@ -199,47 +138,23 @@
                             <RowDefinition Height="*"/>
                         </Grid.RowDefinitions>
 
-                        <Border Grid.Row="0"
-                                Padding="8"
-                                BorderBrush="Gray"
-                                BorderThickness="0,0,0,1">
+                        <Border Grid.Row="0" Padding="8" BorderBrush="Gray" BorderThickness="0,0,0,1">
                             <StackPanel Orientation="Horizontal">
-                                <TextBlock Text="Origin: "
-                                           FontFamily="Consolas"
-                                           FontWeight="Bold"/>
+                                <TextBlock Text="Origin: " FontFamily="Consolas" FontWeight="Bold"/>
 
-                                <TextBlock x:Name="Mos6502OriginText"
-                                           Text="----"
-                                           FontFamily="Consolas"
-                                           Margin="4,0,20,0"/>
+                                <TextBlock x:Name="Mos6502OriginText" Text="----" FontFamily="Consolas" Margin="4,0,20,0"/>
 
-                                <TextBlock Text="Main: "
-                                           FontFamily="Consolas"
-                                           FontWeight="Bold"/>
+                                <TextBlock Text="Main: " FontFamily="Consolas" FontWeight="Bold"/>
 
-                                <TextBlock x:Name="Mos6502MainAddressText"
-                                           Text="----"
-                                           FontFamily="Consolas"
-                                           Margin="4,0,20,0"/>
+                                <TextBlock x:Name="Mos6502MainAddressText" Text="----" FontFamily="Consolas" Margin="4,0,20,0"/>
 
-                                <TextBlock Text="Code Size: "
-                                           FontFamily="Consolas"
-                                           FontWeight="Bold"/>
+                                <TextBlock Text="Code Size: " FontFamily="Consolas" FontWeight="Bold"/>
 
-                                <TextBlock x:Name="Mos6502CodeSizeText"
-                                           Text="0"
-                                           FontFamily="Consolas"/>
+                                <TextBlock x:Name="Mos6502CodeSizeText" Text="0" FontFamily="Consolas"/>
                             </StackPanel>
                         </Border>
 
-                        <DataGrid x:Name="Mos6502CodeGrid"
-                                  Grid.Row="1"
-                                  AutoGenerateColumns="False"
-                                  IsReadOnly="True"
-                                  CanUserAddRows="False"
-                                  HeadersVisibility="Column"
-                                  FontFamily="Consolas"
-                                  FontSize="13">
+                        <DataGrid x:Name="Mos6502CodeGrid" Grid.Row="1" AutoGenerateColumns="False" IsReadOnly="True" CanUserAddRows="False" HeadersVisibility="Column" FontFamily="Consolas" FontSize="13">
                             <DataGrid.Columns>
                                 <DataGridTextColumn Header="Offset" Binding="{Binding Offset}" Width="100"/>
                                 <DataGridTextColumn Header="Bytes" Binding="{Binding BytesText}" Width="250"/>
@@ -248,7 +163,26 @@
                         </DataGrid>
                     </Grid>
                 </TabItem>
-            </TabControl>
+                    </TabControl>
+                    <Grid x:Name="AstEditorView" Grid.Row="1" Visibility="Collapsed" Background="#19232F">
+                        <Grid.RowDefinitions>
+                            <RowDefinition Height="Auto"/>
+                            <RowDefinition Height="*"/>
+                        </Grid.RowDefinitions>
+                        <StackPanel Orientation="Horizontal" Margin="4">
+                            <Button Content="Refresh AST" Click="RefreshAst_Click"/>
+                        </StackPanel>
+                        <gui:AstDiagramPanel x:Name="AstDiagram" Grid.Row="1"/>
+                    </Grid>
+                </Grid>
+            </GroupBox>
+            
+            <GridSplitter Grid.Row="0" Grid.Column="1" Width="5" HorizontalAlignment="Stretch" Background="#354354"/>
+            <GridSplitter Grid.Row="1" Grid.Column="0" Grid.ColumnSpan="3" Height="6" HorizontalAlignment="Stretch" VerticalAlignment="Stretch" Background="#354354" ResizeDirection="Rows"/>
+
+            <GroupBox Grid.Row="2" Grid.Column="0" Grid.ColumnSpan="3" Header="Build Output" Margin="0,6,0,0">
+                <TextBox x:Name="Output" FontFamily="Consolas" FontSize="13" IsReadOnly="True" AcceptsReturn="True" HorizontalScrollBarVisibility="Auto" VerticalScrollBarVisibility="Auto" TextWrapping="NoWrap" Padding="8"/>
+            </GroupBox>
         </Grid>
     </DockPanel>
 </Window>

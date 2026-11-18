@@ -1,994 +1,391 @@
-using System.Text;
+using ICSharpCode.AvalonEdit;
+using ICSharpCode.AvalonEdit.Document;
+using ICSharpCode.AvalonEdit.CodeCompletion;
+using ICSharpCode.AvalonEdit.Highlighting;
+using ICSharpCode.AvalonEdit.Highlighting.Xshd;
+using System.Xml;
+using System.IO;
+using ICSharpCode.AvalonEdit.Editing;
+using ICSharpCode.AvalonEdit.Folding;
+using ICSharpCode.AvalonEdit.Rendering;
 using System.Text.RegularExpressions;
 using System.Windows;
 using System.Windows.Controls;
-using System.Windows.Documents;
 using System.Windows.Input;
 using System.Windows.Media;
-using System.Windows.Threading;
 
 namespace JollyCCompiler.GUI.Controls
 {
     public partial class CodeEditorControl : UserControl
     {
-        private readonly List<int> _searchMatches = new();
+        private FoldingManager? _foldingManager;
+        private CompletionWindow? _completionWindow;
+        private bool _inAutoPair;
+        private readonly List<int> _matches = new();
+        private readonly Dictionary<int, string> _diagnostics = new();
+        private readonly EditorMarkers _markers;
+        private int _matchIndex = -1;
+        private bool _updating;
 
-        private int _currentMatchIndex = -1;
-        private bool _updatingDocument;
-        private bool _updatingSearch;
-
-        private ScrollViewer? _editorScrollViewer;
-        private DispatcherTimer? _documentWidthTimer;
-
-        public int CurrentLine
-        { get; private set; } = 1;
-        public int CurrentColumn
-        { get; private set; } = 1;
         public event EventHandler? CursorPositionChanged;
         public event EventHandler? TextChanged;
+        public event EventHandler<string>? DefinitionRequested;
+        public event EventHandler? ReferencesRequested;
+        public event EventHandler? RenameRequested;
+        public event EventHandler<int>? HistoryRequested;
+        public Func<IEnumerable<string>>? SymbolCompletionProvider { get; set; }
+        public string? IdentifierAtCaret { get { var text = Text; int end = Math.Clamp(CaretIndex, 0, text.Length), start = end; while (start > 0 && (char.IsLetterOrDigit(text[start - 1]) || text[start - 1] == '_')) start--; while (end < text.Length && (char.IsLetterOrDigit(text[end]) || text[end] == '_')) end++; return end > start ? text[start..end] : null; } }
 
-        private static readonly HashSet<string> Keywords = new(StringComparer.Ordinal)
-        {
-            "auto",
-            "break",
-            "case",
-            "const",
-            "continue",
-            "default",
-            "do",
-            "else",
-            "enum",
-            "extern",
-            "for",
-            "goto",
-            "if",
-            "register",
-            "return",
-            "sizeof",
-            "static",
-            "struct",
-            "switch",
-            "typedef",
-            "union",
-            "volatile",
-            "while"
-        };
-
-        private static readonly HashSet<string> Types = new(StringComparer.Ordinal)
-        {
-            "void",
-            "char",
-            "short",
-            "int",
-            "long",
-            "float",
-            "double",
-            "signed",
-            "unsigned"
-        };
-
-        private static readonly HashSet<string> Constants = new(StringComparer.Ordinal)
-        {
-            "NULL",
-            "true",
-            "false"
-        };
-
-        private static readonly HashSet<string> PreprocessorDirectives = new(StringComparer.Ordinal)
-        {
-            "define",
-            "undef",
-            "ifdef",
-            "ifndef",
-            "else",
-            "elif",
-            "endif",
-            "if",
-            "include"
-        };
+        public int CurrentLine => EditorTextBox.TextArea.Caret.Line;
+        public int CurrentColumn => EditorTextBox.TextArea.Caret.Column;
+        public int CaretIndex { get => EditorTextBox.CaretOffset; set => EditorTextBox.CaretOffset = Math.Clamp(value, 0, EditorTextBox.Document.TextLength); }
+        public string SelectedText => EditorTextBox.SelectedText;
+        public string Text { get => EditorTextBox.Text; set => EditorTextBox.Text = value ?? string.Empty; }
+        public TextEditor Editor => EditorTextBox;
 
         public CodeEditorControl()
         {
             InitializeComponent();
-            EditorTextBox.Document.ColumnWidth = double.PositiveInfinity;
-            Loaded += CodeEditorControl_Loaded;
-            SizeChanged += CodeEditorControl_SizeChanged;
-            SetInitialDocument();
+            _markers = new EditorMarkers(this);
+            EditorTextBox.TextArea.TextView.BackgroundRenderers.Add(_markers);
+            EditorTextBox.TextArea.Caret.PositionChanged += (_, _) => { CursorPositionChanged?.Invoke(this, EventArgs.Empty); _markers.Invalidate(); };
+            EditorTextBox.TextArea.SelectionChanged += (_, _) => CursorPositionChanged?.Invoke(this, EventArgs.Empty);
+            EditorTextBox.TextArea.TextView.LineTransformers.Add(new DiagnosticLineTransformer(this));
+            EditorTextBox.Options.ConvertTabsToSpaces = true;
+            EditorTextBox.Options.IndentationSize = 4;
+            EditorTextBox.Options.EnableHyperlinks = false;
+            EditorTextBox.Options.HighlightCurrentLine = true;
+            // A broken or missing highlighting resource must never prevent the editor from opening.
+            try
+            {
+                var resource = System.Windows.Application.GetResourceStream(new Uri("/JollyCCompiler;component/Editor/Highlighting/C.xshd", UriKind.Relative));
+                if (resource != null)
+                {
+                    using var stream = resource.Stream;
+                    using var reader = XmlReader.Create(stream);
+                    EditorTextBox.SyntaxHighlighting = HighlightingLoader.Load(reader, HighlightingManager.Instance);
+                }
+            }
+            catch (Exception ex) when (ex is XmlException or System.Xml.Schema.XmlSchemaException or HighlightingDefinitionInvalidException or IOException or ArgumentException)
+            {
+                System.Diagnostics.Debug.WriteLine($"Custom C highlighting disabled: {ex}");
+                EditorTextBox.SyntaxHighlighting = null;
+            }
+            EditorTextBox.TextArea.TextView.MouseDown += (_, e) => { if (Keyboard.Modifiers == ModifierKeys.Control && e.ChangedButton == MouseButton.Left) { var point = e.GetPosition(EditorTextBox.TextArea.TextView); var pos = EditorTextBox.TextArea.TextView.GetPosition(point); if (pos.HasValue) { EditorTextBox.CaretOffset = EditorTextBox.Document.GetOffset(pos.Value.Line, pos.Value.Column); RequestDefinition(); e.Handled = true; } } };
+            EditorTextBox.TextArea.TextEntered += EditorTextArea_TextEntered;
+            EditorTextBox.TextArea.TextEntering += EditorTextArea_TextEntering;
+            Loaded += (_, _) => { if (_foldingManager == null) _foldingManager = FoldingManager.Install(EditorTextBox.TextArea); UpdateFoldings(); };
         }
 
-        public string Text
-        {
-            get => GetEditorText();
-            set
-            {
-                SetEditorText(value ?? string.Empty);
-            }
-        }
+        public void FocusEditor() => EditorTextBox.Focus();
+        public void SelectAll() => EditorTextBox.SelectAll();
+        public void Clear() => EditorTextBox.Clear();
 
-        public RichTextBox Editor => EditorTextBox;
-
-        public int CaretIndex
+        public void GoToLine(int line)
         {
-            get
-            {
-                return GetTextOffset(EditorTextBox.CaretPosition);
-            }
-            set
-            {
-                SetCaretOffset(value);
-            }
-        }
-
-        public string SelectedText
-        {
-            get
-            {
-                TextRange range = new TextRange(EditorTextBox.Selection.Start, EditorTextBox.Selection.End);
-                return range.Text;
-            }
-        }
-
-        public void FocusEditor()
-        {
+            if (EditorTextBox.Document.LineCount == 0) return;
+            line = Math.Clamp(line, 1, EditorTextBox.Document.LineCount);
+            EditorTextBox.ScrollToLine(line);
+            EditorTextBox.CaretOffset = EditorTextBox.Document.GetLineByNumber(line).Offset;
             EditorTextBox.Focus();
         }
 
-        public void SelectAll()
+        public void SetDiagnostics(IEnumerable<(int Line, string Message)> diagnostics)
         {
-            EditorTextBox.SelectAll();
+            _diagnostics.Clear();
+            foreach (var (line, message) in diagnostics) if (line > 0) _diagnostics[line] = message;
+            _markers.Invalidate();
+            EditorTextBox.TextArea.TextView.Redraw();
         }
 
-        public void Clear()
+        private void EditorTextBox_TextChanged(object sender, EventArgs e)
         {
-            SetEditorText(string.Empty);
-        }
-
-        private void CodeEditorControl_Loaded(object sender, RoutedEventArgs e)
-        {
-            _editorScrollViewer = FindVisualChild<ScrollViewer>(EditorTextBox);
-            if (_editorScrollViewer != null)
-            {
-                _editorScrollViewer.ScrollChanged -= EditorScrollViewer_ScrollChanged;
-                _editorScrollViewer.ScrollChanged += EditorScrollViewer_ScrollChanged;
-            }
-
-            UpdateDocumentWidth();
-            UpdateLineNumbers();
-            UpdateCursorPosition();
-        }
-
-        private static T? FindVisualChild<T>(DependencyObject parent)
-            where T : DependencyObject
-        {
-            for (int i = 0; i < VisualTreeHelper.GetChildrenCount(parent); i++)
-            {
-                DependencyObject child = VisualTreeHelper.GetChild(parent, i);
-                if (child is T result)
-                {
-                    return result;
-                }
-
-                T? descendant = FindVisualChild<T>(child);
-                if (descendant != null)
-                {
-                    return descendant;
-                }
-            }
-
-            return null;
-        }
-
-        private void EditorScrollViewer_ScrollChanged(object sender, ScrollChangedEventArgs e)
-        {
-            if (_editorScrollViewer == null)
-            {
-                return;
-            }
-
-            LineNumberScrollViewer.ScrollToVerticalOffset(_editorScrollViewer.VerticalOffset);
-        }
-
-        private void CodeEditorControl_SizeChanged(object sender, SizeChangedEventArgs e)
-        {
-            UpdateDocumentWidth();
-            UpdateLineNumbers();
-        }
-
-        private void SetInitialDocument()
-        {
-            _updatingDocument = true;
-            EditorTextBox.Document.Blocks.Clear();
-            Paragraph paragraph = new Paragraph();
-            paragraph.Margin = new Thickness(0);
-            paragraph.Inlines.Add(new Run());
-            EditorTextBox.Document.Blocks.Add(paragraph);
-            _updatingDocument = false;
-        }
-
-        private string GetEditorText()
-        {
-            TextRange range = new TextRange(EditorTextBox.Document.ContentStart, EditorTextBox.Document.ContentEnd);
-            string text = range.Text;
-            if (text.EndsWith("\r\n"))
-            {
-                text = text[..^2];
-            }
-            else if (text.EndsWith("\n"))
-            {
-                text = text[..^1];
-            }
-
-            return text;
-        }
-
-        private void SetEditorText(string text)
-        {
-            _updatingDocument = true;
-            EditorTextBox.Document.Blocks.Clear();
-            string[] lines = text.Replace("\r\n", "\n").Split('\n');
-            foreach (string line in lines)
-            {
-                Paragraph paragraph = new Paragraph
-                {
-                    Margin = new Thickness(0)
-                };
-
-                AddSyntaxHighlightedText(paragraph, line);
-                EditorTextBox.Document.Blocks.Add(paragraph);
-            }
-
-            if (EditorTextBox.Document.Blocks.Count == 0)
-            {
-                EditorTextBox.Document.Blocks.Add(new Paragraph(new Run()));
-            }
-
-            _updatingDocument = false;
-            UpdateDocumentWidth();
-            UpdateLineNumbers();
-        }
-
-        private void EditorTextBox_TextChanged(object sender, TextChangedEventArgs e)
-        {
-            if (_updatingDocument)
-            {
-                return;
-            }
-
-            RehighlightCurrentParagraph();
-            UpdateLineNumbers();
-            ScheduleDocumentWidthUpdate();
-            if (SearchBar.Visibility == Visibility.Visible)
-            {
-                SearchForText(true);
-            }
-
-            UpdateCursorPosition();
+            if (_updating) return;
+            UpdateFoldings();
+            RefreshMatches();
+            _markers.Invalidate();
             TextChanged?.Invoke(this, EventArgs.Empty);
         }
 
-        private void ScheduleDocumentWidthUpdate()
+        private void UpdateFoldings()
         {
-            if (_documentWidthTimer == null)
+            if (_foldingManager == null) return;
+            var foldings = new List<NewFolding>();
+            var stack = new Stack<int>();
+            string source = Text;
+            bool inString = false, inCharacter = false, inLineComment = false, inBlockComment = false, escaped = false;
+            int commentStart = -1;
+            for (int i = 0; i < source.Length; i++)
             {
-                _documentWidthTimer = new DispatcherTimer
+                char c = source[i], next = i + 1 < source.Length ? source[i + 1] : '\0';
+                if (inLineComment) { if (c == '\n') inLineComment = false; continue; }
+                if (inBlockComment) { if (c == '*' && next == '/') { i++; inBlockComment = false; if (commentStart >= 0 && source.AsSpan(commentStart, i - commentStart).Contains('\n')) foldings.Add(new NewFolding(commentStart, i + 1) { Name = "/* ... */" }); } continue; }
+                if (inString || inCharacter) { if (escaped) escaped = false; else if (c == '\\') escaped = true; else if ((inString && c == '"') || (inCharacter && c == '\'')) { inString = false; inCharacter = false; } continue; }
+                if (c == '/' && next == '/') { inLineComment = true; i++; continue; }
+                if (c == '/' && next == '*') { inBlockComment = true; commentStart = i; i++; continue; }
+                if (c == '"') { inString = true; continue; }
+                if (c == '\'') { inCharacter = true; continue; }
+                if (c == '{') stack.Push(i);
+                else if (c == '}' && stack.Count > 0)
                 {
-                    Interval = TimeSpan.FromMilliseconds(150)
-                };
-                _documentWidthTimer.Tick += DocumentWidthTimer_Tick;
-            }
-
-            _documentWidthTimer.Stop();
-            _documentWidthTimer.Start();
-        }
-
-        private void DocumentWidthTimer_Tick(object? sender, EventArgs e)
-        {
-            _documentWidthTimer?.Stop();
-            if (_updatingDocument)
-            {
-                return;
-            }
-
-            UpdateDocumentWidth();
-        }
-
-        private void UpdateDocumentWidth()
-        {
-            if (_editorScrollViewer == null)
-            {
-                return;
-            }
-
-            double viewportWidth = _editorScrollViewer.ViewportWidth;
-            if (viewportWidth <= 0)
-            {
-                return;
-            }
-
-            string source = GetEditorText();
-            string[] lines = source.Replace("\r\n", "\n").Split('\n');
-            double longestLineWidth = 0;
-            Typeface typeface = new Typeface(EditorTextBox.FontFamily, EditorTextBox.FontStyle, EditorTextBox.FontWeight, EditorTextBox.FontStretch);
-            double pixelsPerDip = VisualTreeHelper.GetDpi(EditorTextBox).PixelsPerDip;
-            foreach (string line in lines)
-            {
-                FormattedText formattedText = new FormattedText(line.Length == 0 ? " " : line, System.Globalization.CultureInfo.CurrentCulture, FlowDirection.LeftToRight, typeface, EditorTextBox.FontSize, Brushes.White, pixelsPerDip);
-                longestLineWidth = Math.Max(longestLineWidth, formattedText.WidthIncludingTrailingWhitespace);
-            }
-
-            double requiredWidth = longestLineWidth + EditorTextBox.Padding.Left + EditorTextBox.Padding.Right + 4;
-            double documentWidth = Math.Max(viewportWidth, requiredWidth);
-            EditorTextBox.Document.PageWidth = documentWidth;
-            EditorTextBox.Document.ColumnWidth = documentWidth;
-        }
-
-        private void RehighlightCurrentParagraph()
-        {
-            TextPointer caret = EditorTextBox.CaretPosition;
-            Paragraph? currentParagraph = caret.Paragraph;
-            if (currentParagraph == null)
-            {
-                return;
-            }
-
-            Paragraph? previousParagraph = currentParagraph.PreviousBlock as Paragraph;
-            Paragraph? nextParagraph = currentParagraph.NextBlock as Paragraph;
-            int caretOffset = GetParagraphTextOffset(currentParagraph, caret);
-            _updatingDocument = true;
-            RehighlightParagraph(previousParagraph);
-            RehighlightParagraph(currentParagraph);
-            RehighlightParagraph(nextParagraph);
-            _updatingDocument = false;
-            TextPointer? newCaret = GetParagraphTextPointer(currentParagraph, caretOffset);
-            if (newCaret != null)
-            {
-                EditorTextBox.CaretPosition = newCaret;
-            }
-        }
-
-        private void RehighlightParagraph(Paragraph? paragraph)
-        {
-            if (paragraph == null)
-            {
-                return;
-            }
-
-            TextRange range = new TextRange(paragraph.ContentStart, paragraph.ContentEnd);
-            string text = range.Text;
-            paragraph.Inlines.Clear();
-            AddSyntaxHighlightedText(paragraph, text);
-        }
-
-        private static int GetParagraphTextOffset(Paragraph paragraph, TextPointer position)
-        {
-            TextRange range = new TextRange(paragraph.ContentStart, position);
-            return range.Text.Length;
-        }
-
-        private static TextPointer? GetParagraphTextPointer(Paragraph paragraph, int characterOffset)
-        {
-            characterOffset = Math.Max(0, characterOffset);
-            TextPointer pointer = paragraph.ContentStart;
-            int currentOffset = 0;
-            while (pointer != null)
-            {
-                if (pointer.GetPointerContext(LogicalDirection.Forward) == TextPointerContext.Text)
-                {
-                    string text = pointer.GetTextInRun(LogicalDirection.Forward);
-                    if (currentOffset + text.Length >= characterOffset)
-                    {
-                        return pointer.GetPositionAtOffset(characterOffset - currentOffset);
-                    }
-
-                    currentOffset += text.Length;
+                    int start = stack.Pop();
+                    if (source.AsSpan(start, i - start).Contains('\n')) foldings.Add(new NewFolding(start, i + 1) { Name = "{ ... }" });
                 }
-
-                TextPointer? next = pointer.GetNextContextPosition(LogicalDirection.Forward);
-                if (next == null)
-                {
-                    break;
-                }
-
-                pointer = next;
             }
-
-            return paragraph.ContentEnd;
-        }
-
-        private void EditorTextBox_SelectionChanged(object sender, RoutedEventArgs e)
-        {
-            UpdateLineNumbers();
-            UpdateCursorPosition();
+            foldings.Sort((a, b) => a.StartOffset.CompareTo(b.StartOffset));
+            _foldingManager.UpdateFoldings(foldings, -1);
         }
 
         private void EditorTextBox_PreviewKeyDown(object sender, KeyEventArgs e)
         {
-            if (Keyboard.Modifiers == ModifierKeys.Control && e.Key == Key.F)
-            {
-                OpenSearch(false);
-                e.Handled = true;
-                return;
-            }
+            bool ctrl = Keyboard.Modifiers.HasFlag(ModifierKeys.Control);
+            bool shift = Keyboard.Modifiers.HasFlag(ModifierKeys.Shift);
+            if (ctrl && e.Key == Key.F) { ShowSearch(false); e.Handled = true; }
+            else if (ctrl && e.Key == Key.H) { ShowSearch(true); e.Handled = true; }
+            else if (e.Key == Key.F3) { if (SearchBar.Visibility != Visibility.Visible || SearchTextBox.Text.Length == 0) ShowSearch(false); else FindMatch(shift ? -1 : 1); e.Handled = true; }
+            else if (e.Key == Key.Escape && SearchBar.Visibility == Visibility.Visible) { SearchBar.Visibility = Visibility.Collapsed; e.Handled = true; }
+            else if (ctrl && e.Key == Key.Space) { ShowCompletion(); e.Handled = true; }
+            else if (ctrl && e.Key == Key.G) { GoToLinePrompt(); e.Handled = true; }
+            else if (e.Key == Key.F2 && Keyboard.Modifiers == ModifierKeys.None) { RenameRequested?.Invoke(this, EventArgs.Empty); e.Handled = true; }
+            else if (shift && e.Key == Key.F12) { ReferencesRequested?.Invoke(this, EventArgs.Empty); e.Handled = true; }
+            else if (Keyboard.Modifiers == ModifierKeys.Alt && e.Key == Key.Left) { HistoryRequested?.Invoke(this, -1); e.Handled = true; }
+            else if (Keyboard.Modifiers == ModifierKeys.Alt && e.Key == Key.Right) { HistoryRequested?.Invoke(this, 1); e.Handled = true; }
+            else if (e.Key == Key.F12) { RequestDefinition(); e.Handled = true; }
+            else if (ctrl && e.Key == Key.D) { DuplicateLine(); e.Handled = true; }
+            else if (ctrl && e.Key == Key.Oem2) { ToggleComment(); e.Handled = true; }
+            else if (Keyboard.Modifiers == ModifierKeys.Alt && (e.Key == Key.Up || e.Key == Key.Down)) { MoveLine(e.Key == Key.Up ? -1 : 1); e.Handled = true; }
+        }
 
-            if (Keyboard.Modifiers == ModifierKeys.Control && e.Key == Key.H)
+        private static readonly string[] CompletionWords =
+        [
+            "auto", "break", "case", "char", "const", "continue", "default", "do", "double", "else", "enum", "extern", "float", "for", "goto", "if", "int", "long", "register", "return", "short", "signed", "sizeof", "static", "struct", "switch", "typedef", "union", "unsigned", "void", "volatile", "while",
+            "__c64_poke", "__c64_peek", "__joystick1", "__joystick2", "__sprite_position", "__sprite_colour", "__sprite_enable", "__sid_beep", "__sid_stop", "__cia1_timer_start", "__cia1_timer_elapsed", "__install_raster_irq", "__install_raster_bars", "__set_raster_bar_colour"
+        ];
+
+        private void ShowCompletion()
+        {
+            if (_completionWindow != null) return;
+            string source = Text;
+            int end = Math.Clamp(EditorTextBox.CaretOffset, 0, source.Length);
+            int start = end;
+            while (start > 0 && (char.IsLetterOrDigit(source[start - 1]) || source[start - 1] == '_')) start--;
+            string prefix = source[start..end];
+            var matches = CompletionWords.Concat(SymbolCompletionProvider?.Invoke() ?? []).Where(word => word.StartsWith(prefix, StringComparison.OrdinalIgnoreCase)).Distinct().OrderBy(word => word).ToArray();
+            if (matches.Length == 0) return;
+            var window = new CompletionWindow(EditorTextBox.TextArea);
+            window.StartOffset = start;
+            foreach (string word in matches) window.CompletionList.CompletionData.Add(new EditorCompletionItem(word));
+            _completionWindow = window;
+            window.Closed += (_, _) => { if (ReferenceEquals(_completionWindow, window)) _completionWindow = null; };
+            window.Show();
+        }
+
+        private void EditorTextArea_TextEntered(object sender, TextCompositionEventArgs e)
+        {
+            if (_inAutoPair || e.Text.Length != 1) return;
+            char typed = e.Text[0];
+            if (typed == '.' || typed == '_') return;
+            if (typed == '(' || typed == '[' || typed == '{' || typed == '\"' || typed == '\'')
             {
-                OpenSearch(true);
-                e.Handled = true;
-                return;
+                char close = typed switch { '(' => ')', '[' => ']', '{' => '}', _ => typed };
+                int offset = EditorTextBox.CaretOffset;
+                string source = Text;
+                // Do not insert a duplicate closing quote when one already follows the caret.
+                if (offset < source.Length && source[offset] == close) return;
+                _inAutoPair = true;
+                try { EditorTextBox.Document.Insert(offset, close.ToString()); EditorTextBox.CaretOffset = offset; }
+                finally { _inAutoPair = false; }
             }
         }
 
-        private void OpenSearch(bool replace)
+        private void EditorTextArea_TextEntering(object sender, TextCompositionEventArgs e)
+        {
+            if (e.Text.Length != 1 || _completionWindow != null) return;
+            char typed = e.Text[0];
+            if (typed is not (')' or ']' or '}' or '\"' or '\'')) return;
+            int offset = EditorTextBox.CaretOffset;
+            if (offset < Text.Length && Text[offset] == typed)
+            {
+                EditorTextBox.CaretOffset = offset + 1;
+                e.Handled = true;
+            }
+        }
+
+        private sealed class EditorCompletionItem : ICompletionData
+        {
+            public EditorCompletionItem(string value) => Text = value;
+            public System.Windows.Media.ImageSource? Image => null;
+            public string Text { get; }
+            public object Content => Text;
+            public object Description => Text.StartsWith("__", StringComparison.Ordinal) ? "C64 compiler built-in" : "C keyword";
+            public double Priority => 0;
+            public void Complete(TextArea textArea, ISegment completionSegment, EventArgs insertionRequestEventArgs) => textArea.Document.Replace(completionSegment, Text);
+        }
+
+        private void ShowSearch(bool replace)
         {
             SearchBar.Visibility = Visibility.Visible;
             ReplaceRow.Visibility = replace ? Visibility.Visible : Visibility.Collapsed;
-            string selectedText = SelectedText;
-            if (!string.IsNullOrEmpty(selectedText) && !selectedText.Contains('\r') && !selectedText.Contains('\n'))
+            if (!string.IsNullOrEmpty(EditorTextBox.SelectedText) && !EditorTextBox.SelectedText.Contains('\n')) SearchTextBox.Text = EditorTextBox.SelectedText;
+            SearchTextBox.Focus(); SearchTextBox.SelectAll();
+        }
+
+        private void SearchTextBox_TextChanged(object sender, TextChangedEventArgs e) => RefreshMatches();
+        private void SearchOptionChanged(object sender, RoutedEventArgs e) => RefreshMatches();
+        private void SearchTextBox_KeyDown(object sender, KeyEventArgs e) { if (e.Key == Key.Enter) { FindMatch(Keyboard.Modifiers.HasFlag(ModifierKeys.Shift) ? -1 : 1); e.Handled = true; } else if (e.Key == Key.Escape) { SearchBar.Visibility = Visibility.Collapsed; EditorTextBox.Focus(); e.Handled = true; } }
+        private void PreviousMatchButton_Click(object sender, RoutedEventArgs e) => FindMatch(-1);
+        private void NextMatchButton_Click(object sender, RoutedEventArgs e) => FindMatch(1);
+        private void CloseSearchButton_Click(object sender, RoutedEventArgs e) { SearchBar.Visibility = Visibility.Collapsed; EditorTextBox.Focus(); }
+
+        private void RefreshMatches()
+        {
+            if (SearchTextBox == null || EditorTextBox == null) return;
+            _matches.Clear(); _matchIndex = -1;
+            string term = SearchTextBox.Text;
+            if (term.Length > 0)
             {
-                _updatingSearch = true;
-                SearchTextBox.Text = selectedText;
-                SearchTextBox.SelectAll();
-                _updatingSearch = false;
+                string pattern = Regex.Escape(term);
+                if (WholeWordCheckBox?.IsChecked == true) pattern = @"\b" + pattern + @"\b";
+                var options = MatchCaseCheckBox?.IsChecked == true ? RegexOptions.None : RegexOptions.IgnoreCase;
+                foreach (Match m in Regex.Matches(Text, pattern, options)) _matches.Add(m.Index);
             }
-
-            SearchTextBox.Focus();
-            SearchTextBox.SelectAll();
-            SearchForText(true);
+            MatchCountText.Text = _matches.Count == 0 ? "No matches" : $"{_matches.Count} matches";
+            _markers.Invalidate();
         }
 
-        private void CloseSearchButton_Click(object sender, RoutedEventArgs e)
+        private void FindMatch(int direction)
         {
-            CloseSearch();
-        }
-
-        private void CloseSearch()
-        {
-            SearchBar.Visibility = Visibility.Collapsed;
-            ReplaceRow.Visibility = Visibility.Collapsed;
-            _searchMatches.Clear();
-            _currentMatchIndex = -1;
-            MatchCountText.Text = string.Empty;
+            if (_matches.Count == 0) { ShowSearch(false); return; }
+            int caret = EditorTextBox.CaretOffset;
+            int index = direction > 0 ? _matches.FindIndex(x => x >= caret) : _matches.FindLastIndex(x => x < caret);
+            if (index < 0) index = direction > 0 ? 0 : _matches.Count - 1;
+            _matchIndex = index;
+            EditorTextBox.Select(_matches[index], SearchTextBox.Text.Length);
+            EditorTextBox.ScrollToLine(EditorTextBox.Document.GetLineByOffset(_matches[index]).LineNumber);
             EditorTextBox.Focus();
-        }
-
-        private void SearchTextBox_TextChanged(object sender, TextChangedEventArgs e)
-        {
-            if (_updatingSearch)
-            {
-                return;
-            }
-
-            SearchForText(true);
-        }
-
-        private void SearchTextBox_KeyDown(object sender, KeyEventArgs e)
-        {
-            if (e.Key == Key.Enter)
-            {
-                if (Keyboard.Modifiers == ModifierKeys.Shift)
-                {
-                    SearchPrevious();
-                }
-                else
-                {
-                    SearchNext();
-                }
-
-                e.Handled = true;
-                return;
-            }
-
-            if (e.Key == Key.Escape)
-            {
-                CloseSearch();
-                e.Handled = true;
-            }
-        }
-
-        private void ReplaceTextBox_KeyDown(object sender, KeyEventArgs e)
-        {
-            if (e.Key == Key.Enter)
-            {
-                ReplaceCurrent();
-                e.Handled = true;
-            }
-
-            if (e.Key == Key.Escape)
-            {
-                CloseSearch();
-                e.Handled = true;
-            }
-        }
-
-        private void NextMatchButton_Click(object sender, RoutedEventArgs e)
-        {
-            SearchNext();
-        }
-
-        private void PreviousMatchButton_Click(object sender, RoutedEventArgs e)
-        {
-            SearchPrevious();
-        }
-
-        private void SearchForText(bool selectFirst)
-        {
-            string searchText = SearchTextBox.Text;
-            _searchMatches.Clear();
-            _currentMatchIndex = -1;
-            if (string.IsNullOrEmpty(searchText))
-            {
-                MatchCountText.Text = string.Empty;
-                return;
-            }
-
-            string source = GetEditorText();
-            int position = 0;
-            while (position < source.Length)
-            {
-                int index = source.IndexOf(searchText, position, StringComparison.OrdinalIgnoreCase);
-                if (index < 0)
-                {
-                    break;
-                }
-
-                _searchMatches.Add(index);
-                position = index + Math.Max(1, searchText.Length);
-            }
-
-            if (_searchMatches.Count == 0)
-            {
-                MatchCountText.Text = "No matches";
-                return;
-            }
-
-            int caret = GetTextOffset(EditorTextBox.CaretPosition);
-            _currentMatchIndex = 0;
-            if (!selectFirst)
-            {
-                for (int i = 0; i < _searchMatches.Count; i++)
-                {
-                    if (_searchMatches[i] >= caret)
-                    {
-                        _currentMatchIndex = i;
-                        break;
-                    }
-                }
-            }
-            else
-            {
-                for (int i = 0; i < _searchMatches.Count; i++)
-                {
-                    if (_searchMatches[i] >= caret)
-                    {
-                        _currentMatchIndex = i;
-                        break;
-                    }
-                }
-            }
-
-            SelectCurrentMatch();
-        }
-
-        private void SearchNext()
-        {
-            if (_searchMatches.Count == 0)
-            {
-                SearchForText(true);
-                return;
-            }
-
-            _currentMatchIndex++;
-            if (_currentMatchIndex >= _searchMatches.Count)
-            {
-                _currentMatchIndex = 0;
-            }
-
-            SelectCurrentMatch();
-        }
-
-        private void SearchPrevious()
-        {
-            if (_searchMatches.Count == 0)
-            {
-                SearchForText(true);
-                return;
-            }
-
-            _currentMatchIndex--;
-            if (_currentMatchIndex < 0)
-            {
-                _currentMatchIndex = _searchMatches.Count - 1;
-            }
-
-            SelectCurrentMatch();
-        }
-
-        private void SelectCurrentMatch()
-        {
-            if (_currentMatchIndex < 0 || _currentMatchIndex >= _searchMatches.Count)
-            {
-                return;
-            }
-
-            string searchText = SearchTextBox.Text;
-            int start = _searchMatches[_currentMatchIndex];
-            int end = start + searchText.Length;
-            SetSelectionOffsets(start, end);
-            MatchCountText.Text = $"{_currentMatchIndex + 1} of {_searchMatches.Count}";
-            ScrollToOffset(start);
         }
 
         private void ReplaceButton_Click(object sender, RoutedEventArgs e)
         {
-            ReplaceCurrent();
+            if (SearchTextBox.Text.Length == 0) return;
+            if (EditorTextBox.SelectionLength == SearchTextBox.Text.Length && string.Equals(EditorTextBox.SelectedText, SearchTextBox.Text, MatchCaseCheckBox.IsChecked == true ? StringComparison.Ordinal : StringComparison.OrdinalIgnoreCase))
+                EditorTextBox.Document.Replace(EditorTextBox.SelectionStart, EditorTextBox.SelectionLength, ReplaceTextBox.Text);
+            RefreshMatches(); FindMatch(1);
         }
 
         private void ReplaceAllButton_Click(object sender, RoutedEventArgs e)
         {
-            ReplaceAll();
+            if (SearchTextBox.Text.Length == 0) return;
+            string pattern = Regex.Escape(SearchTextBox.Text);
+            if (WholeWordCheckBox.IsChecked == true) pattern = @"\b" + pattern + @"\b";
+            var options = MatchCaseCheckBox.IsChecked == true ? RegexOptions.None : RegexOptions.IgnoreCase;
+            var matches = Regex.Matches(Text, pattern, options).Cast<Match>().ToArray();
+            EditorTextBox.Document.BeginUpdate();
+            try { for (int i = matches.Length - 1; i >= 0; i--) EditorTextBox.Document.Replace(matches[i].Index, matches[i].Length, ReplaceTextBox.Text); }
+            finally { EditorTextBox.Document.EndUpdate(); }
+            RefreshMatches();
         }
 
-        private void ReplaceCurrent()
+        private void DuplicateLine()
         {
-            if (_currentMatchIndex < 0 || _currentMatchIndex >= _searchMatches.Count)
-            {
-                return;
-            }
-
-            string searchText = SearchTextBox.Text;
-            if (string.IsNullOrEmpty(searchText))
-            {
-                return;
-            }
-
-            string replacement = ReplaceTextBox.Text ?? string.Empty;
-            int start = _searchMatches[_currentMatchIndex];
-            string source = GetEditorText();
-            string newText = source.Remove(start, searchText.Length) .Insert(start, replacement);
-            int newCaret = start + replacement.Length;
-            SetEditorText(newText);
-            SetCaretOffset(newCaret);
-            SearchForText(true);
+            var line = EditorTextBox.Document.GetLineByNumber(CurrentLine);
+            string value = EditorTextBox.Document.GetText(line.Offset, line.Length);
+            EditorTextBox.Document.Insert(line.EndOffset, Environment.NewLine + value);
         }
 
-        private void ReplaceAll()
+        private void ToggleComment()
         {
-            string searchText = SearchTextBox.Text;
-            if (string.IsNullOrEmpty(searchText))
-            {
-                return;
-            }
-
-            string replacement = ReplaceTextBox.Text ?? string.Empty;
-            string source = GetEditorText();
-            string newText = Regex.Replace(source, Regex.Escape(searchText), MatchEvaluator => replacement, RegexOptions.IgnoreCase);
-            if (newText == source)
-            {
-                return;
-            }
-
-            SetEditorText(newText);
-            SearchForText(true);
+            var line = EditorTextBox.Document.GetLineByNumber(CurrentLine);
+            string value = EditorTextBox.Document.GetText(line.Offset, line.Length);
+            int spaces = value.Length - value.TrimStart().Length;
+            if (value.AsSpan(spaces).StartsWith("//")) EditorTextBox.Document.Remove(line.Offset + spaces, 2);
+            else EditorTextBox.Document.Insert(line.Offset + spaces, "//");
         }
 
-        private void AddSyntaxHighlightedText(Paragraph paragraph, string text)
+        private void MoveLine(int direction)
         {
-            paragraph.Margin = new Thickness(0);
-            paragraph.TextAlignment = TextAlignment.Left;
-            paragraph.KeepTogether = true;
-            if (string.IsNullOrEmpty(text))
+            int number = CurrentLine, otherNumber = number + direction;
+            if (otherNumber < 1 || otherNumber > EditorTextBox.Document.LineCount) return;
+            var first = EditorTextBox.Document.GetLineByNumber(Math.Min(number, otherNumber));
+            var second = EditorTextBox.Document.GetLineByNumber(Math.Max(number, otherNumber));
+            string a = EditorTextBox.Document.GetText(first.Offset, first.Length);
+            string b = EditorTextBox.Document.GetText(second.Offset, second.Length);
+            EditorTextBox.Document.BeginUpdate();
+            try { EditorTextBox.Document.Replace(second.Offset, second.Length, a); EditorTextBox.Document.Replace(first.Offset, first.Length, b); }
+            finally { EditorTextBox.Document.EndUpdate(); }
+            GoToLine(otherNumber);
+        }
+
+        private void RequestDefinition()
+        {
+            string source = Text; int index = Math.Min(EditorTextBox.CaretOffset, source.Length);
+            int start = index, end = index;
+            while (start > 0 && (char.IsLetterOrDigit(source[start - 1]) || source[start - 1] == '_')) start--;
+            while (end < source.Length && (char.IsLetterOrDigit(source[end]) || source[end] == '_')) end++;
+            if (end > start) DefinitionRequested?.Invoke(this, source[start..end]);
+        }
+
+        private void GoToLinePrompt()
+        {
+            var dialog = new Window { Title = "Go to Line", Width = 260, Height = 120, WindowStartupLocation = WindowStartupLocation.CenterOwner, Owner = Window.GetWindow(this), Background = new SolidColorBrush(Color.FromRgb(36, 50, 66)) };
+            var box = new TextBox { Text = CurrentLine.ToString(), Margin = new Thickness(12), VerticalContentAlignment = VerticalAlignment.Center };
+            dialog.Content = box;
+            box.KeyDown += (_, e) => { if (e.Key == Key.Enter && int.TryParse(box.Text, out int line)) { GoToLine(line); dialog.Close(); } else if (e.Key == Key.Escape) dialog.Close(); };
+            dialog.Loaded += (_, _) => { box.Focus(); box.SelectAll(); };
+            dialog.ShowDialog();
+        }
+
+        private sealed class EditorMarkers : IBackgroundRenderer
+        {
+            private readonly CodeEditorControl _owner;
+            public EditorMarkers(CodeEditorControl owner) => _owner = owner;
+            public KnownLayer Layer => KnownLayer.Selection;
+            public void Invalidate() => _owner.EditorTextBox?.TextArea.TextView.Redraw();
+            public void Draw(TextView textView, DrawingContext drawingContext)
             {
-                paragraph.Inlines.Add(new Run());
-                return;
+                if (!textView.VisualLinesValid) return;
+                string source = _owner.Text;
+                int caret = _owner.EditorTextBox.CaretOffset;
+                int position = caret < source.Length && "()[]{}".Contains(source[caret]) ? caret : caret > 0 && "()[]{}".Contains(source[caret - 1]) ? caret - 1 : -1;
+                int partner = position >= 0 ? FindPartner(source, position) : -1;
+                foreach (int offset in new[] { position, partner })
+                {
+                    if (offset < 0) continue;
+                    var segment = new TextSegment { StartOffset = offset, Length = 1 };
+                    foreach (var rect in BackgroundGeometryBuilder.GetRectsForSegment(textView, segment)) drawingContext.DrawRectangle(new SolidColorBrush(Color.FromArgb(110, 86, 201, 154)), new Pen(Brushes.LightGreen, 1), rect);
+                }
+                foreach (int line in _owner._diagnostics.Keys)
+                {
+                    if (line > _owner.EditorTextBox.Document.LineCount) continue;
+                    var documentLine = _owner.EditorTextBox.Document.GetLineByNumber(line);
+                    var segment = new TextSegment { StartOffset = documentLine.Offset, Length = Math.Max(1, documentLine.Length) };
+                    foreach (var rect in BackgroundGeometryBuilder.GetRectsForSegment(textView, segment)) drawingContext.DrawRectangle(new SolidColorBrush(Color.FromArgb(35, 255, 80, 80)), null, rect);
+                }
             }
-
-            int position = 0;
-            while (position < text.Length)
+            private static int FindPartner(string source, int index)
             {
-                if (text[position] == '#' && (position == 0 || string.IsNullOrWhiteSpace(text[..position])))
+                const string opens = "([{", closes = ")]}";
+                char c = source[index]; int open = opens.IndexOf(c), close = closes.IndexOf(c);
+                if (open < 0 && close < 0) return -1;
+                int direction = open >= 0 ? 1 : -1;
+                char match = open >= 0 ? closes[open] : opens[close];
+                int depth = 0;
+                for (int i = index + direction; i >= 0 && i < source.Length; i += direction)
                 {
-                    int directiveStart = position;
-                    int directiveEnd = position + 1;
-
-                    while (directiveEnd < text.Length && char.IsWhiteSpace(text[directiveEnd]))
-                    {
-                        directiveEnd++;
-                    }
-
-                    int nameStart = directiveEnd;
-
-                    while (directiveEnd < text.Length && (char.IsLetterOrDigit(text[directiveEnd]) || text[directiveEnd] == '_'))
-                    {
-                        directiveEnd++;
-                    }
-
-                    string directiveName = text.Substring(nameStart, directiveEnd - nameStart);
-
-                    if (PreprocessorDirectives.Contains(directiveName))
-                    {
-                        AddRun(paragraph, text.Substring(directiveStart, directiveEnd - directiveStart), "#C586C0");
-                        position = directiveEnd;
-                        continue;
-                    }
+                    if (source[i] == c) depth++;
+                    else if (source[i] == match && depth-- == 0) return i;
                 }
-
-                if (text[position] == '/' && position + 1 < text.Length && text[position + 1] == '/')
-                {
-                    AddRun(paragraph, text[position..], "#6A9955");
-                    break;
-                }
-
-                if (text[position] == '/' && position + 1 < text.Length && text[position + 1] == '*')
-                {
-                    int end = text.IndexOf("*/", position + 2, StringComparison.Ordinal);
-                    if (end < 0)
-                    {
-                        AddRun(paragraph, text[position..], "#6A9955");
-                        break;
-                    }
-
-                    end += 2;
-                    AddRun(paragraph, text.Substring(position, end - position), "#6A9955");
-                    position = end;
-                    continue;
-                }
-
-                if (text[position] == '"')
-                {
-                    int end = FindStringEnd(text, position, '"');
-                    AddRun(paragraph, text.Substring(position, end - position), "#CE9178");
-                    position = end;
-                    continue;
-                }
-
-                if (text[position] == '\'')
-                {
-                    int end = FindStringEnd(text, position, '\'');
-                    AddRun(paragraph, text.Substring(position, end - position), "#D7BA7D");
-                    position = end;
-                    continue;
-                }
-
-                if (char.IsDigit(text[position]))
-                {
-                    int end = position + 1;
-                    while (end < text.Length && (char.IsLetterOrDigit(text[end]) || text[end] == '.' || text[end] == '_'))
-                    {
-                        end++;
-                    }
-
-                    AddRun(paragraph, text.Substring(position, end - position), "#B5CEA8");
-                    position = end;
-                    continue;
-                }
-
-                if (char.IsLetter(text[position]) || text[position] == '_')
-                {
-                    int end = position + 1;
-                    while (end < text.Length && (char.IsLetterOrDigit(text[end]) || text[end] == '_'))
-                    {
-                        end++;
-                    }
-
-                    string word = text.Substring(position, end - position);
-                    if (Types.Contains(word))
-                    {
-                        AddRun(paragraph, word, "#569CD6");
-                    }
-                    else if (Keywords.Contains(word))
-                    {
-                        AddRun(paragraph, word, "#C586C0");
-                    }
-                    else if (Constants.Contains(word))
-                    {
-                        AddRun(paragraph, word, "#4FC1FF");
-                    }
-                    else
-                    {
-                        AddRun(paragraph, word, "#D4D4D4");
-                    }
-
-                    position = end;
-                    continue;
-                }
-
-                int operatorEnd = position + 1;
-                if (position + 1 < text.Length)
-                {
-                    string twoCharacterOperator = text.Substring(position, 2);
-                    if (twoCharacterOperator == "++" || twoCharacterOperator == "--" || twoCharacterOperator == "==" || twoCharacterOperator == "!=" || twoCharacterOperator == "<=" || twoCharacterOperator == ">=" || twoCharacterOperator == "&&" || twoCharacterOperator == "||" || twoCharacterOperator == "+=" || twoCharacterOperator == "-=" || twoCharacterOperator == "*=" || twoCharacterOperator == "/=" || twoCharacterOperator == "%=" || twoCharacterOperator == "->" || twoCharacterOperator == "<<" || twoCharacterOperator == ">>" || twoCharacterOperator == "&=" || twoCharacterOperator == "|=" || twoCharacterOperator == "^=")
-                    {
-                        operatorEnd = position + 2;
-                    }
-                }
-
-                AddRun(paragraph, text.Substring(position, operatorEnd - position), "#D4D4D4");
-                position = operatorEnd;
+                return -1;
             }
         }
 
-        private static int FindStringEnd(string text, int start, char quote)
+        private sealed class DiagnosticLineTransformer : DocumentColorizingTransformer
         {
-            bool escaped = false;
-            for (int i = start + 1; i < text.Length; i++)
+            private readonly CodeEditorControl _owner;
+            public DiagnosticLineTransformer(CodeEditorControl owner) => _owner = owner;
+            protected override void ColorizeLine(DocumentLine line)
             {
-                char character = text[i];
-                if (escaped)
-                {
-                    escaped = false;
-                    continue;
-                }
-
-                if (character == '\\')
-                {
-                    escaped = true;
-                    continue;
-                }
-
-                if (character == quote)
-                {
-                    return i + 1;
-                }
-            }
-
-            return text.Length;
-        }
-
-        private static void AddRun(Paragraph paragraph, string text, string color)
-        {
-            Run run = new Run(text)
-            {
-                Foreground = new SolidColorBrush((Color)ColorConverter.ConvertFromString(color))
-            };
-
-            paragraph.Inlines.Add(run);
-        }
-
-        private int GetTextOffset(TextPointer pointer)
-        {
-            TextPointer start = EditorTextBox.Document.ContentStart;
-            return start.GetOffsetToPosition(pointer);
-        }
-
-        private void SetCaretOffset(int offset)
-        {
-            offset = Math.Max(0, offset);
-            TextPointer pointer = GetPointerAtOffset(offset);
-            if (pointer != null)
-            {
-                EditorTextBox.CaretPosition = pointer;
-                EditorTextBox.Focus();
-                UpdateCursorPosition();
-            }
-        }
-
-        private void SetSelectionOffsets(int startOffset, int endOffset)
-        {
-            TextPointer start = GetPointerAtOffset(startOffset);
-            TextPointer end = GetPointerAtOffset(endOffset);
-            if (start != null && end != null)
-            {
-                EditorTextBox.Selection.Select(start, end);
-                EditorTextBox.Focus();
-            }
-        }
-
-        private TextPointer GetPointerAtOffset(int offset)
-        {
-            TextPointer start = EditorTextBox.Document.ContentStart;
-            TextPointer pointer = start;
-            int currentOffset = 0;
-            while (pointer != null)
-            {
-                if (currentOffset >= offset)
-                {
-                    return pointer;
-                }
-
-                TextPointer next = pointer.GetNextInsertionPosition(LogicalDirection.Forward);
-                if (next == null)
-                {
-                    return pointer;
-                }
-
-                currentOffset += pointer.GetOffsetToPosition(next);
-                pointer = next;
-            }
-
-            return EditorTextBox.Document.ContentEnd;
-        }
-
-        private void ScrollToOffset(int offset)
-        {
-            TextPointer pointer = GetPointerAtOffset(offset);
-            pointer?.Paragraph?.BringIntoView();
-        }
-
-        private void UpdateLineNumbers()
-        {
-            if (LineNumbers == null || EditorTextBox == null)
-            {
-                return;
-            }
-
-            string text = GetEditorText();
-            int lineCount = 1;
-            for (int i = 0; i < text.Length; i++)
-            {
-                if (text[i] == '\n')
-                {
-                    lineCount++;
-                }
-            }
-
-            int digits = Math.Max(2, lineCount.ToString().Length);
-            StringBuilder builder = new StringBuilder();
-            for (int i = 1; i <= lineCount; i++)
-            {
-                builder.Append(i.ToString().PadLeft(digits));
-                if (i < lineCount)
-                {
-                    builder.Append('\n');
-                }
-            }
-
-            LineNumbers.Text = builder.ToString();
-            LineNumbers.FontFamily = EditorTextBox.FontFamily;
-            LineNumbers.FontSize = EditorTextBox.FontSize;
-        }
-
-        private void UpdateCursorPosition()
-        {
-            TextPointer documentStart = EditorTextBox.Document.ContentStart;
-            TextPointer caret = EditorTextBox.CaretPosition;
-            TextRange range = new TextRange(documentStart, caret);
-            string textBeforeCaret = range.Text.Replace("\r\n", "\n");
-            int line = 1;
-            int column = 1;
-            for (int i = 0; i < textBeforeCaret.Length; i++)
-            {
-                if (textBeforeCaret[i] == '\n')
-                {
-                    line++;
-                    column = 1;
-                }
-                else
-                {
-                    column++;
-                }
-            }
-
-            CurrentLine = line;
-            CurrentColumn = column;
-            CursorPositionChanged?.Invoke(this, EventArgs.Empty);
-        }
-
-        private void EditorTextBox_ScrollChanged(object sender, ScrollChangedEventArgs e)
-        {
-            if (LineNumberScrollViewer.VerticalOffset != e.VerticalOffset)
-            {
-                LineNumberScrollViewer.ScrollToVerticalOffset(e.VerticalOffset);
-            }
-        }
-
-        private void EditorTextBox_PreviewMouseWheel(object sender, MouseWheelEventArgs e)
-        {
-            if (Keyboard.Modifiers == ModifierKeys.Control)
-            {
-                double newSize = EditorTextBox.FontSize;
-                if (e.Delta > 0)
-                {
-                    newSize++;
-                }
-                else if (e.Delta < 0)
-                {
-                    newSize--;
-                }
-
-                newSize = Math.Max(8, Math.Min(32, newSize));
-                EditorTextBox.FontSize = newSize;
-                UpdateLineNumbers();
-                e.Handled = true;
+                if (_owner._diagnostics.ContainsKey(line.LineNumber)) ChangeLinePart(line.Offset, line.EndOffset, element => element.TextRunProperties.SetTextDecorations(TextDecorations.Underline));
             }
         }
     }
