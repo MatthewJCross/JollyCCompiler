@@ -36,6 +36,11 @@ namespace JollyCCompiler.Compiler.Semantic
             _runtimeFunctions.Add("__install_raster_bars");
             // C64 Phase 8 built-ins are implemented directly by the MOS6502 backend.
             _runtimeFunctions.Add("__c64_poke");
+            _runtimeFunctions.Add("__c64_cls");
+            _runtimeFunctions.Add("__c64_print");
+            _runtimeFunctions.Add("__c64_putchar");
+            _runtimeFunctions.Add("__c64_charset_init");
+            _runtimeFunctions.Add("__c64_define_char");
             _runtimeFunctions.Add("__c64_peek");
             _runtimeFunctions.Add("__joystick1");
             _runtimeFunctions.Add("__joystick2");

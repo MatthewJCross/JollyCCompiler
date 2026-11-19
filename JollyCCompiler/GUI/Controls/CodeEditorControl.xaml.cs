@@ -159,7 +159,7 @@ namespace JollyCCompiler.GUI.Controls
         private static readonly string[] CompletionWords =
         [
             "auto", "break", "case", "char", "const", "continue", "default", "do", "double", "else", "enum", "extern", "float", "for", "goto", "if", "int", "long", "register", "return", "short", "signed", "sizeof", "static", "struct", "switch", "typedef", "union", "unsigned", "void", "volatile", "while",
-            "__c64_poke", "__c64_peek", "__joystick1", "__joystick2", "__sprite_position", "__sprite_colour", "__sprite_enable", "__sid_beep", "__sid_stop", "__cia1_timer_start", "__cia1_timer_elapsed", "__install_raster_irq", "__install_raster_bars", "__set_raster_bar_colour"
+            "__c64_cls", "__c64_print", "__c64_putchar", "__c64_charset_init", "__c64_define_char", "__c64_poke", "__c64_peek", "__joystick1", "__joystick2", "__sprite_position", "__sprite_colour", "__sprite_enable", "__sid_beep", "__sid_stop", "__cia1_timer_start", "__cia1_timer_elapsed", "__install_raster_irq", "__install_raster_bars", "__set_raster_bar_colour"
         ];
 
         private void ShowCompletion()

@@ -1,4 +1,4 @@
-using JollyCCompiler.Compiler.CodeGen.MOS6502.Core;
+﻿using JollyCCompiler.Compiler.CodeGen.MOS6502.Core;
 using JollyCCompiler.Compiler.CodeGeneration.MOS6502.Core;
 using JollyCCompiler.Compiler.Lexing;
 using JollyCCompiler.Compiler.Syntax;
@@ -11,12 +11,15 @@ namespace JollyCCompiler.Compiler.CodeGen.MOS6502
         private const byte ArrayPointerHigh = 0x03;
         private const byte ArrayIndexTemp = 0x04;
         private const int ParameterSize = 4;
+        private int _charsetSequence;
 
         private sealed record LoopContext(string BreakLabel, string ContinueLabel);
 
-        private static readonly Stack<LoopContext> LoopContexts = new();
+        private readonly Stack<LoopContext> LoopContexts = new();
 
         private readonly Dictionary<string, ushort> _functionAddresses = new(StringComparer.Ordinal);
+        private readonly Dictionary<string, ushort> _functionFrameAddresses = new(StringComparer.Ordinal);
+        private readonly Dictionary<string, int> _functionFrameSizes = new(StringComparer.Ordinal);
         private readonly Dictionary<string, FunctionNode> _functions = new(StringComparer.Ordinal);
         private readonly Dictionary<string, VariableTypeInfo> _variableTypes = new(StringComparer.Ordinal);
         private sealed record VariableTypeInfo(int Width, bool Signed);
@@ -29,7 +32,12 @@ namespace JollyCCompiler.Compiler.CodeGen.MOS6502
         {
             ArgumentNullException.ThrowIfNull(program);
 
+            // A generator instance can be reused by the IDE for multiple compilations.
+            LoopContexts.Clear();
+            _charsetSequence = 0;
             _functionAddresses.Clear();
+            _functionFrameAddresses.Clear();
+            _functionFrameSizes.Clear();
             _functions.Clear();
             _variableTypes.Clear();
             _irqHandler = null;
@@ -51,6 +59,10 @@ namespace JollyCCompiler.Compiler.CodeGen.MOS6502
             _irqHandler = irqHandlers.FirstOrDefault();
             if (_irqHandler is not null && (_irqHandler.ReturnType != "void" || _irqHandler.Parameters.Count != 0 || ContainsReturn(_irqHandler.Body)))
                 throw new NotSupportedException("C64 __interrupt handler must be void, take no parameters, and contain no explicit return statements.");
+
+            // Call sites save and restore the callee frame on the hardware stack,
+            // allowing reentrant and recursive calls within the 6502 stack budget.
+            AllocateFunctionFrames(program, returnValueAddress);
 
             var buffer = new Mos6502CodeBuffer(origin);
             // Emit the handler first so its absolute address is known when main installs it.
@@ -89,6 +101,181 @@ namespace JollyCCompiler.Compiler.CodeGen.MOS6502
             return new Mos6502CodeGenerationResult(machineCode, origin, mainAddress, new Dictionary<string, ushort>(_functionAddresses, StringComparer.Ordinal), instructions);
         }
 
+        // Static function frames are safe only for an acyclic call graph.
+        // Detect direct and indirect recursion before emitting any machine code.
+        // This is deliberately a diagnostic, not a claim of stack-frame support.
+        private static void ValidateStaticFrameCallGraph(ProgramNode program)
+        {
+            var defined = program.Functions.Where(f => !f.IsExtern)
+                .ToDictionary(f => f.Name, StringComparer.Ordinal);
+            var edges = defined.ToDictionary(
+                pair => pair.Key,
+                pair => new HashSet<string>(CollectCalls(pair.Value.Body)
+                    .Where(defined.ContainsKey), StringComparer.Ordinal),
+                StringComparer.Ordinal);
+            var visiting = new HashSet<string>(StringComparer.Ordinal);
+            var visited = new HashSet<string>(StringComparer.Ordinal);
+            var path = new List<string>();
+
+            void Visit(string name)
+            {
+                if (visited.Contains(name)) return;
+                if (!visiting.Add(name))
+                {
+                    int start = path.IndexOf(name);
+                    var cycle = path.Skip(start).Append(name);
+                    throw new NotSupportedException(
+                        "6502 recursive function calls require stack frames; static function storage cannot safely compile: "
+                        + string.Join(" -> ", cycle));
+                }
+                path.Add(name);
+                foreach (var callee in edges[name]) Visit(callee);
+                path.RemoveAt(path.Count - 1);
+                visiting.Remove(name);
+                visited.Add(name);
+            }
+
+            foreach (var name in defined.Keys) Visit(name);
+        }
+
+        private static IEnumerable<string> CollectCalls(StatementNode statement)
+        {
+            switch (statement)
+            {
+                case BlockStatement block:
+                    foreach (var child in block.Statements)
+                        foreach (var name in CollectCalls(child)) yield return name;
+                    break;
+                case VariableDeclarationStatement variable when variable.Initializer is not null:
+                    foreach (var name in CollectCalls(variable.Initializer)) yield return name;
+                    break;
+                case ExpressionStatement expression:
+                    foreach (var name in CollectCalls(expression.Expression)) yield return name;
+                    break;
+                case ReturnStatement ret when ret.Expression is not null:
+                    foreach (var name in CollectCalls(ret.Expression)) yield return name;
+                    break;
+                case IfStatement condition:
+                    foreach (var name in CollectCalls(condition.Condition)) yield return name;
+                    foreach (var name in CollectCalls(condition.Then)) yield return name;
+                    if (condition.Else is not null)
+                        foreach (var name in CollectCalls(condition.Else)) yield return name;
+                    break;
+                case WhileStatement loop:
+                    foreach (var name in CollectCalls(loop.Condition)) yield return name;
+                    foreach (var name in CollectCalls(loop.Body)) yield return name;
+                    break;
+                case DoWhileStatement loop:
+                    foreach (var name in CollectCalls(loop.Body)) yield return name;
+                    foreach (var name in CollectCalls(loop.Condition)) yield return name;
+                    break;
+                case ForStatement loop:
+                    if (loop.Initializer is not null)
+                        foreach (var name in CollectCalls(loop.Initializer)) yield return name;
+                    if (loop.Condition is not null)
+                        foreach (var name in CollectCalls(loop.Condition)) yield return name;
+                    if (loop.Increment is not null)
+                        foreach (var name in CollectCalls(loop.Increment)) yield return name;
+                    foreach (var name in CollectCalls(loop.Body)) yield return name;
+                    break;
+                case SwitchStatement branch:
+                    foreach (var name in CollectCalls(branch.Expression)) yield return name;
+                    foreach (var option in branch.Cases)
+                    {
+                        foreach (var name in CollectCalls(option.Value)) yield return name;
+                        foreach (var body in option.Statements)
+                            foreach (var name in CollectCalls(body)) yield return name;
+                    }
+                    if (branch.Default is not null)
+                        foreach (var name in CollectCalls(branch.Default)) yield return name;
+                    break;
+            }
+        }
+
+        private static IEnumerable<string> CollectCalls(ExpressionNode expression)
+        {
+            switch (expression)
+            {
+                case CallExpression call:
+                    if (call.Function is IdentifierExpression identifier) yield return identifier.Name;
+                    foreach (var name in CollectCalls(call.Function)) yield return name;
+                    foreach (var argument in call.Arguments)
+                        foreach (var name in CollectCalls(argument)) yield return name;
+                    break;
+                case BinaryExpression binary:
+                    foreach (var name in CollectCalls(binary.Left)) yield return name;
+                    foreach (var name in CollectCalls(binary.Right)) yield return name;
+                    break;
+                case AssignmentExpression assignment:
+                    foreach (var name in CollectCalls(assignment.Target)) yield return name;
+                    foreach (var name in CollectCalls(assignment.Value)) yield return name;
+                    break;
+                case UnaryExpression unary:
+                    foreach (var name in CollectCalls(unary.Operand)) yield return name;
+                    break;
+                case ConditionalExpression conditional:
+                    foreach (var name in CollectCalls(conditional.Condition)) yield return name;
+                    foreach (var name in CollectCalls(conditional.WhenTrue)) yield return name;
+                    foreach (var name in CollectCalls(conditional.WhenFalse)) yield return name;
+                    break;
+                case ArraySubscriptExpression subscript:
+                    foreach (var name in CollectCalls(subscript.Array)) yield return name;
+                    foreach (var name in CollectCalls(subscript.Index)) yield return name;
+                    break;
+                case AddressOfExpression address:
+                    foreach (var name in CollectCalls(address.Operand)) yield return name;
+                    break;
+                case DereferenceExpression dereference:
+                    foreach (var name in CollectCalls(dereference.Operand)) yield return name;
+                    break;
+                case CastExpression cast:
+                    foreach (var name in CollectCalls(cast.Operand)) yield return name;
+                    break;
+                case CommaExpression comma:
+                    foreach (var item in comma.Expressions)
+                        foreach (var name in CollectCalls(item)) yield return name;
+                    break;
+                case InitializerListExpression initializer:
+                    foreach (var item in initializer.Elements)
+                        foreach (var name in CollectCalls(item)) yield return name;
+                    break;
+            }
+        }
+
+        // Each function owns a disjoint static frame. This permits ordinary calls
+        // between functions without their parameters and locals aliasing each other.
+        // Recursive calls still require stack frames and are intentionally rejected.
+        private void AllocateFunctionFrames(ProgramNode program, ushort returnValueAddress)
+        {
+            int cursor = returnValueAddress + 8; // Return value (4 bytes) + wide-argument staging (4 bytes).
+            const int workspaceEndExclusive = 0xD000;
+            foreach (var function in program.Functions)
+            {
+                if (function.IsExtern) continue;
+                int bytes = function.Parameters.Count * ParameterSize + CountLocalStorage(function.Body);
+                if (cursor + bytes > workspaceEndExclusive)
+                    throw new NotSupportedException($"6502 function storage exceeds RAM workspace ($C004-$CFFF) while allocating '{function.Name}'.");
+                _functionFrameAddresses.Add(function.Name, checked((ushort)cursor));
+                _functionFrameSizes.Add(function.Name, bytes);
+                cursor += bytes;
+            }
+        }
+
+        private static int CountLocalStorage(StatementNode statement)
+        {
+            return statement switch
+            {
+                VariableDeclarationStatement v => v.ArrayLength is null ? Get6502TypeSize(v.Type) :
+                    throw new NotSupportedException($"6502 array declaration '{v.Name}' requires array lowering."),
+                BlockStatement b => b.Statements.Sum(CountLocalStorage),
+                IfStatement i => CountLocalStorage(i.Then) + (i.Else is null ? 0 : CountLocalStorage(i.Else)),
+                WhileStatement w => CountLocalStorage(w.Body),
+                DoWhileStatement d => CountLocalStorage(d.Body),
+                ForStatement f => (f.Initializer is null ? 0 : CountLocalStorage(f.Initializer)) + CountLocalStorage(f.Body),
+                _ => 0
+            };
+        }
+
         private void GenerateFunction(FunctionNode function, Mos6502CodeBuffer buffer, ushort returnValueAddress)
         {
             if (function.IsInterrupt)
@@ -102,7 +289,7 @@ namespace JollyCCompiler.Compiler.CodeGen.MOS6502
 
             _variableTypes.Clear();
             var variables = new Dictionary<string, ushort>(StringComparer.Ordinal);
-            ushort nextVariableAddress = checked((ushort)(returnValueAddress + 4));
+            ushort nextVariableAddress = _functionFrameAddresses[function.Name];
 
             foreach (var parameter in function.Parameters)
             {
@@ -409,7 +596,7 @@ namespace JollyCCompiler.Compiler.CodeGen.MOS6502
             buffer.Label(endLabel);
         }
 
-        private static void GenerateBreakStatement(Mos6502CodeBuffer buffer)
+        private void GenerateBreakStatement(Mos6502CodeBuffer buffer)
         {
             if (LoopContexts.Count == 0)
                 throw new InvalidOperationException("6502 'break' statement is not inside a loop.");
@@ -417,7 +604,7 @@ namespace JollyCCompiler.Compiler.CodeGen.MOS6502
             buffer.Jmp(LoopContexts.Peek().BreakLabel);
         }
 
-        private static void GenerateContinueStatement(Mos6502CodeBuffer buffer)
+        private void GenerateContinueStatement(Mos6502CodeBuffer buffer)
         {
             if (LoopContexts.Count == 0)
                 throw new InvalidOperationException("6502 'continue' statement is not inside a loop.");
@@ -438,6 +625,10 @@ namespace JollyCCompiler.Compiler.CodeGen.MOS6502
 
                 case DereferenceExpression dereference:
                     GenerateDereferenceValue(dereference, buffer, variables);
+                    return;
+
+                case ArraySubscriptExpression subscript:
+                    GenerateArrayElementRead(subscript, buffer, variables);
                     return;
 
                 case AssignmentExpression assignment:
@@ -471,6 +662,12 @@ namespace JollyCCompiler.Compiler.CodeGen.MOS6502
 
         private void GenerateAssignmentExpression(AssignmentExpression expression, Mos6502CodeBuffer buffer, Dictionary<string, ushort> variables, ushort returnValueAddress)
         {
+            if (expression.Target is ArraySubscriptExpression element)
+            {
+                GenerateArrayElementAssignment(element, expression.Value, buffer, variables);
+                return;
+            }
+
             if (expression.Target is DereferenceExpression dereference)
             {
                 GenerateDereferenceAssignment(dereference, expression.Value, buffer, variables);
@@ -538,6 +735,17 @@ namespace JollyCCompiler.Compiler.CodeGen.MOS6502
                     }
                     return;
                 }
+                if (size == 2)
+                {
+                    GenerateWordValue(binary, buffer, variables);
+                    buffer.LdaZeroPage(0x06);
+                    buffer.StaAbsolute(address);
+                    buffer.LdaZeroPage(0x07);
+                    buffer.StaAbsolute((ushort)(address + 1));
+                    return;
+                }
+                if (size > 2)
+                    throw new NotSupportedException($"6502 {size * 8}-bit arithmetic assignment to '{identifier.Name}' requires wide expression lowering. Use 'unsigned short' for 16-bit C64 addresses.");
                 GenerateBinaryValue(binary, buffer, variables);
                 buffer.StaAbsolute(address);
                 return;
@@ -567,14 +775,184 @@ namespace JollyCCompiler.Compiler.CodeGen.MOS6502
 
             // Phase 8: small hardware primitives with known addresses and no runtime library.
             // Arguments for register writes are evaluated before touching VIC/SID/CIA.
+            // C64 KERNAL CHROUT: PETSCII 147 clears the screen and homes the cursor.
+            // Requires the normal C64 ROM mapping (as used by BASIC-loaded PRGs).
+            if (identifier.Name == "__c64_cls")
+            {
+                if (expression.Arguments.Count != 0)
+                    throw new NotSupportedException("__c64_cls takes no arguments.");
+                buffer.LdaImmediate(147);
+                buffer.Jsr((ushort)0xFFD2);
+                return;
+            }
+            // Character-mode helpers. Screen memory is $0400; colour RAM is $D800.
+            // Text uses screen codes (A-Z => 1-26), not PETSCII.
+            if (identifier.Name == "__c64_putchar" || identifier.Name == "__c64_print")
+            {
+                if (expression.Arguments.Count != (identifier.Name == "__c64_print" ? 3 : 4))
+                    throw new NotSupportedException($"{identifier.Name} expects {(identifier.Name == "__c64_print" ? 3 : 4)} arguments.");
+                long cx = 0;
+                long cy = 0;
+                bool constantCoordinates = TryGetConstantAddress(expression.Arguments[0], out cx)
+                    && TryGetConstantAddress(expression.Arguments[1], out cy);
+                if (constantCoordinates && (cx < 0 || cx >= 40 || cy < 0 || cy >= 25))
+                    throw new NotSupportedException($"{identifier.Name} screen coordinates must be x: 0-39, y: 0-24.");
+                int screen = constantCoordinates ? 0x0400 + (int)cy * 40 + (int)cx : 0;
+                if (identifier.Name == "__c64_print")
+                {
+                    if (!constantCoordinates)
+                        throw new NotSupportedException("__c64_print still requires constant screen coordinates.");
+                    if (expression.Arguments[2] is not StringExpression text)
+                        throw new NotSupportedException("__c64_print requires a literal string.");
+                    if (cx + text.Value.Length > 40)
+                        throw new NotSupportedException("__c64_print text must fit on one screen row.");
+                    foreach (char c in text.Value)
+                    {
+                        byte glyph = c is >= 'A' and <= 'Z' ? (byte)(c - 'A' + 1) :
+                                     c is >= 'a' and <= 'z' ? (byte)(c - 'a' + 1) :
+                                     c is >= '0' and <= '9' ? (byte)c :
+                                     c == ' ' ? (byte)32 : c == '-' ? (byte)45 :
+                                     c == '*' ? (byte)42 : c == ':' ? (byte)58 : (byte)32;
+                        buffer.LdaImmediate(glyph); buffer.StaAbsolute((ushort)screen++);
+                    }
+                }
+                else if (constantCoordinates)
+                {
+                    GenerateCallArgument(expression.Arguments[2], buffer, variables, returnValueAddress);
+                    buffer.StaAbsolute((ushort)screen);
+                    GenerateCallArgument(expression.Arguments[3], buffer, variables, returnValueAddress);
+                    buffer.StaAbsolute((ushort)(screen + 0xD400)); // $0400 -> $D800
+                }
+                else
+                {
+                    // Evaluate each expression exactly once. Stack staging prevents
+                    // nested expressions/calls from overwriting earlier arguments.
+                    for (int i = 0; i < 4; i++)
+                    {
+                        GenerateCallArgument(expression.Arguments[i], buffer, variables, returnValueAddress);
+                        buffer.Pha();
+                    }
+                    // Temporary argument bytes are kept in the existing return
+                    // scratch area; all four are restored before address arithmetic.
+                    for (int i = 3; i >= 0; i--)
+                    {
+                        buffer.Pla();
+                        buffer.StaAbsolute((ushort)(returnValueAddress + i));
+                    }
+                    string suffix = $"{_charsetSequence++}";
+                    string done = $"__putchar_done_{suffix}";
+                    string rowLoop = $"__putchar_row_{suffix}";
+                    string rowDone = $"__putchar_row_done_{suffix}";
+                    buffer.LdaAbsolute(returnValueAddress);
+                    buffer.CmpImmediate(40);
+                    buffer.BcsLong(done);
+                    buffer.LdaAbsolute((ushort)(returnValueAddress + 1));
+                    buffer.CmpImmediate(25);
+                    buffer.BcsLong(done);
+
+                    // Pointer = $0400 + x + 40*y, computed as 16-bit arithmetic.
+                    buffer.LdaAbsolute(returnValueAddress);
+                    buffer.StaZeroPage(ArrayPointer);
+                    buffer.LdaImmediate(4);
+                    buffer.StaZeroPage(ArrayPointerHigh);
+                    buffer.LdaAbsolute((ushort)(returnValueAddress + 1));
+                    buffer.Tax();
+                    buffer.Label(rowLoop);
+                    buffer.Txa();
+                    buffer.BeqLong(rowDone);
+                    buffer.Clc();
+                    buffer.LdaZeroPage(ArrayPointer);
+                    buffer.AdcImmediate(40);
+                    buffer.StaZeroPage(ArrayPointer);
+                    buffer.LdaZeroPage(ArrayPointerHigh);
+                    buffer.AdcImmediate(0);
+                    buffer.StaZeroPage(ArrayPointerHigh);
+                    buffer.Dex();
+                    buffer.Jmp(rowLoop);
+                    buffer.Label(rowDone);
+                    buffer.LdyImmediate(0);
+                    buffer.LdaAbsolute((ushort)(returnValueAddress + 2));
+                    buffer.StaIndirectY(ArrayPointer);
+                    // Colour RAM is screen address + $D400.
+                    buffer.Clc();
+                    buffer.LdaZeroPage(ArrayPointerHigh);
+                    buffer.AdcImmediate(0xD4);
+                    buffer.StaZeroPage(ArrayPointerHigh);
+                    buffer.LdaAbsolute((ushort)(returnValueAddress + 3));
+                    buffer.StaIndirectY(ArrayPointer);
+                    buffer.Label(done);
+                }
+                return;
+            }
+            if (identifier.Name == "__c64_charset_init")
+            {
+                if (expression.Arguments.Count != 0)
+                    throw new NotSupportedException("__c64_charset_init takes no arguments.");
+                // Copy character ROM $D000-$D7FF to RAM $3800-$3FFF.
+                // $01=$33 maps character ROM in; interrupts must be masked.
+                buffer.Sei();
+                buffer.LdaAbsolute(0x0001); buffer.Pha();
+                buffer.LdaImmediate(0x33); buffer.StaAbsolute(0x0001);
+                for (int page = 0; page < 8; page++)
+                {
+                    string loop = $"__charset_copy_{_charsetSequence++}";
+                    buffer.LdyImmediate(0);
+                    buffer.Label(loop);
+                    // Dedicated ZP pointer: preserve existing compiler scratch by stack save.
+                    buffer.LdaImmediate((byte)(0xD0 + page)); buffer.StaZeroPage(ArrayPointerHigh);
+                    buffer.LdaImmediate(0); buffer.StaZeroPage(ArrayPointer);
+                    buffer.LdaIndirectY(ArrayPointer);
+                    buffer.StaAbsolute(0x00FE); // temporary: destination write below uses pointer
+                    buffer.LdaImmediate((byte)(0x38 + page)); buffer.StaZeroPage(ArrayPointerHigh);
+                    buffer.LdaAbsolute(0x00FE); buffer.StaIndirectY(ArrayPointer);
+                    buffer.Iny(); buffer.BneLong(loop);
+                }
+                buffer.Pla(); buffer.StaAbsolute(0x0001); buffer.Cli();
+                buffer.LdaImmediate(0x1E); buffer.StaAbsolute(0xD018); // screen $0400, charset $3800
+                return;
+            }
+            if (identifier.Name == "__c64_define_char")
+            {
+                if (expression.Arguments.Count != 9 ||
+                    !TryGetConstantAddress(expression.Arguments[0], out long glyphIndex) ||
+                    glyphIndex < 0 || glyphIndex > 255)
+                    throw new NotSupportedException("__c64_define_char requires a constant character index and eight byte values.");
+                for (int row = 0; row < 8; row++)
+                {
+                    GenerateCallArgument(expression.Arguments[row + 1], buffer, variables, returnValueAddress);
+                    buffer.StaAbsolute((ushort)(0x3800 + glyphIndex * 8 + row));
+                }
+                return;
+            }
             if (identifier.Name == "__c64_poke")
             {
-                if (expression.Arguments.Count != 2 ||
-                    !TryGetConstantAddress(expression.Arguments[0], out long ioAddress) ||
-                    ioAddress < 0 || ioAddress > 0xFFFF)
-                    throw new NotSupportedException("__c64_poke requires a constant 16-bit address and a byte value.");
+                if (expression.Arguments.Count != 2)
+                    throw new NotSupportedException("__c64_poke requires an address and a byte value.");
+
+                var addressExpression = expression.Arguments[0];
+                if (TryGetConstantAddress(addressExpression, out long ioAddress))
+                {
+                    if (ioAddress < 0 || ioAddress > 0xFFFF)
+                        throw new NotSupportedException("__c64_poke address must fit in 16 bits.");
+                    GenerateCallArgument(expression.Arguments[1], buffer, variables, returnValueAddress);
+                    buffer.StaAbsolute((ushort)ioAddress);
+                    return;
+                }
+
+                // Evaluate the address before the value. The value expression can
+                // itself use the shared zero-page pointer, so save the address on
+                // the 6502 stack until the value has been evaluated.
+                GenerateHardwareAddress(addressExpression, buffer, variables);
+                buffer.LdaZeroPage(ArrayPointerHigh); buffer.Pha();
+                buffer.LdaZeroPage(ArrayPointer); buffer.Pha();
                 GenerateCallArgument(expression.Arguments[1], buffer, variables, returnValueAddress);
-                buffer.StaAbsolute((ushort)ioAddress);
+                // Stack top is address low, followed by address high.
+                buffer.StaAbsolute(returnValueAddress);
+                buffer.Pla(); buffer.StaZeroPage(ArrayPointer);
+                buffer.Pla(); buffer.StaZeroPage(ArrayPointerHigh);
+                buffer.LdaAbsolute(returnValueAddress);
+                buffer.LdyImmediate(0);
+                buffer.StaIndirectY(ArrayPointer);
                 return;
             }
             if (identifier.Name == "__c64_peek" || identifier.Name == "__joystick1" || identifier.Name == "__joystick2")
@@ -582,10 +960,22 @@ namespace JollyCCompiler.Compiler.CodeGen.MOS6502
                 ushort ioAddress;
                 if (identifier.Name == "__c64_peek")
                 {
-                    if (expression.Arguments.Count != 1 ||
-                        !TryGetConstantAddress(expression.Arguments[0], out long address) ||
-                        address < 0 || address > 0xFFFF)
-                        throw new NotSupportedException("__c64_peek requires a constant 16-bit address.");
+                    if (expression.Arguments.Count != 1)
+                        throw new NotSupportedException("__c64_peek requires one address argument.");
+                    if (!TryGetConstantAddress(expression.Arguments[0], out long address))
+                    {
+                        GenerateHardwareAddress(expression.Arguments[0], buffer, variables);
+                        buffer.LdyImmediate(0);
+                        buffer.LdaIndirectY(ArrayPointer);
+                        buffer.StaAbsolute(returnValueAddress);
+                        buffer.LdaImmediate(0);
+                        buffer.StaAbsolute((ushort)(returnValueAddress + 1));
+                        buffer.StaAbsolute((ushort)(returnValueAddress + 2));
+                        buffer.StaAbsolute((ushort)(returnValueAddress + 3));
+                        return;
+                    }
+                    if (address < 0 || address > 0xFFFF)
+                        throw new NotSupportedException("__c64_peek address must fit in 16 bits.");
                     ioAddress = (ushort)address;
                 }
                 else
@@ -744,18 +1134,54 @@ namespace JollyCCompiler.Compiler.CodeGen.MOS6502
             if (expression.Arguments.Count > GetMaximumParameterCount())
                 throw new NotSupportedException($"6502 function '{identifier.Name}' has too many arguments.");
 
-            var parameterAddress = checked((ushort)(returnValueAddress + 4));
+            var parameterAddress = _functionFrameAddresses[function.Name];
 
             if (expression.Arguments.Count != function.Parameters.Count)
                 throw new InvalidOperationException($"Function '{identifier.Name}' expects {function.Parameters.Count} argument(s) but received {expression.Arguments.Count}.");
 
-            for (var index = 0; index < expression.Arguments.Count; index++)
+            // Preserve the entire callee frame, including parameters and locals.
+            // Unlike static-only frames, this also preserves recursive invocations.
+            // 6502 PHA/PLA use the 256-byte hardware stack ($0100-$01FF).
+            int frameSize = _functionFrameSizes[function.Name];
+            if (frameSize + expression.Arguments.Count * 4 > 192)
+                throw new NotSupportedException(
+                    $"6502 call to '{function.Name}' requires {frameSize + expression.Arguments.Count * 4} stack bytes before return addresses; reduce locals or arguments.");
+            for (int offset = 0; offset < frameSize; offset++)
             {
-                GenerateCallArgument(expression.Arguments[index], buffer, variables, returnValueAddress);
-                StoreAccumulatorAsParameter(buffer, checked((ushort)(parameterAddress + (index * ParameterSize))));
+                buffer.LdaAbsolute(checked((ushort)(parameterAddress + offset)));
+                buffer.Pha();
+            }
+
+            // Stage all four bytes of each argument before changing any callee
+            // parameters. This also handles nested calls in later arguments.
+            // Push high byte first so the low byte is popped first.
+            for (int index = 0; index < expression.Arguments.Count; index++)
+            {
+                EmitWideCallArgument(expression.Arguments[index], buffer, variables, returnValueAddress);
+                for (int part = 3; part >= 0; part--)
+                {
+                    buffer.LdaAbsolute((ushort)(returnValueAddress + 4 + part));
+                    buffer.Pha();
+                }
+            }
+            for (int index = expression.Arguments.Count - 1; index >= 0; index--)
+            {
+                for (int part = 0; part < 4; part++)
+                {
+                    buffer.Pla();
+                    buffer.StaAbsolute(checked((ushort)(parameterAddress + index * ParameterSize + part)));
+                }
             }
 
             buffer.Jsr(GetFunctionLabel(identifier.Name));
+
+            // Restore the caller-visible copy of this function's frame. Return
+            // values remain in the existing four-byte return-value area.
+            for (int offset = frameSize - 1; offset >= 0; offset--)
+            {
+                buffer.Pla();
+                buffer.StaAbsolute(checked((ushort)(parameterAddress + offset)));
+            }
         }
 
         private static CallExpression? FindRasterBarsCall(ProgramNode program)
@@ -895,6 +1321,69 @@ namespace JollyCCompiler.Compiler.CodeGen.MOS6502
             throw new NotSupportedException($"6502 call argument '{expression.GetType().Name}' is not yet supported.");
         }
 
+        // Four-byte argument staging lives in $C000+8, immediately above the
+        // four-byte return area. All bytes are pushed before the next argument
+        // is evaluated, so nested calls may reuse this staging location.
+        private void EmitWideCallArgument(ExpressionNode expression, Mos6502CodeBuffer buffer,
+            Dictionary<string, ushort> variables, ushort returnValueAddress)
+        {
+            ushort staging = checked((ushort)(returnValueAddress + 4));
+            if (expression is IntegerExpression constant)
+            {
+                EmitIntegerValue(buffer, staging, constant.Value, 4);
+                return;
+            }
+            if (expression is IdentifierExpression identifier)
+            {
+                if (!variables.TryGetValue(identifier.Name, out ushort source))
+                    throw new InvalidOperationException($"Variable '{identifier.Name}' is not defined.");
+                var info = _variableTypes[identifier.Name];
+                for (int part = 0; part < info.Width; part++)
+                {
+                    buffer.LdaAbsolute(checked((ushort)(source + part)));
+                    buffer.StaAbsolute(checked((ushort)(staging + part)));
+                }
+                // Sign extend signed narrow arguments; unsigned arguments zero extend.
+                if (info.Width < 4)
+                {
+                    if (info.Signed)
+                    {
+                        string positive = $"$arg_positive_{buffer.Address:X4}";
+                        string done = $"$arg_sign_done_{buffer.Address:X4}";
+                        buffer.LdaAbsolute(checked((ushort)(source + info.Width - 1)));
+                        buffer.AndImmediate(0x80);
+                        buffer.BeqLong(positive);
+                        buffer.LdaImmediate(0xFF);
+                        buffer.Jmp(done);
+                        buffer.Label(positive);
+                        buffer.LdaImmediate(0);
+                        buffer.Label(done);
+                    }
+                    else buffer.LdaImmediate(0);
+                    for (int part = info.Width; part < 4; part++)
+                        buffer.StaAbsolute(checked((ushort)(staging + part)));
+                }
+                return;
+            }
+            if (expression is CallExpression call)
+            {
+                GenerateCallExpression(call, buffer, variables, returnValueAddress);
+                for (int part = 0; part < 4; part++)
+                {
+                    buffer.LdaAbsolute(checked((ushort)(returnValueAddress + part)));
+                    buffer.StaAbsolute(checked((ushort)(staging + part)));
+                }
+                return;
+            }
+            // The existing arithmetic evaluator is byte-width only. Do not
+            // silently truncate a wide argument expression.
+            GenerateCallArgument(expression, buffer, variables, returnValueAddress);
+            buffer.StaAbsolute(staging);
+            buffer.LdaImmediate(0);
+            for (int part = 1; part < 4; part++)
+                buffer.StaAbsolute(checked((ushort)(staging + part)));
+        }
+
         private static void StoreAccumulatorAsParameter(Mos6502CodeBuffer buffer, ushort address)
         {
             buffer.StaAbsolute(address);
@@ -915,32 +1404,55 @@ namespace JollyCCompiler.Compiler.CodeGen.MOS6502
 
         private static void EmitBranchIfReturnValueZero(Mos6502CodeBuffer buffer, ushort returnValueAddress, string falseLabel)
         {
-            for (var index = 0; index < 4; index++)
+            string nonzero = $"$call_nonzero_{buffer.Address:X4}";
+            for (int part = 0; part < 4; part++)
             {
-                buffer.LdaAbsolute((ushort)(returnValueAddress + index));
-                var nonZeroLabel = $"$call_nonzero_{buffer.Address:X4}_{index}";
-                buffer.BneLong(nonZeroLabel);
-                buffer.Jmp(falseLabel);
-                buffer.Label(nonZeroLabel);
+                buffer.LdaAbsolute(checked((ushort)(returnValueAddress + part)));
+                buffer.BneLong(nonzero);
             }
+            buffer.Jmp(falseLabel);
+            buffer.Label(nonzero);
         }
 
-        private static void GenerateDereferenceValue(DereferenceExpression expression, Mos6502CodeBuffer buffer, Dictionary<string, ushort> variables)
+        private void GenerateDereferenceValue(DereferenceExpression expression, Mos6502CodeBuffer buffer, Dictionary<string, ushort> variables)
         {
             GeneratePointerAddress(expression.Operand, buffer, variables);
             buffer.LdyImmediate(0);
             buffer.LdaIndirectY(ArrayPointer);
         }
 
-        private static void GenerateDereferenceAssignment(DereferenceExpression expression, ExpressionNode value, Mos6502CodeBuffer buffer, Dictionary<string, ushort> variables)
+        private void GenerateDereferenceAssignment(DereferenceExpression expression, ExpressionNode value, Mos6502CodeBuffer buffer, Dictionary<string, ushort> variables)
         {
             GeneratePointerAddress(expression.Operand, buffer, variables);
+            // RHS evaluation may itself dereference memory and overwrite the
+            // shared zero-page pointer. Preserve the target on the CPU stack.
+            PushArrayPointer(buffer);
             GenerateExpressionValue(value, buffer, variables);
+            RestoreArrayPointerPreservingAccumulator(buffer);
             buffer.LdyImmediate(0);
             buffer.StaIndirectY(ArrayPointer);
         }
 
-        private static void GeneratePointerAddress(ExpressionNode expression, Mos6502CodeBuffer buffer, Dictionary<string, ushort> variables)
+        private static void PushArrayPointer(Mos6502CodeBuffer buffer)
+        {
+            buffer.LdaZeroPage(ArrayPointer);
+            buffer.Pha();
+            buffer.LdaZeroPage(ArrayPointerHigh);
+            buffer.Pha();
+        }
+
+        private static void RestoreArrayPointerPreservingAccumulator(Mos6502CodeBuffer buffer)
+        {
+            // Save the byte result while restoring the two-byte target address.
+            buffer.Tax();
+            buffer.Pla();
+            buffer.StaZeroPage(ArrayPointerHigh);
+            buffer.Pla();
+            buffer.StaZeroPage(ArrayPointer);
+            buffer.Txa();
+        }
+
+        private void GeneratePointerAddress(ExpressionNode expression, Mos6502CodeBuffer buffer, Dictionary<string, ushort> variables)
         {
             // A cast of an integer address is a common C64 memory-mapped I/O idiom.
             // Load the address directly into the zero-page indirect pointer.
@@ -954,6 +1466,29 @@ namespace JollyCCompiler.Compiler.CodeGen.MOS6502
                 return;
             }
 
+            if (expression is BinaryExpression arithmetic && arithmetic.Operator is TokenKind.Plus or TokenKind.Minus)
+            {
+                GeneratePointerAddress(arithmetic.Left, buffer, variables);
+                PushArrayPointer(buffer);
+                GenerateIndexExpression(arithmetic.Right, buffer, variables);
+                // Index evaluation leaves its 16-bit value in the pointer pair.
+                buffer.Pla(); buffer.StaZeroPage(0x0B);
+                buffer.Pla(); buffer.StaZeroPage(0x0A);
+                if (arithmetic.Operator == TokenKind.Plus)
+                {
+                    buffer.Clc();
+                    buffer.LdaZeroPage(ArrayPointer); buffer.AdcZeroPage(0x0A); buffer.StaZeroPage(ArrayPointer);
+                    buffer.LdaZeroPage(ArrayPointerHigh); buffer.AdcZeroPage(0x0B); buffer.StaZeroPage(ArrayPointerHigh);
+                }
+                else
+                {
+                    buffer.Sec();
+                    buffer.LdaZeroPage(0x0A); buffer.SbcZeroPage(ArrayPointer); buffer.StaZeroPage(ArrayPointer);
+                    buffer.LdaZeroPage(0x0B); buffer.SbcZeroPage(ArrayPointerHigh); buffer.StaZeroPage(ArrayPointerHigh);
+                }
+                return;
+            }
+
             if (expression is not IdentifierExpression identifier)
                 throw new NotSupportedException($"6502 pointer expression '{expression.GetType().Name}' is not yet supported.");
 
@@ -964,6 +1499,41 @@ namespace JollyCCompiler.Compiler.CodeGen.MOS6502
             buffer.StaZeroPage(ArrayPointer);
             buffer.LdaAbsolute((ushort)(address + 1));
             buffer.StaZeroPage((byte)(ArrayPointer + 1));
+        }
+
+        private void GenerateHardwareAddress(ExpressionNode expression, Mos6502CodeBuffer buffer, Dictionary<string, ushort> variables)
+        {
+            // A constant base plus a byte-sized offset is the common C64 screen
+            // memory pattern. Carry propagates correctly across page boundaries.
+            if (expression is BinaryExpression binary && binary.Operator == TokenKind.Plus)
+            {
+                ExpressionNode offset = binary.Right;
+                if (!TryGetConstantAddress(binary.Left, out long baseAddress))
+                {
+                    if (!TryGetConstantAddress(binary.Right, out baseAddress))
+                        baseAddress = -1;
+                    else offset = binary.Left;
+                }
+
+                if (baseAddress >= 0 && baseAddress <= 0xFFFF && offset is IdentifierExpression id &&
+                    variables.TryGetValue(id.Name, out var variableAddress))
+                {
+                    buffer.LdaAbsolute(variableAddress);
+                    buffer.Clc(); buffer.AdcImmediate((byte)baseAddress);
+                    buffer.StaZeroPage(ArrayPointer);
+                    if (GetExpressionSize(id, variables) > 1)
+                        buffer.LdaAbsolute((ushort)(variableAddress + 1));
+                    else
+                        buffer.LdaImmediate(0);
+                    buffer.AdcImmediate((byte)(baseAddress >> 8));
+                    buffer.StaZeroPage(ArrayPointerHigh);
+                    return;
+                }
+            }
+
+            // Other supported arithmetic address expressions use the existing
+            // 16-bit array-index expression generator.
+            GenerateIndexExpression(expression, buffer, variables);
         }
 
         private static bool TryGetConstantAddress(ExpressionNode expression, out long value)
@@ -994,17 +1564,17 @@ namespace JollyCCompiler.Compiler.CodeGen.MOS6502
             buffer.StaAbsolute((ushort)(destinationAddress + 1));
         }
 
-        private static void GenerateArrayElementAssignment(ArraySubscriptExpression expression, ExpressionNode value, Mos6502CodeBuffer buffer, Dictionary<string, ushort> variables)
+        private void GenerateArrayElementAssignment(ArraySubscriptExpression expression, ExpressionNode value, Mos6502CodeBuffer buffer, Dictionary<string, ushort> variables)
         {
             GenerateArrayAddress(expression.Array, expression.Index, buffer, variables);
-
+            PushArrayPointer(buffer);
             GenerateExpressionValue(value, buffer, variables);
-
+            RestoreArrayPointerPreservingAccumulator(buffer);
             buffer.LdyImmediate(0);
             buffer.StaIndirectY(ArrayPointer);
         }
 
-        private static void GenerateExpressionValue(ExpressionNode expression, Mos6502CodeBuffer buffer, Dictionary<string, ushort> variables)
+        private void GenerateExpressionValue(ExpressionNode expression, Mos6502CodeBuffer buffer, Dictionary<string, ushort> variables)
         {
             if (expression is IntegerExpression integer)
             {
@@ -1036,6 +1606,78 @@ namespace JollyCCompiler.Compiler.CodeGen.MOS6502
             throw new NotSupportedException($"6502 array assignment value '{expression.GetType().Name}' is not yet supported.");
         }
 
+        // Evaluate unsigned 16-bit arithmetic into $06/$07. Nested subexpressions
+        // preserve intermediate words on the 6502 stack, not in shared scratch.
+        // This is intentionally limited to arithmetic the C64 backend can lower safely.
+        private void GenerateWordValue(ExpressionNode expression, Mos6502CodeBuffer buffer,
+            Dictionary<string, ushort> variables)
+        {
+            if (expression is IntegerExpression number)
+            {
+                var value = unchecked((ushort)number.Value);
+                buffer.LdaImmediate((byte)value); buffer.StaZeroPage(0x06);
+                buffer.LdaImmediate((byte)(value >> 8)); buffer.StaZeroPage(0x07);
+                return;
+            }
+            if (expression is IdentifierExpression identifier)
+            {
+                if (!variables.TryGetValue(identifier.Name, out var address))
+                    throw new InvalidOperationException($"Variable '{identifier.Name}' is not defined.");
+                buffer.LdaAbsolute(address); buffer.StaZeroPage(0x06);
+                if (GetExpressionSize(identifier, variables) > 1) buffer.LdaAbsolute((ushort)(address + 1));
+                else buffer.LdaImmediate(0);
+                buffer.StaZeroPage(0x07);
+                return;
+            }
+            if (expression is BinaryExpression binary && binary.Operator is TokenKind.Plus or TokenKind.Minus)
+            {
+                GenerateWordValue(binary.Left, buffer, variables);
+                buffer.LdaZeroPage(0x06); buffer.Pha();
+                buffer.LdaZeroPage(0x07); buffer.Pha();
+                GenerateWordValue(binary.Right, buffer, variables);
+                // Pop left into $08/$09; right remains in $06/$07.
+                buffer.Pla(); buffer.StaZeroPage(0x09);
+                buffer.Pla(); buffer.StaZeroPage(0x08);
+                if (binary.Operator == TokenKind.Plus)
+                {
+                    buffer.Clc(); buffer.LdaZeroPage(0x08); buffer.AdcZeroPage(0x06); buffer.StaZeroPage(0x06);
+                    buffer.LdaZeroPage(0x09); buffer.AdcZeroPage(0x07); buffer.StaZeroPage(0x07);
+                }
+                else
+                {
+                    buffer.Sec(); buffer.LdaZeroPage(0x08); buffer.SbcZeroPage(0x06); buffer.StaZeroPage(0x06);
+                    buffer.LdaZeroPage(0x09); buffer.SbcZeroPage(0x07); buffer.StaZeroPage(0x07);
+                }
+                return;
+            }
+            if (expression is BinaryExpression product && product.Operator == TokenKind.Star
+                && (product.Right is IntegerExpression || product.Left is IntegerExpression))
+            {
+                var constant = product.Right is IntegerExpression right ? right.Value : ((IntegerExpression)product.Left).Value;
+                if (constant < 0 || constant > 65535)
+                    throw new NotSupportedException("6502 unsigned word multiplication requires a nonnegative 16-bit constant.");
+                GenerateWordValue(product.Right is IntegerExpression ? product.Left : product.Right, buffer, variables);
+                // Shift-and-add multiplication, modulo 65536. Product in $0A/$0B,
+                // shifted multiplicand in $06/$07; no nested evaluation in this loop.
+                buffer.LdaImmediate(0); buffer.StaZeroPage(0x0A); buffer.StaZeroPage(0x0B);
+                var factor = (ushort)constant;
+                while (factor != 0)
+                {
+                    if ((factor & 1) != 0)
+                    {
+                        buffer.Clc(); buffer.LdaZeroPage(0x0A); buffer.AdcZeroPage(0x06); buffer.StaZeroPage(0x0A);
+                        buffer.LdaZeroPage(0x0B); buffer.AdcZeroPage(0x07); buffer.StaZeroPage(0x0B);
+                    }
+                    factor >>= 1;
+                    if (factor != 0) { buffer.AslZeroPage(0x06); buffer.RolZeroPage(0x07); }
+                }
+                buffer.LdaZeroPage(0x0A); buffer.StaZeroPage(0x06);
+                buffer.LdaZeroPage(0x0B); buffer.StaZeroPage(0x07);
+                return;
+            }
+            throw new NotSupportedException($"6502 unsigned 16-bit expression '{expression.GetType().Name}' / operator is not yet supported.");
+        }
+
         // Shared 8-bit expression lowering. Each recursive call leaves its result
         // in A. PHA/PLA protects the left operand while evaluating the right.
         // This is intentionally byte-wide; widening requires typed temporaries.
@@ -1052,6 +1694,59 @@ namespace JollyCCompiler.Compiler.CodeGen.MOS6502
                         throw new InvalidOperationException($"Variable '{identifier.Name}' is not defined.");
                     buffer.LdaAbsolute(address);
                     return;
+                case BinaryExpression binary when binary.Operator is TokenKind.Slash or TokenKind.Percent
+                    && binary.Right is IntegerExpression divisor:
+                    // Unsigned byte division/modulo by a compile-time constant.
+                    // Repeated subtraction is compact and sufficient for C64 gameplay counters.
+                    if (divisor.Value <= 0 || divisor.Value > 255)
+                        throw new NotSupportedException("6502 byte division requires a constant divisor from 1 to 255.");
+                    GenerateByteValue(binary.Left, buffer, variables);
+                    if (divisor.Value == 1)
+                    {
+                        if (binary.Operator == TokenKind.Percent) buffer.LdaImmediate(0);
+                        return;
+                    }
+                    var loop = $"byte_div_loop_{buffer.Address:X4}";
+                    var done = $"byte_div_done_{buffer.Address:X4}";
+                    buffer.LdxImmediate(0);
+                    buffer.Label(loop);
+                    buffer.CmpImmediate((byte)divisor.Value);
+                    buffer.Bcc(done);
+                    buffer.Sec();
+                    buffer.SbcImmediate((byte)divisor.Value);
+                    buffer.Inx();
+                    buffer.Jmp(loop);
+                    buffer.Label(done);
+                    if (binary.Operator == TokenKind.Slash) buffer.Txa();
+                    return;
+                case BinaryExpression product when product.Operator == TokenKind.Star
+                    && (product.Left is IntegerExpression || product.Right is IntegerExpression):
+                {
+                    // Byte multiplication by a constant, modulo 256. Evaluate the
+                    // nonconstant operand exactly once, then emit shift-and-add.
+                    var literal = product.Right is IntegerExpression right ? right : (IntegerExpression)product.Left;
+                    var operand = product.Right is IntegerExpression ? product.Left : product.Right;
+                    GenerateByteValue(operand, buffer, variables);
+                    buffer.StaZeroPage(0x05); // shifted multiplicand
+                    buffer.LdaImmediate(0);
+                    buffer.StaZeroPage(0x0A); // accumulated product
+                    var factor = unchecked((byte)literal.Value);
+                    while (factor != 0)
+                    {
+                        if ((factor & 1) != 0)
+                        {
+                            buffer.Clc();
+                            buffer.LdaZeroPage(0x0A);
+                            buffer.AdcZeroPage(0x05);
+                            buffer.StaZeroPage(0x0A);
+                        }
+                        factor >>= 1;
+                        if (factor != 0)
+                            buffer.AslZeroPage(0x05);
+                    }
+                    buffer.LdaZeroPage(0x0A);
+                    return;
+                }
                 case BinaryExpression binary when binary.Operator is
                     TokenKind.Plus or TokenKind.Minus or TokenKind.Ampersand:
                     GenerateByteValue(binary.Left, buffer, variables);
@@ -1082,7 +1777,7 @@ namespace JollyCCompiler.Compiler.CodeGen.MOS6502
             GenerateByteValue(expression, buffer, variables);
         }
 
-        private static void GenerateArrayAddress(ExpressionNode array, ExpressionNode index, Mos6502CodeBuffer buffer, Dictionary<string, ushort> variables)
+        private void GenerateArrayAddress(ExpressionNode array, ExpressionNode index, Mos6502CodeBuffer buffer, Dictionary<string, ushort> variables)
         {
             var baseAddress = GetConstantPointerAddress(array);
 
@@ -1104,7 +1799,7 @@ namespace JollyCCompiler.Compiler.CodeGen.MOS6502
             buffer.StaZeroPage(ArrayPointerHigh);
         }
 
-        private static void GenerateIndexExpression(ExpressionNode expression, Mos6502CodeBuffer buffer, Dictionary<string, ushort> variables, int depth = 0)
+        private void GenerateIndexExpression(ExpressionNode expression, Mos6502CodeBuffer buffer, Dictionary<string, ushort> variables, int depth = 0)
         {
             switch (expression)
             {
@@ -1125,16 +1820,41 @@ namespace JollyCCompiler.Compiler.CodeGen.MOS6502
             }
         }
 
-        private static void GenerateIndexIdentifier(IdentifierExpression expression, Mos6502CodeBuffer buffer, Dictionary<string, ushort> variables)
+        private void GenerateIndexIdentifier(IdentifierExpression expression, Mos6502CodeBuffer buffer, Dictionary<string, ushort> variables)
         {
             if (!variables.TryGetValue(expression.Name, out var address))
                 throw new InvalidOperationException($"Variable '{expression.Name}' is not defined.");
 
+            var width = GetExpressionSize(expression, variables);
+            if (width > 2)
+                throw new NotSupportedException($"6502 array index '{expression.Name}' is {width * 8} bits; explicit narrowing to 16 bits is required.");
+
             buffer.LdaAbsolute(address);
             buffer.StaZeroPage(ArrayPointer);
-
-            buffer.LdaAbsolute((ushort)(address + 1));
-            buffer.StaZeroPage(ArrayPointerHigh);
+            if (width == 2)
+            {
+                buffer.LdaAbsolute(checked((ushort)(address + 1)));
+                buffer.StaZeroPage(ArrayPointerHigh);
+            }
+            else
+            {
+                // A byte index must not read the next variable's storage.
+                // Signed chars are sign-extended for negative offsets.
+                if (_variableTypes[expression.Name].Signed)
+                {
+                    var nonnegative = $"idx_positive_{buffer.Address:X4}";
+                    var done = $"idx_extended_{buffer.Address:X4}";
+                    buffer.LdaZeroPage(ArrayPointer);
+                    buffer.Bpl(nonnegative);
+                    buffer.LdaImmediate(0xFF);
+                    buffer.Jmp(done);
+                    buffer.Label(nonnegative);
+                    buffer.LdaImmediate(0);
+                    buffer.Label(done);
+                }
+                else buffer.LdaImmediate(0);
+                buffer.StaZeroPage(ArrayPointerHigh);
+            }
         }
 
         private static void EmitIndexConstant(Mos6502CodeBuffer buffer, long value)
@@ -1147,7 +1867,7 @@ namespace JollyCCompiler.Compiler.CodeGen.MOS6502
             buffer.StaZeroPage(ArrayPointerHigh);
         }
 
-        private static void GenerateBinaryIndexExpression(BinaryExpression expression, Mos6502CodeBuffer buffer, Dictionary<string, ushort> variables, int depth)
+        private void GenerateBinaryIndexExpression(BinaryExpression expression, Mos6502CodeBuffer buffer, Dictionary<string, ushort> variables, int depth)
         {
             if (expression.Operator == TokenKind.Star && expression.Right is IntegerExpression multiplier)
             {
@@ -1184,13 +1904,15 @@ namespace JollyCCompiler.Compiler.CodeGen.MOS6502
                 return;
             }
 
-            buffer.LdaZeroPage(ArrayPointer);
+            // The saved temporary is the LEFT operand; the pointer pair
+            // contains the RIGHT operand. Subtraction must be left - right.
+            buffer.LdaZeroPage(tempAddress);
             buffer.Sec();
-            buffer.SbcZeroPage(tempAddress);
+            buffer.SbcZeroPage(ArrayPointer);
             buffer.StaZeroPage(ArrayPointer);
 
-            buffer.LdaZeroPage(ArrayPointerHigh);
-            buffer.SbcZeroPage((byte)(tempAddress + 1));
+            buffer.LdaZeroPage((byte)(tempAddress + 1));
+            buffer.SbcZeroPage(ArrayPointerHigh);
             buffer.StaZeroPage(ArrayPointerHigh);
         }
 
@@ -1257,7 +1979,7 @@ namespace JollyCCompiler.Compiler.CodeGen.MOS6502
             throw new NotSupportedException($"6502 array base '{expression.GetType().Name}' is not yet supported.");
         }
 
-        private static void GenerateArrayElementRead(ArraySubscriptExpression expression, Mos6502CodeBuffer buffer, Dictionary<string, ushort> variables)
+        private void GenerateArrayElementRead(ArraySubscriptExpression expression, Mos6502CodeBuffer buffer, Dictionary<string, ushort> variables)
         {
             GenerateArrayAddress(expression.Array, expression.Index, buffer, variables);
             buffer.LdyImmediate(0);
@@ -1395,6 +2117,127 @@ namespace JollyCCompiler.Compiler.CodeGen.MOS6502
                 return;
             }
 
+            // Intrinsics such as __c64_peek(...) produce a byte return value.
+            // Evaluate the call once, then compare its low return byte.
+            if (expression.Left is CallExpression leftCall
+                && expression.Right is IntegerExpression callConstant
+                && callConstant.Value >= 0 && callConstant.Value <= 255)
+            {
+                GenerateCallExpression(leftCall, buffer, variables, returnValueAddress);
+                buffer.LdaAbsolute(returnValueAddress);
+                buffer.CmpImmediate((byte)callConstant.Value);
+                switch (expression.Operator)
+                {
+                    case TokenKind.EqualEqual:
+                        buffer.BneLong(falseLabel);
+                        break;
+                    case TokenKind.NotEqual:
+                        buffer.BeqLong(falseLabel);
+                        break;
+                    case TokenKind.Less:
+                        buffer.BcsLong(falseLabel);
+                        break;
+                    case TokenKind.GreaterEqual:
+                        buffer.BccLong(falseLabel);
+                        break;
+                    case TokenKind.LessEqual:
+                    {
+                        var success = $"$cmp_call_le_{buffer.Address:X4}";
+                        buffer.BccLong(success);
+                        buffer.BneLong(falseLabel);
+                        buffer.Label(success);
+                        break;
+                    }
+                    case TokenKind.Greater:
+                        buffer.BccLong(falseLabel);
+                        buffer.BeqLong(falseLabel);
+                        break;
+                    default:
+                        throw new NotSupportedException($"6502 call comparison operator '{expression.Operator}' is not supported.");
+                }
+                return;
+            }
+
+            // Compare the result of a byte arithmetic expression against a byte literal.
+            // Examples: (column % 2) == 0, (row + 1) < 5.
+            // Keep this byte-specific; wide comparisons require typed lowering.
+            if (expression.Left is BinaryExpression byteExpression
+                && expression.Right is IntegerExpression byteConstant
+                && byteConstant.Value >= 0 && byteConstant.Value <= 255
+                && IsByteComparisonOperand(byteExpression, variables))
+            {
+                GenerateByteValue(byteExpression, buffer, variables);
+                buffer.CmpImmediate((byte)byteConstant.Value);
+                switch (expression.Operator)
+                {
+                    case TokenKind.EqualEqual:
+                        buffer.BneLong(falseLabel);
+                        break;
+                    case TokenKind.NotEqual:
+                        buffer.BeqLong(falseLabel);
+                        break;
+                    case TokenKind.Less:
+                        buffer.BcsLong(falseLabel);
+                        break;
+                    case TokenKind.GreaterEqual:
+                        buffer.BccLong(falseLabel);
+                        break;
+                    case TokenKind.LessEqual:
+                    {
+                        var success = $"$cmp_expr_le_{buffer.Address:X4}";
+                        buffer.BccLong(success);
+                        buffer.BneLong(falseLabel);
+                        buffer.Label(success);
+                        break;
+                    }
+                    case TokenKind.Greater:
+                        buffer.BccLong(falseLabel);
+                        buffer.BeqLong(falseLabel);
+                        break;
+                    default:
+                        throw new NotSupportedException($"6502 byte expression comparison operator '{expression.Operator}' is not supported.");
+                }
+                return;
+            }
+
+            // General byte expression comparisons. Evaluate both operands once.
+            // Preserve the left result on the 6502 stack while lowering the RHS,
+            // since nested arithmetic uses the zero-page scratch registers.
+            // This also handles comparisons against variables, not just literals.
+            if ((expression.Left is BinaryExpression || expression.Right is BinaryExpression)
+                && IsByteComparisonOperand(expression.Left, variables)
+                && IsByteComparisonOperand(expression.Right, variables))
+            {
+                GenerateByteValue(expression.Left, buffer, variables);
+                buffer.Pha();
+                GenerateByteValue(expression.Right, buffer, variables);
+                buffer.StaZeroPage(0x06);
+                buffer.Pla();
+                buffer.CmpAbsolute(0x0006);
+                switch (expression.Operator)
+                {
+                    case TokenKind.EqualEqual: buffer.BneLong(falseLabel); break;
+                    case TokenKind.NotEqual: buffer.BeqLong(falseLabel); break;
+                    case TokenKind.Less: buffer.BcsLong(falseLabel); break;
+                    case TokenKind.GreaterEqual: buffer.BccLong(falseLabel); break;
+                    case TokenKind.LessEqual:
+                    {
+                        var success = $"$cmp_general_le_{buffer.Address:X4}";
+                        buffer.BccLong(success);
+                        buffer.BneLong(falseLabel);
+                        buffer.Label(success);
+                        break;
+                    }
+                    case TokenKind.Greater:
+                        buffer.BccLong(falseLabel);
+                        buffer.BeqLong(falseLabel);
+                        break;
+                    default:
+                        throw new NotSupportedException($"6502 comparison operator '{expression.Operator}' is not supported.");
+                }
+                return;
+            }
+
             if (expression.Left is not IdentifierExpression identifier)
                 throw new NotSupportedException($"6502 comparison left operand '{expression.Left.GetType().Name}' is not yet supported.");
 
@@ -1464,6 +2307,55 @@ namespace JollyCCompiler.Compiler.CodeGen.MOS6502
                 return;
             }
 
+            // Compare a byte variable with a computed byte expression, e.g.
+            // shot_x < enemy + 24. Evaluate RHS first because lowering may
+            // overwrite A and the processor flags. $06 is a dedicated
+            // temporary; recursive byte lowering uses $05 for its own RHS.
+            if (expression.Right is BinaryExpression rightExpression)
+            {
+                if (!IsByteComparisonOperand(rightExpression, variables))
+                    throw new NotSupportedException("6502 computed comparison requires typed wide-expression lowering; refusing to truncate the right operand to 8 bits.");
+                if (GetExpressionSize(identifier, variables) != 1)
+                    throw new NotSupportedException("Computed 6502 comparison operands currently require a byte-sized left operand.");
+                if (!variables.TryGetValue(identifier.Name, out var leftAddress))
+                    throw new InvalidOperationException($"Variable '{identifier.Name}' is not defined.");
+
+                GenerateByteValue(rightExpression, buffer, variables);
+                buffer.StaZeroPage(0x06);
+                buffer.LdaAbsolute(leftAddress);
+                buffer.CmpAbsolute(0x0006);
+                switch (expression.Operator)
+                {
+                    case TokenKind.EqualEqual:
+                        buffer.BneLong(falseLabel);
+                        break;
+                    case TokenKind.NotEqual:
+                        buffer.BeqLong(falseLabel);
+                        break;
+                    case TokenKind.Less:
+                        buffer.BcsLong(falseLabel);
+                        break;
+                    case TokenKind.GreaterEqual:
+                        buffer.BccLong(falseLabel);
+                        break;
+                    case TokenKind.LessEqual:
+                    {
+                        var success = $"$cmp_byte_le_{buffer.Address:X4}";
+                        buffer.BccLong(success);
+                        buffer.BneLong(falseLabel);
+                        buffer.Label(success);
+                        break;
+                    }
+                    case TokenKind.Greater:
+                        buffer.BccLong(falseLabel);
+                        buffer.BeqLong(falseLabel);
+                        break;
+                    default:
+                        throw new NotSupportedException($"6502 comparison operator '{expression.Operator}' is not supported.");
+                }
+                return;
+            }
+
             if (expression.Right is not IntegerExpression integer)
                 throw new NotSupportedException($"6502 comparison right operand '{expression.Right.GetType().Name}' is not yet supported.");
 
@@ -1478,6 +2370,22 @@ namespace JollyCCompiler.Compiler.CodeGen.MOS6502
             buffer.Label(trueLabel);
             buffer.Jmp(doneLabel);
             buffer.Label(doneLabel);
+        }
+
+        private bool IsByteComparisonOperand(ExpressionNode expression, Dictionary<string, ushort> variables)
+        {
+            return expression switch
+            {
+                IntegerExpression integer => integer.Value >= -128 && integer.Value <= 255,
+                IdentifierExpression identifier => GetExpressionSize(identifier, variables) == 1,
+                BinaryExpression binary when binary.Operator is TokenKind.Plus or TokenKind.Minus
+                    or TokenKind.Ampersand or TokenKind.Star or TokenKind.Slash or TokenKind.Percent
+                    => IsByteComparisonOperand(binary.Left, variables)
+                       && (binary.Right is IntegerExpression literal
+                           ? literal.Value >= -128 && literal.Value <= 255
+                           : IsByteComparisonOperand(binary.Right, variables)),
+                _ => false
+            };
         }
 
         private static void EmitPromotedByte(Mos6502CodeBuffer buffer, ushort address, VariableTypeInfo type, int byteIndex)

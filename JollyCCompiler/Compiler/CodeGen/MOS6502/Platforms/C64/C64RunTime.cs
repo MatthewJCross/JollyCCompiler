@@ -1,4 +1,4 @@
-﻿using JollyCCompiler.Compiler.CodeGen.MOS6502.Core;
+using JollyCCompiler.Compiler.CodeGen.MOS6502.Core;
 using JollyCCompiler.Compiler.CodeGeneration.MOS6502.Core;
 using System.Text;
 
@@ -10,6 +10,9 @@ namespace JollyCCompiler.Compiler.CodeGen.MOS6502.Platforms.C64
 
         public const int StartupSize = 4;
 
+        // Keep compiled code separate from VIC bank 0 screen, sprites and charset.
+        public const ushort CodeStartAddress = 0x4000;
+
         public C64ProgramLayout CreateLayout(int mainCodeSize = 0)
         {
             if (mainCodeSize < 0)
@@ -17,7 +20,7 @@ namespace JollyCCompiler.Compiler.CodeGen.MOS6502.Platforms.C64
 
             var loader = CreateBasicLoader(0x080B);
             var startupAddress = (ushort)(BasicStartAddress + loader.Length);
-            var mainAddress = (ushort)(startupAddress + StartupSize);
+            var mainAddress = CodeStartAddress;
 
             return new C64ProgramLayout(BasicStartAddress, startupAddress, mainAddress, loader.Length, StartupSize, mainCodeSize);
         }
@@ -39,11 +42,18 @@ namespace JollyCCompiler.Compiler.CodeGen.MOS6502.Platforms.C64
             if (startup.Length != layout.StartupSize)
                 throw new InvalidOperationException("The C64 startup size does not match the calculated program layout.");
 
-            var program = new byte[loader.Length + startup.Length + mainCode.Length];
+            // The PRG is contiguous on disk: pad the gap up to the code origin.
+            // Sprite/charset memory is initialised by the game after loading.
+            int codeOffset = layout.MainAddress - BasicStartAddress;
+            int minimumOffset = loader.Length + startup.Length;
+            if (codeOffset < minimumOffset)
+                throw new InvalidOperationException("C64 machine code overlaps the BASIC startup stub.");
+
+            var program = new byte[codeOffset + mainCode.Length];
 
             Buffer.BlockCopy(loader, 0, program, 0, loader.Length);
             Buffer.BlockCopy(startup, 0, program, loader.Length, startup.Length);
-            Buffer.BlockCopy(mainCode, 0, program, loader.Length + startup.Length, mainCode.Length);
+            Buffer.BlockCopy(mainCode, 0, program, codeOffset, mainCode.Length);
 
             return program;
         }
@@ -71,7 +81,8 @@ namespace JollyCCompiler.Compiler.CodeGen.MOS6502.Platforms.C64
         public byte[] CreateStartup(ushort mainAddress)
         {
             var assembler = new Mos6502Assembler();
-            assembler.Origin = (ushort)(mainAddress - StartupSize);
+            // Only absolute JSR and RTS are emitted; the stub is loaded after BASIC.
+            assembler.Origin = (ushort)(BasicStartAddress + CreateBasicLoader(0x080B).Length);
             assembler.Jsr(mainAddress);
             assembler.Rts();
 

@@ -3,6 +3,14 @@
   "WorkspaceRootPath": "F:\\JollyProjects\\JollyCCompiler\\",
   "Documents": [
     {
+      "AbsoluteMoniker": "D:0:0:{86964323-0933-B13E-C742-6BF37442A6EB}|JollyCCompiler\\JollyCCompiler.csproj|f:\\jollyprojects\\jollyccompiler\\jollyccompiler\\examples\\c64\\games\\spaceinvaders\\space_invaders_phase9.c||{D0E1A5C6-B359-4E41-9B60-3365922C2A22}",
+      "RelativeMoniker": "D:0:0:{86964323-0933-B13E-C742-6BF37442A6EB}|JollyCCompiler\\JollyCCompiler.csproj|solutionrelative:jollyccompiler\\examples\\c64\\games\\spaceinvaders\\space_invaders_phase9.c||{D0E1A5C6-B359-4E41-9B60-3365922C2A22}"
+    },
+    {
+      "AbsoluteMoniker": "D:0:0:{86964323-0933-B13E-C742-6BF37442A6EB}|JollyCCompiler\\JollyCCompiler.csproj|f:\\jollyprojects\\jollyccompiler\\jollyccompiler\\compiler\\codegen\\mos6502\\core\\mos6502codegenerator.cs||{A6C744A8-0E4A-4FC6-886A-064283054674}",
+      "RelativeMoniker": "D:0:0:{86964323-0933-B13E-C742-6BF37442A6EB}|JollyCCompiler\\JollyCCompiler.csproj|solutionrelative:jollyccompiler\\compiler\\codegen\\mos6502\\core\\mos6502codegenerator.cs||{A6C744A8-0E4A-4FC6-886A-064283054674}"
+    },
+    {
       "AbsoluteMoniker": "D:0:0:{86964323-0933-B13E-C742-6BF37442A6EB}|JollyCCompiler\\JollyCCompiler.csproj|f:\\jollyprojects\\jollyccompiler\\jollyccompiler\\editor\\highlighting\\c.xshd||{FA3CD31E-987B-443A-9B81-186104E8DAC1}",
       "RelativeMoniker": "D:0:0:{86964323-0933-B13E-C742-6BF37442A6EB}|JollyCCompiler\\JollyCCompiler.csproj|solutionrelative:jollyccompiler\\editor\\highlighting\\c.xshd||{FA3CD31E-987B-443A-9B81-186104E8DAC1}"
     },
@@ -17,18 +25,6 @@
     {
       "AbsoluteMoniker": "D:0:0:{86964323-0933-B13E-C742-6BF37442A6EB}|JollyCCompiler\\JollyCCompiler.csproj|f:\\jollyprojects\\jollyccompiler\\jollyccompiler\\mainwindow.xaml.cs||{A6C744A8-0E4A-4FC6-886A-064283054674}",
       "RelativeMoniker": "D:0:0:{86964323-0933-B13E-C742-6BF37442A6EB}|JollyCCompiler\\JollyCCompiler.csproj|solutionrelative:jollyccompiler\\mainwindow.xaml.cs||{A6C744A8-0E4A-4FC6-886A-064283054674}"
-    },
-    {
-      "AbsoluteMoniker": "D:0:0:{86964323-0933-B13E-C742-6BF37442A6EB}|JollyCCompiler\\JollyCCompiler.csproj|f:\\jollyprojects\\jollyccompiler\\jollyccompiler\\examples\\c64\\games\\sprite_arcade.c||{D0E1A5C6-B359-4E41-9B60-3365922C2A22}",
-      "RelativeMoniker": "D:0:0:{86964323-0933-B13E-C742-6BF37442A6EB}|JollyCCompiler\\JollyCCompiler.csproj|solutionrelative:jollyccompiler\\examples\\c64\\games\\sprite_arcade.c||{D0E1A5C6-B359-4E41-9B60-3365922C2A22}"
-    },
-    {
-      "AbsoluteMoniker": "D:0:0:{86964323-0933-B13E-C742-6BF37442A6EB}|JollyCCompiler\\JollyCCompiler.csproj|f:\\jollyprojects\\jollyccompiler\\jollyccompiler\\examples\\c64\\games\\spaceinvaders\\screen_layout.c||{D0E1A5C6-B359-4E41-9B60-3365922C2A22}",
-      "RelativeMoniker": "D:0:0:{86964323-0933-B13E-C742-6BF37442A6EB}|JollyCCompiler\\JollyCCompiler.csproj|solutionrelative:jollyccompiler\\examples\\c64\\games\\spaceinvaders\\screen_layout.c||{D0E1A5C6-B359-4E41-9B60-3365922C2A22}"
-    },
-    {
-      "AbsoluteMoniker": "D:0:0:{86964323-0933-B13E-C742-6BF37442A6EB}|JollyCCompiler\\JollyCCompiler.csproj|f:\\jollyprojects\\jollyccompiler\\jollyccompiler\\compiler\\codegen\\mos6502\\core\\mos6502codegenerator.cs||{A6C744A8-0E4A-4FC6-886A-064283054674}",
-      "RelativeMoniker": "D:0:0:{86964323-0933-B13E-C742-6BF37442A6EB}|JollyCCompiler\\JollyCCompiler.csproj|solutionrelative:jollyccompiler\\compiler\\codegen\\mos6502\\core\\mos6502codegenerator.cs||{A6C744A8-0E4A-4FC6-886A-064283054674}"
     }
   ],
   "DocumentGroupContainers": [
@@ -51,6 +47,19 @@
             {
               "$type": "Document",
               "DocumentIndex": 0,
+              "Title": "space_invaders_phase9.c",
+              "DocumentMoniker": "F:\\JollyProjects\\JollyCCompiler\\JollyCCompiler\\Examples\\C64\\Games\\SpaceInvaders\\space_invaders_phase9.c",
+              "RelativeDocumentMoniker": "JollyCCompiler\\Examples\\C64\\Games\\SpaceInvaders\\space_invaders_phase9.c",
+              "ToolTip": "F:\\JollyProjects\\JollyCCompiler\\JollyCCompiler\\Examples\\C64\\Games\\SpaceInvaders\\space_invaders_phase9.c*",
+              "RelativeToolTip": "JollyCCompiler\\Examples\\C64\\Games\\SpaceInvaders\\space_invaders_phase9.c*",
+              "ViewState": "AgIAAIQDAAAAAAAAAAAAAN0DAAAAAAAAAAAAAA==",
+              "Icon": "ae27a6b0-e345-4288-96df-5eaf394ee369.000423|",
+              "WhenOpened": "2026-11-18T19:08:09.491Z",
+              "EditorCaption": ""
+            },
+            {
+              "$type": "Document",
+              "DocumentIndex": 2,
               "Title": "C.xshd",
               "DocumentMoniker": "F:\\JollyProjects\\JollyCCompiler\\JollyCCompiler\\Editor\\Highlighting\\C.xshd",
               "RelativeDocumentMoniker": "JollyCCompiler\\Editor\\Highlighting\\C.xshd",
@@ -63,7 +72,7 @@
             },
             {
               "$type": "Document",
-              "DocumentIndex": 2,
+              "DocumentIndex": 4,
               "Title": "EditorTheme.xaml",
               "DocumentMoniker": "F:\\JollyProjects\\JollyCCompiler\\JollyCCompiler\\Styles\\EditorTheme.xaml",
               "RelativeDocumentMoniker": "JollyCCompiler\\Styles\\EditorTheme.xaml",
@@ -75,7 +84,7 @@
             },
             {
               "$type": "Document",
-              "DocumentIndex": 3,
+              "DocumentIndex": 5,
               "Title": "MainWindow.xaml.cs",
               "DocumentMoniker": "F:\\JollyProjects\\JollyCCompiler\\JollyCCompiler\\MainWindow.xaml.cs",
               "RelativeDocumentMoniker": "JollyCCompiler\\MainWindow.xaml.cs",
@@ -88,7 +97,7 @@
             },
             {
               "$type": "Document",
-              "DocumentIndex": 1,
+              "DocumentIndex": 3,
               "Title": "MainWindow.xaml",
               "DocumentMoniker": "F:\\JollyProjects\\JollyCCompiler\\JollyCCompiler\\MainWindow.xaml",
               "RelativeDocumentMoniker": "JollyCCompiler\\MainWindow.xaml",
@@ -100,39 +109,13 @@
             },
             {
               "$type": "Document",
-              "DocumentIndex": 4,
-              "Title": "sprite_arcade.c",
-              "DocumentMoniker": "F:\\JollyProjects\\JollyCCompiler\\JollyCCompiler\\Examples\\C64\\Games\\sprite_arcade.c",
-              "RelativeDocumentMoniker": "JollyCCompiler\\Examples\\C64\\Games\\sprite_arcade.c",
-              "ToolTip": "F:\\JollyProjects\\JollyCCompiler\\JollyCCompiler\\Examples\\C64\\Games\\sprite_arcade.c",
-              "RelativeToolTip": "JollyCCompiler\\Examples\\C64\\Games\\sprite_arcade.c",
-              "ViewState": "AgIAAAAAAAAAAAAAAAAAACUAAAAAAAAAAAAAAA==",
-              "Icon": "ae27a6b0-e345-4288-96df-5eaf394ee369.000423|",
-              "WhenOpened": "2026-11-18T07:25:55.828Z",
-              "EditorCaption": ""
-            },
-            {
-              "$type": "Document",
-              "DocumentIndex": 5,
-              "Title": "screen_layout.c",
-              "DocumentMoniker": "F:\\JollyProjects\\JollyCCompiler\\JollyCCompiler\\Examples\\C64\\Games\\SpaceInvaders\\screen_layout.c",
-              "RelativeDocumentMoniker": "JollyCCompiler\\Examples\\C64\\Games\\SpaceInvaders\\screen_layout.c",
-              "ToolTip": "F:\\JollyProjects\\JollyCCompiler\\JollyCCompiler\\Examples\\C64\\Games\\SpaceInvaders\\screen_layout.c",
-              "RelativeToolTip": "JollyCCompiler\\Examples\\C64\\Games\\SpaceInvaders\\screen_layout.c",
-              "ViewState": "AgIAANIBAAAAAAAAAAAAAPgBAAAAAAAAAAAAAA==",
-              "Icon": "ae27a6b0-e345-4288-96df-5eaf394ee369.000423|",
-              "WhenOpened": "2026-11-18T07:03:43.645Z",
-              "EditorCaption": ""
-            },
-            {
-              "$type": "Document",
-              "DocumentIndex": 6,
+              "DocumentIndex": 1,
               "Title": "Mos6502CodeGenerator.cs",
               "DocumentMoniker": "F:\\JollyProjects\\JollyCCompiler\\JollyCCompiler\\Compiler\\CodeGen\\MOS6502\\Core\\Mos6502CodeGenerator.cs",
               "RelativeDocumentMoniker": "JollyCCompiler\\Compiler\\CodeGen\\MOS6502\\Core\\Mos6502CodeGenerator.cs",
               "ToolTip": "F:\\JollyProjects\\JollyCCompiler\\JollyCCompiler\\Compiler\\CodeGen\\MOS6502\\Core\\Mos6502CodeGenerator.cs",
               "RelativeToolTip": "JollyCCompiler\\Compiler\\CodeGen\\MOS6502\\Core\\Mos6502CodeGenerator.cs",
-              "ViewState": "AgIAAAIFAAAAAAAAAAAewBMFAAAQAAAAAAAAAA==",
+              "ViewState": "AgIAAAEDAAAAAAAAAAAnwB0DAABCAAAAAAAAAA==",
               "Icon": "ae27a6b0-e345-4288-96df-5eaf394ee369.000738|",
               "WhenOpened": "2026-11-17T20:21:40.455Z",
               "EditorCaption": ""

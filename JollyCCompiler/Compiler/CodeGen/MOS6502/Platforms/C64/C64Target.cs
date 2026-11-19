@@ -1,4 +1,4 @@
-﻿using JollyCCompiler.Compiler.CodeGen.MOS6502;
+using JollyCCompiler.Compiler.CodeGen.MOS6502;
 using JollyCCompiler.Compiler.CodeGen.MOS6502.Core;
 using JollyCCompiler.Compiler.CodeGeneration.MOS6502.Core;
 using JollyCCompiler.Compiler.Syntax;
@@ -40,6 +40,18 @@ namespace JollyCCompiler.Compiler.CodeGen.MOS6502.Platforms.C64
             ArgumentNullException.ThrowIfNull(program);
 
             var generated = Generate(program);
+            // C64 code begins at $4000, outside VIC bank 0 graphics RAM.
+            // Keep it below $A000 to avoid loading across the BASIC ROM window.
+            const int codeLimitExclusive = 0xA000;
+            int codeEndExclusive = generated.MainAddress + generated.MachineCode.Length;
+            if (codeEndExclusive > codeLimitExclusive)
+            {
+                throw new InvalidOperationException(
+                    $"C64 program code ends at ${codeEndExclusive - 1:X4}; " +
+                    $"the supported code region is $4000-${codeLimitExclusive - 1:X4}. " +
+                    "Reduce code size or implement a bank-aware linker.");
+            }
+
             var layout = _runtime.CreateLayout(generated.MachineCode.Length);
 
             // Code may begin with an IRQ handler before main. The BASIC startup
